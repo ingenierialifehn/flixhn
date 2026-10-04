@@ -9,6 +9,8 @@ import MovieRow from './components/MovieRow';
 import MovieCard from './components/MovieCard';
 import DetailModal from './components/DetailModal';
 import VideoPlayer from './components/VideoPlayer';
+import LiveTvPlayer from './components/LiveTvPlayer';
+import LiveTvView from './components/LiveTvView';
 import AdminLayout from './pages/admin/AdminLayout';
 import { HardDrive, RefreshCw, Settings } from 'lucide-react';
 import api from './api/axios';
@@ -18,8 +20,13 @@ function App() {
   const { t } = useLanguage();
 
   const [currentTab, setCurrentTab] = useState(() => {
-    if (typeof window !== 'undefined' && window.location.pathname.startsWith('/admin')) {
-      return 'admin';
+    if (typeof window !== 'undefined') {
+      if (window.location.pathname.startsWith('/admin')) {
+        return 'admin';
+      }
+      if (window.location.pathname === '/livetv') {
+        return 'livetv';
+      }
     }
     return 'home';
   });
@@ -35,6 +42,8 @@ function App() {
   // Estados de modales y reproducción
   const [modalTitleId, setModalTitleId] = useState(null);
   const [activeVideo, setActiveVideo] = useState(null); // { title, episode, initialTime }
+  const [activeLiveChannel, setActiveLiveChannel] = useState(null);
+  const [liveChannelsList, setLiveChannelsList] = useState([]);
 
   // Carga del catálogo desde la API de Laravel
   const loadCatalog = useCallback(() => {
@@ -85,6 +94,8 @@ function App() {
     const currentPath = window.location.pathname;
     if (currentPath.startsWith('/admin') && user?.role === 'admin') {
       setCurrentTab((prev) => (prev !== 'admin' ? 'admin' : prev));
+    } else if (currentPath === '/livetv') {
+      setCurrentTab((prev) => (prev !== 'livetv' ? 'livetv' : prev));
     } else if (currentPath.startsWith('/browse') || currentPath === '/' || currentPath === '') {
       setCurrentTab((prev) => (prev !== 'home' ? 'home' : prev));
     } else if (currentPath === '/login' && token && user) {
@@ -96,6 +107,8 @@ function App() {
       const path = window.location.pathname;
       if (path.startsWith('/admin') && user?.role === 'admin') {
         setCurrentTab((prev) => (prev !== 'admin' ? 'admin' : prev));
+      } else if (path === '/livetv') {
+        setCurrentTab((prev) => (prev !== 'livetv' ? 'livetv' : prev));
       } else if (path === '/' || path === '' || path.startsWith('/browse')) {
         setCurrentTab((prev) => (prev !== 'home' ? 'home' : prev));
       }
@@ -137,6 +150,15 @@ function App() {
     setSearchQuery('');
     setSearchResults([]);
     setCurrentTab(tab);
+    if (tab === 'livetv') {
+      if (window.location.pathname !== '/livetv') {
+        window.history.pushState({}, '', '/livetv');
+      }
+    } else if (tab === 'home' || tab === 'series' || tab === 'movies' || tab === 'featured') {
+      if (window.location.pathname !== '/browse') {
+        window.history.pushState({}, '', '/browse');
+      }
+    }
   }, []);
 
   // Eliminación de título de la fila "Continuar Viendo"
@@ -196,7 +218,7 @@ function App() {
     return <ProfileSelector />;
   }
 
-  // 4. Si el reproductor de video está activo -> Pantalla Completa HLS
+  // 4. Si el reproductor de video de Películas/Series está activo -> Pantalla Completa HLS
   if (activeVideo) {
     return (
       <VideoPlayer
@@ -207,6 +229,18 @@ function App() {
           setActiveVideo(null);
           loadCatalog(); // Refrescar la fila de "Continuar Viendo"
         }}
+      />
+    );
+  }
+
+  // 4.1 Si el reproductor de TV en Vivo está activo -> Pantalla Completa con Zapping
+  if (activeLiveChannel) {
+    return (
+      <LiveTvPlayer
+        channel={activeLiveChannel}
+        channels={liveChannelsList}
+        onClose={() => setActiveLiveChannel(null)}
+        onSelectChannel={(newCh) => setActiveLiveChannel(newCh)}
       />
     );
   }
@@ -250,8 +284,15 @@ function App() {
       />
 
       <main className="flex-1 pb-16">
-        {/* VISTA 1: BÚSQUEDA REACTIVA EN GRID ESTILO NETFLIX (IMAGEN 4) */}
-        {isSearchActive ? (
+        {/* VISTA 0: PORTAL DE USUARIO DE TV EN VIVO */}
+        {currentTab === 'livetv' ? (
+          <LiveTvView
+            onPlayChannel={(channel, allChannels) => {
+              setActiveLiveChannel(channel);
+              setLiveChannelsList(allChannels || []);
+            }}
+          />
+        ) : isSearchActive ? (
           <section className="pt-24 px-4 md:px-12 pb-16 min-h-[75vh] animate-fadeIn">
             <div className="mb-6 flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 dark:border-zinc-800 pb-4">
               <h1 className="text-xl md:text-2xl font-bold text-gray-900 dark:text-white">

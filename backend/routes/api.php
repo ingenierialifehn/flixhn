@@ -10,6 +10,9 @@ use App\Http\Controllers\NetworkSettingController;
 use App\Http\Controllers\ServerControlController;
 use App\Http\Controllers\MediaNodeController;
 use App\Http\Controllers\AlertController;
+use App\Http\Controllers\TvSourceController;
+use App\Http\Controllers\TvGuideSourceController;
+use App\Http\Controllers\LiveTvController;
 use App\Http\Middleware\EnsureAdmin;
 
 /*
@@ -121,5 +124,25 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/alerts', [AlertController::class, 'index']);
         Route::post('/alerts/{id}/dismiss', [AlertController::class, 'dismiss']);
         Route::post('/alerts/dismiss-all', [AlertController::class, 'dismissAll']);
+
+        // Gestión de TV en Vivo (Fuentes IPTV, Canales y Sincronización)
+        Route::get('/tv-sources', [TvSourceController::class, 'index']);
+        Route::post('/tv-sources', [TvSourceController::class, 'store']);
+        Route::get('/tv-sources/{id}', [TvSourceController::class, 'show']);
+        Route::put('/tv-sources/{id}', [TvSourceController::class, 'update']);
+        Route::post('/tv-sources/{id}/refresh', [TvSourceController::class, 'refresh']);
+        Route::post('/tv-sources/{id}/seed-demo', [TvSourceController::class, 'seedDemo']);
+        Route::delete('/tv-sources/{id}', [TvSourceController::class, 'destroy']);
+        Route::get('/tv-channels', [TvSourceController::class, 'channels']);
+
+        // Fuentes de Datos de Guía (EPG / XMLTV)
+        Route::get('/tv-guide-sources', [TvGuideSourceController::class, 'index']);
+        Route::post('/tv-guide-sources', [TvGuideSourceController::class, 'store']);
+        Route::post('/tv-guide-sources/{id}/refresh', [TvGuideSourceController::class, 'refresh']);
+        Route::delete('/tv-guide-sources/{id}', [TvGuideSourceController::class, 'destroy']);
     });
+
+    // Portal de Clientes: Canales de TV en Vivo y Proxy de Streaming
+    Route::get('/livetv/channels', [LiveTvController::class, 'channels']);
+    Route::get('/livetv/proxy', [LiveTvController::class, 'proxy']);
 });

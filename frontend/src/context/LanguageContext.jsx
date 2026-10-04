@@ -31,6 +31,7 @@ const translations = {
     subtitles_off: 'Desactivados',
     original_isp: 'ORIGINAL ISP ON-NET',
     resuming_at: 'Reanudar en',
+    livetv: 'TV en Vivo',
   },
   en: {
     home: 'Home',
@@ -60,6 +61,7 @@ const translations = {
     subtitles_off: 'Off',
     original_isp: 'ORIGINAL ISP ON-NET',
     resuming_at: 'Resume at',
+    livetv: 'Live TV',
   }
 };
 

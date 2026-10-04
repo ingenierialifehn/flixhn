@@ -14,6 +14,7 @@ import {
   X,
   Loader2,
   Globe,
+  Tv,
 } from 'lucide-react';
 import api from '../api/axios';
 
@@ -245,6 +246,28 @@ const Navbar = ({
             }`}
           >
             {t('popular')}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              handleClearSearch();
+              setCurrentTab('livetv');
+              if (window.location.pathname !== '/livetv') {
+                window.history.pushState({}, '', '/livetv');
+              }
+            }}
+            className={`flex items-center gap-1.5 transition-colors cursor-pointer select-none outline-none focus:outline-none focus:ring-0 border-none ${
+              currentTab === 'livetv' && !searchQuery.trim()
+                ? isScrolled
+                  ? 'text-[#E50914] font-bold'
+                  : 'text-white font-bold'
+                : isScrolled
+                ? 'text-zinc-600 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white'
+                : 'text-zinc-300 hover:text-white'
+            }`}
+          >
+            <Tv className="w-4 h-4 text-[#E50914]" />
+            <span>{t('livetv', 'TV en Vivo')}</span>
           </button>
         </div>
       </div>

@@ -29,7 +29,7 @@ const MENU_GROUPS = [
       { id: 'dashboard', path: '/admin', label: 'Dashboard', icon: LayoutDashboard },
       { id: 'users', path: '/admin/users', label: 'Usuarios / Contratos', icon: Users },
       { id: 'library', path: '/admin/library', label: 'Biblioteca / Catálogo', icon: Film },
-      { id: 'livetv', path: '/admin/livetv', label: 'Live TV', icon: Tv },
+      { id: 'livetv', path: '/admin/livetv', label: 'TV en Vivo', icon: Tv },
       { id: 'network', path: '/admin/network', label: 'Red / Conexiones', icon: Network },
       { id: 'transcoding', path: '/admin/transcoding', label: 'Transcodificación', icon: Cpu },
       { id: 'database', path: '/admin/database', label: 'Base de Datos', icon: Database },

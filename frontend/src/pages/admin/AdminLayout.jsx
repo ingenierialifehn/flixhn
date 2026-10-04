@@ -6,6 +6,7 @@ import CatalogManagement from './CatalogManagement';
 import UsersManagement from './UsersManagement';
 import PlaceholderView from './PlaceholderView';
 import NetworkSettings from './NetworkSettings';
+import LiveTvManagement from './LiveTvManagement';
 import api from '../../services/api';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
@@ -369,7 +370,11 @@ const AdminLayout = ({ onBackToBrowse }) => {
                 <NetworkSettings />
               )}
 
-              {activeTab !== 'dashboard' && activeTab !== 'library' && activeTab !== 'catalog' && activeTab !== 'users' && activeTab !== 'network' && (
+              {activeTab === 'livetv' && (
+                <LiveTvManagement />
+              )}
+
+              {activeTab !== 'dashboard' && activeTab !== 'library' && activeTab !== 'catalog' && activeTab !== 'users' && activeTab !== 'network' && activeTab !== 'livetv' && (
                 <PlaceholderView
                   title={currentTabInfo.title}
                   description={currentTabInfo.description}
