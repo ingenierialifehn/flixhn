@@ -10,7 +10,7 @@ const api = axios.create({
 
 // Interceptor para inyectar token Sanctum
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('flixhn_token');
+  const token = localStorage.getItem('flixhn_token') || localStorage.getItem('token');
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -19,12 +19,13 @@ api.interceptors.request.use((config) => {
   return Promise.reject(error);
 });
 
-// Interceptor para manejar expiración o suspensión
+// Interceptor para manejar expiración o suspensión (401 definitivo)
 api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response && error.response.status === 401) {
       localStorage.removeItem('flixhn_token');
+      localStorage.removeItem('token');
       localStorage.removeItem('flixhn_user');
       localStorage.removeItem('flixhn_profile');
       window.dispatchEvent(new Event('flixhn_unauthorized'));

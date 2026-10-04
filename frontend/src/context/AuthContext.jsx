@@ -13,7 +13,7 @@ export const AuthProvider = ({ children }) => {
       return null;
     }
   });
-  const [token, setToken] = useState(() => localStorage.getItem('flixhn_token') || null);
+  const [token, setToken] = useState(() => localStorage.getItem('flixhn_token') || localStorage.getItem('token') || null);
   const [activeProfile, setActiveProfile] = useState(() => {
     try {
       const saved = localStorage.getItem('flixhn_profile');
@@ -39,7 +39,7 @@ export const AuthProvider = ({ children }) => {
     return () => window.removeEventListener('flixhn_unauthorized', handleUnauthorized);
   }, []);
 
-  // Comprobar token al inicio
+  // Comprobar token al inicio y blindaje de sesión
   useEffect(() => {
     if (token) {
       api.get('/auth/me')
@@ -53,13 +53,20 @@ export const AuthProvider = ({ children }) => {
             throw new Error('Respuesta inválida de usuario');
           }
         })
-        .catch(() => {
-          setToken(null);
-          setUser(null);
-          setActiveProfile(null);
-          localStorage.removeItem('flixhn_token');
-          localStorage.removeItem('flixhn_user');
-          localStorage.removeItem('flixhn_profile');
+        .catch((err) => {
+          // Blindaje estricto de sesión (Punto 10):
+          // Solo destruir token si el backend responde con un 401 explícito
+          if (err.response && err.response.status === 401) {
+            setToken(null);
+            setUser(null);
+            setActiveProfile(null);
+            localStorage.removeItem('flixhn_token');
+            localStorage.removeItem('token');
+            localStorage.removeItem('flixhn_user');
+            localStorage.removeItem('flixhn_profile');
+          } else {
+            console.warn('Revalidación silenciosa: Red inaccesible o error no fatal. Conservando sesión local.');
+          }
         })
         .finally(() => {
           setLoading(false);
@@ -97,6 +104,7 @@ export const AuthProvider = ({ children }) => {
     setClientIp(client_ip);
 
     localStorage.setItem('flixhn_token', newToken);
+    localStorage.setItem('token', newToken);
     localStorage.setItem('flixhn_user', JSON.stringify(userData));
 
     // Si tiene un solo perfil, auto-seleccionar; de lo contrario mostrar selector
@@ -122,6 +130,7 @@ export const AuthProvider = ({ children }) => {
       setUser(null);
       setActiveProfile(null);
       localStorage.removeItem('flixhn_token');
+      localStorage.removeItem('token');
       localStorage.removeItem('flixhn_user');
       localStorage.removeItem('flixhn_profile');
     }

@@ -83,11 +83,18 @@ if (!globalThis.__fs_shim_applied) {
     };
   }
 
-  // 6. readFileSync patch
+  // 6. readFileSync & readdirSync patch
   if (fs.readFileSync) {
     const origReadFileSync = fs.readFileSync;
     fs.readFileSync = function (...args) {
       return retrySync(() => origReadFileSync.apply(fs, args));
+    };
+  }
+
+  if (fs.readdirSync) {
+    const origReaddirSync = fs.readdirSync;
+    fs.readdirSync = function (...args) {
+      return retrySync(() => origReaddirSync.apply(fs, args));
     };
   }
 

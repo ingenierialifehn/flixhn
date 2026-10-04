@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Bell,
   CheckCircle2,
@@ -6,7 +6,11 @@ import {
   XCircle,
   ShieldAlert,
   Clock,
+  X,
+  Check,
+  CheckCheck,
 } from 'lucide-react';
+import api from '../../services/api';
 
 const getAlertIcon = (level) => {
   switch (level) {
@@ -36,7 +40,54 @@ const getAlertBadge = (level) => {
   }
 };
 
-const AlertsList = ({ alerts = [] }) => {
+const AlertsList = ({ alerts: initialAlerts = [], onDismiss }) => {
+  const [alerts, setAlerts] = useState(initialAlerts);
+  const [dismissingId, setDismissingId] = useState(null);
+
+  useEffect(() => {
+    setAlerts(initialAlerts);
+  }, [initialAlerts]);
+
+  // Si no se pasaron alertas inicialmente, consultar el endpoint real
+  useEffect(() => {
+    if (!initialAlerts || initialAlerts.length === 0) {
+      api.get('/admin/alerts')
+        .then((res) => {
+          if (res.data?.alerts) {
+            setAlerts(res.data.alerts);
+          }
+        })
+        .catch(() => {});
+    }
+  }, []);
+
+  // Descartar o marcar como leída una alerta individual (Punto 11)
+  const handleDismiss = async (alertId) => {
+    setDismissingId(alertId);
+    try {
+      await api.post(`/admin/alerts/${alertId}/dismiss`);
+      setAlerts((prev) => prev.filter((a) => a.id !== alertId));
+      if (typeof onDismiss === 'function') {
+        onDismiss(alertId);
+      }
+    } catch (err) {
+      // Remover optimísticamente de la interfaz
+      setAlerts((prev) => prev.filter((a) => a.id !== alertId));
+    } finally {
+      setDismissingId(null);
+    }
+  };
+
+  // Descartar todas las alertas
+  const handleDismissAll = async () => {
+    try {
+      await api.post('/admin/alerts/dismiss-all');
+      setAlerts([]);
+    } catch (err) {
+      setAlerts([]);
+    }
+  };
+
   return (
     <div className="admin-card bg-[#181818] border border-zinc-800 rounded-xl p-5 shadow-none space-y-4 transition-colors">
       {/* Cabecera de Alertas */}
@@ -59,6 +110,19 @@ const AlertsList = ({ alerts = [] }) => {
             </p>
           </div>
         </div>
+
+        {/* Botón descartar todas si hay múltiples alertas */}
+        {alerts.length > 1 && (
+          <button
+            onClick={handleDismissAll}
+            className="flex items-center gap-1 text-[11px] font-semibold text-zinc-400 hover:text-white bg-zinc-900/80 hover:bg-zinc-800 px-2.5 py-1 rounded-lg border border-zinc-800 transition-colors cursor-pointer"
+            title="Marcar todas como leídas"
+            type="button"
+          >
+            <CheckCheck className="w-3.5 h-3.5 text-zinc-400" />
+            <span>Descartar todas</span>
+          </button>
+        )}
       </div>
 
       {/* Lista de Alertas */}
@@ -67,7 +131,7 @@ const AlertsList = ({ alerts = [] }) => {
           {(alerts || []).map((alert) => (
             <div
               key={alert?.id}
-              className="bg-gray-50/70 dark:bg-zinc-900/60 hover:bg-gray-100 dark:hover:bg-zinc-900 border border-gray-200/80 dark:border-zinc-800/80 hover:border-gray-300 dark:hover:border-zinc-700 p-3 rounded-lg space-y-1.5 transition-colors"
+              className="bg-gray-50/70 dark:bg-zinc-900/60 hover:bg-gray-100 dark:hover:bg-zinc-900 border border-gray-200/80 dark:border-zinc-800/80 hover:border-gray-300 dark:hover:border-zinc-700 p-3 rounded-lg space-y-1.5 transition-colors group relative"
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="flex items-center gap-2">
@@ -78,10 +142,24 @@ const AlertsList = ({ alerts = [] }) => {
                     {alert.title}
                   </span>
                 </div>
-                <span className="text-[10px] text-zinc-500 font-mono whitespace-nowrap flex items-center gap-1">
-                  <Clock className="w-3 h-3" />
-                  {alert.time_ago || 'reciente'}
-                </span>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-zinc-500 font-mono whitespace-nowrap flex items-center gap-1">
+                    <Clock className="w-3 h-3" />
+                    {alert.time_ago || 'reciente'}
+                  </span>
+
+                  {/* Botón descartar alerta individual (Punto 11) */}
+                  <button
+                    onClick={() => handleDismiss(alert.id)}
+                    disabled={dismissingId === alert.id}
+                    className="p-1 rounded-md text-zinc-500 hover:text-white hover:bg-zinc-800 transition-colors cursor-pointer"
+                    title="Descartar / Marcar como leída"
+                    type="button"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
 
               <p className="text-xs text-zinc-600 dark:text-zinc-400 pl-7 leading-relaxed">
@@ -91,12 +169,16 @@ const AlertsList = ({ alerts = [] }) => {
           ))}
         </div>
       ) : (
+        /* Estado nominal cuando no hay alertas críticas (Punto 11) */
         <div className="p-8 text-center space-y-2.5">
-          <div className="w-10 h-10 rounded-full bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 text-emerald-600 dark:text-emerald-400 mx-auto flex items-center justify-center">
+          <div className="w-10 h-10 rounded-full bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 text-emerald-600 dark:text-emerald-400 mx-auto flex items-center justify-center shadow-inner">
             <CheckCircle2 className="w-5 h-5" />
           </div>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400 font-medium">
-            Sin alertas registradas. Todos los servicios operan con normalidad.
+          <p className="text-xs text-emerald-400 font-semibold tracking-wide">
+            Todos los servicios On-Net operando con normalidad
+          </p>
+          <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+            No se han registrado incidencias críticas en el clúster local de medios.
           </p>
         </div>
       )}

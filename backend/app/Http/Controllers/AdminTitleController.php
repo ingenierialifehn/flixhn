@@ -142,8 +142,9 @@ class AdminTitleController extends Controller
             ];
         }
 
-        // 3. Alertas Reales: Array vacío [] mientras no existan eventos reales en el sistema
-        $alerts = [];
+        // 3. Alertas Reales: Obtenidas desde AlertController
+        $alertsResponse = app(\App\Http\Controllers\AlertController::class)->index();
+        $alerts = $alertsResponse->getData(true)['alerts'] ?? [];
 
         // 4. Actividad Real: Historial real de reproducciones en PlaybackProgress
         $recentStreams = PlaybackProgress::with(['profile.user', 'title', 'episode'])
@@ -173,6 +174,13 @@ class AdminTitleController extends Controller
         $lanDisplay = \App\Models\ServerSetting::get('local_ip_address') ?: '65.187.110.22:6789';
         $wanDisplay = '45.4.87.126:6789';
 
+        $serviceStatus = \App\Models\ServerSetting::get('streaming_service_status', 'online');
+        $onNetStatus = match ($serviceStatus) {
+            'stopped' => 'Detenido',
+            'restarting' => 'Reiniciando',
+            default => 'En línea',
+        };
+
         return response()->json([
             'server' => [
                 'hostname' => $mediaServerName,
@@ -188,8 +196,9 @@ class AdminTitleController extends Controller
                 'storage_percent' => $storagePercent,
                 'lan_ip' => $lanDisplay,
                 'wan_ip' => $wanDisplay,
-                'is_on_net' => true,
-                'on_net_status' => 'En línea',
+                'is_on_net' => ($serviceStatus !== 'stopped'),
+                'on_net_status' => $onNetStatus,
+                'service_status' => $serviceStatus,
             ],
             'subscribers_count' => $subscribersCount,
             'titles_count' => $titlesCount,

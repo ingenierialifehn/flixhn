@@ -173,13 +173,14 @@ const Navbar = ({
         </div>
 
         {/* Enlaces de Navegación estilo Netflix */}
-        <div className="hidden md:flex items-center gap-5 lg:gap-6 text-sm font-medium">
+        <div className="hidden md:flex items-center gap-5 lg:gap-6 text-sm font-medium select-none">
           <button
+            type="button"
             onClick={() => {
               handleClearSearch();
               setCurrentTab('home');
             }}
-            className={`transition-colors cursor-pointer ${
+            className={`transition-colors cursor-pointer select-none outline-none focus:outline-none focus:ring-0 border-none ${
               currentTab === 'home' && !searchQuery.trim()
                 ? isScrolled
                   ? 'text-zinc-900 dark:text-white font-bold'
@@ -192,11 +193,12 @@ const Navbar = ({
             {t('home')}
           </button>
           <button
+            type="button"
             onClick={() => {
               handleClearSearch();
               setCurrentTab('series');
             }}
-            className={`transition-colors cursor-pointer ${
+            className={`transition-colors cursor-pointer select-none outline-none focus:outline-none focus:ring-0 border-none ${
               currentTab === 'series' && !searchQuery.trim()
                 ? isScrolled
                   ? 'text-zinc-900 dark:text-white font-bold'
@@ -209,11 +211,12 @@ const Navbar = ({
             {t('series')}
           </button>
           <button
+            type="button"
             onClick={() => {
               handleClearSearch();
               setCurrentTab('movies');
             }}
-            className={`transition-colors cursor-pointer ${
+            className={`transition-colors cursor-pointer select-none outline-none focus:outline-none focus:ring-0 border-none ${
               currentTab === 'movies' && !searchQuery.trim()
                 ? isScrolled
                   ? 'text-zinc-900 dark:text-white font-bold'
@@ -226,11 +229,12 @@ const Navbar = ({
             {t('movies')}
           </button>
           <button
+            type="button"
             onClick={() => {
               handleClearSearch();
               setCurrentTab('featured');
             }}
-            className={`transition-colors cursor-pointer ${
+            className={`transition-colors cursor-pointer select-none outline-none focus:outline-none focus:ring-0 border-none ${
               currentTab === 'featured' && !searchQuery.trim()
                 ? isScrolled
                   ? 'text-zinc-900 dark:text-white font-bold'

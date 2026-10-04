@@ -12,6 +12,13 @@ import {
   Server,
   Key,
   RefreshCw,
+  Plus,
+  Trash2,
+  Check,
+  Layers,
+  Power,
+  X,
+  Loader2,
 } from 'lucide-react';
 
 const DEFAULT_SETTINGS = {
@@ -46,6 +53,111 @@ const NetworkSettings = () => {
   const [mediaSyncResult, setMediaSyncResult] = useState(null);
   const [toast, setToast] = useState(null); // { type: 'success' | 'error', message: string }
   const fileInputRef = useRef(null);
+
+  // Soporte Multi-Servidor (Punto 9)
+  const [nodes, setNodes] = useState([]);
+  const [loadingNodes, setLoadingNodes] = useState(false);
+  const [showAddNodeModal, setShowAddNodeModal] = useState(false);
+  const [newNode, setNewNode] = useState({
+    name: '',
+    ip_address: '',
+    port: 6789,
+    api_key: '',
+    is_master: false,
+  });
+  const [addingNode, setAddingNode] = useState(false);
+  const [actionNodeId, setActionNodeId] = useState(null);
+
+  const fetchNodes = async () => {
+    setLoadingNodes(true);
+    try {
+      const res = await api.get('/admin/nodes');
+      if (res.data?.nodes) {
+        setNodes(res.data.nodes);
+      }
+    } catch (err) {
+      console.warn('Error al cargar nodos de medios:', err);
+    } finally {
+      setLoadingNodes(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchNodes();
+  }, []);
+
+  const handleAddNode = async (e) => {
+    if (e) e.preventDefault();
+    if (!newNode.name.trim() || !newNode.ip_address.trim()) {
+      alert('Ingresa el nombre y la dirección IP/Host del nuevo servidor.');
+      return;
+    }
+    setAddingNode(true);
+    try {
+      const res = await api.post('/admin/nodes', newNode);
+      setToast({
+        type: 'success',
+        message: res.data?.message || `Servidor "${newNode.name}" conectado exitosamente.`,
+      });
+      setShowAddNodeModal(false);
+      setNewNode({ name: '', ip_address: '', port: 6789, api_key: '', is_master: false });
+      fetchNodes();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Error al conectar el nuevo servidor');
+    } finally {
+      setAddingNode(false);
+    }
+  };
+
+  const handleActivateNode = async (node) => {
+    setActionNodeId(node.id);
+    try {
+      const res = await api.post(`/admin/nodes/${node.id}/activate`);
+      setToast({
+        type: 'success',
+        message: res.data?.message || `Servidor "${node.name}" activado como principal.`,
+      });
+      setFormData((prev) => ({
+        ...prev,
+        media_server_url: `http://${node.ip_address}:${node.port}`,
+        media_server_api_key: node.api_key || '',
+      }));
+      fetchNodes();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Error al activar el servidor');
+    } finally {
+      setActionNodeId(null);
+    }
+  };
+
+  const handleSyncNode = async (node) => {
+    setActionNodeId(node.id);
+    try {
+      const res = await api.post(`/admin/nodes/${node.id}/sync`);
+      setToast({
+        type: 'success',
+        message: res.data?.message || `Catálogo del servidor "${node.name}" sincronizado exitosamente.`,
+      });
+    } catch (err) {
+      alert(err.response?.data?.message || 'Error al sincronizar el servidor');
+    } finally {
+      setActionNodeId(null);
+    }
+  };
+
+  const handleDeleteNode = async (node) => {
+    if (!window.confirm(`¿Seguro que deseas desvincular el servidor "${node.name}"?`)) return;
+    try {
+      await api.delete(`/admin/nodes/${node.id}`);
+      setToast({
+        type: 'success',
+        message: 'Servidor desvinculado correctamente.',
+      });
+      fetchNodes();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Error al eliminar el servidor');
+    }
+  };
 
   // Cargar configuración de red desde el backend (soporta /admin/network-settings y fallback a /admin/network)
   useEffect(() => {
@@ -419,6 +531,130 @@ const NetworkSettings = () => {
                 </p>
               </div>
             </div>
+          </div>
+
+          {/* SECCIÓN MULTI-SERVIDOR: Clúster de Nodos de Streaming (Punto 9) */}
+          <div className="p-5 rounded-2xl bg-zinc-50 dark:bg-[#1c1c1c] border border-zinc-200 dark:border-zinc-800 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-zinc-200 dark:border-zinc-800/80">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-xl bg-amber-500/20 text-amber-500 border border-amber-500/30 shadow-md">
+                  <Layers className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-zinc-900 dark:text-white flex items-center gap-2">
+                    <span>Clúster Multi-Servidor (Nodos de Streaming)</span>
+                    <span className="text-[10px] uppercase tracking-wider font-extrabold px-2 py-0.5 rounded-full bg-red-600/10 text-red-500 border border-red-500/20">
+                      {nodes.length} {nodes.length === 1 ? 'Nodo' : 'Nodos'}
+                    </span>
+                  </h3>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                    Administra servidores de medios remotos o secundarios, sincroniza catálogos independientes y conmuta nodos activos.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowAddNodeModal(true)}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold text-white bg-[#E50914] hover:bg-[#F40612] transition-all shadow-md active:scale-95 cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>+ Conectar Nuevo Servidor</span>
+              </button>
+            </div>
+
+            {/* Lista de Nodos */}
+            {loadingNodes ? (
+              <div className="py-8 flex items-center justify-center gap-3 text-zinc-400 text-xs">
+                <Loader2 className="w-4 h-4 animate-spin text-[#E50914]" />
+                <span>Cargando nodos del clúster...</span>
+              </div>
+            ) : nodes.length === 0 ? (
+              <div className="py-6 text-center text-xs text-zinc-500 dark:text-zinc-400 border border-dashed border-zinc-300 dark:border-zinc-800 rounded-xl bg-white/40 dark:bg-black/20">
+                No hay servidores remotos secundarios configurados. Haz clic en <strong>"+ Conectar Nuevo Servidor"</strong> para vincular un nuevo nodo.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                {nodes.map((node) => {
+                  const isActive = !!node.is_active;
+                  const isActing = actionNodeId === node.id;
+                  return (
+                    <div
+                      key={node.id}
+                      className={`p-4 rounded-xl border transition-all flex flex-col justify-between gap-3 ${
+                        isActive
+                          ? 'bg-red-500/5 dark:bg-red-950/20 border-red-500/40 ring-1 ring-red-500/20'
+                          : 'bg-white dark:bg-[#232323] border-zinc-200 dark:border-zinc-800'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-sm text-zinc-900 dark:text-white">
+                              {node.name}
+                            </span>
+                            {isActive && (
+                              <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                                Activo
+                              </span>
+                            )}
+                            {node.is_master && (
+                              <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-md bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300">
+                                Maestro
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs font-mono text-zinc-500 dark:text-zinc-400">
+                            {node.ip_address}:{node.port}
+                          </p>
+                        </div>
+
+                        {/* Botón Eliminar */}
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteNode(node)}
+                          className="p-1.5 text-zinc-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-lg transition-colors cursor-pointer"
+                          title="Desvincular servidor"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+
+                      {/* Botones de acción */}
+                      <div className="flex items-center gap-2 pt-2 border-t border-zinc-100 dark:border-zinc-800/80">
+                        {!isActive ? (
+                          <button
+                            type="button"
+                            onClick={() => handleActivateNode(node)}
+                            disabled={isActing}
+                            className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-zinc-700 dark:text-zinc-200 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 transition-all cursor-pointer active:scale-95 disabled:opacity-50"
+                          >
+                            <Power className="w-3 h-3 text-emerald-500" />
+                            <span>Alternar / Activar</span>
+                          </button>
+                        ) : (
+                          <span className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20">
+                            <Check className="w-3 h-3" />
+                            <span>Nodo en Uso</span>
+                          </span>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={() => handleSyncNode(node)}
+                          disabled={isActing}
+                          className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-zinc-800 hover:bg-zinc-700 dark:bg-zinc-700 dark:hover:bg-zinc-600 transition-all cursor-pointer active:scale-95 disabled:opacity-50"
+                          title="Sincronizar catálogo independiente de este nodo"
+                        >
+                          <RefreshCw className={`w-3 h-3 ${isActing ? 'animate-spin' : ''}`} />
+                          <span>Sincronizar</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* 1. LAN networks */}
@@ -856,6 +1092,111 @@ const NetworkSettings = () => {
           </div>
         </div>
       </form>
+
+      {/* Modal Conectar Nuevo Servidor (Punto 9) */}
+      {showAddNodeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-md bg-white dark:bg-[#1a1a1a] rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-2xl overflow-hidden p-6 space-y-5">
+            <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-red-600/10 text-[#E50914] border border-red-600/20">
+                  <Server className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-zinc-900 dark:text-white">
+                    Conectar Nuevo Servidor
+                  </h3>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                    Añade un nodo remoto de streaming al clúster FlixHN
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAddNodeModal(false)}
+                className="text-zinc-400 hover:text-white transition-colors p-1 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAddNode} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">
+                  Nombre o Alias del Servidor *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ej: Nodo-Secundario-SPS"
+                  value={newNode.name}
+                  onChange={(e) => setNewNode({ ...newNode, name: e.target.value })}
+                  className="w-full px-3.5 py-2 text-sm rounded-xl bg-zinc-50 dark:bg-[#242424] border border-zinc-300 dark:border-zinc-700 text-zinc-900 dark:text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-[#E50914]"
+                />
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-2 space-y-1.5">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">
+                    Dirección IP / Host *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="192.168.1.100 ó dominio"
+                    value={newNode.ip_address}
+                    onChange={(e) => setNewNode({ ...newNode, ip_address: e.target.value })}
+                    className="w-full px-3.5 py-2 text-sm font-mono rounded-xl bg-zinc-50 dark:bg-[#242424] border border-zinc-300 dark:border-zinc-700 text-zinc-900 dark:text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-[#E50914]"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">
+                    Puerto *
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    value={newNode.port}
+                    onChange={(e) => setNewNode({ ...newNode, port: parseInt(e.target.value) || 6789 })}
+                    className="w-full px-3.5 py-2 text-sm font-mono rounded-xl bg-zinc-50 dark:bg-[#242424] border border-zinc-300 dark:border-zinc-700 text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#E50914]"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">
+                  API Key / Token de Acceso
+                </label>
+                <input
+                  type="text"
+                  placeholder="Introduce el token de autenticación (opcional)"
+                  value={newNode.api_key}
+                  onChange={(e) => setNewNode({ ...newNode, api_key: e.target.value })}
+                  className="w-full px-3.5 py-2 text-sm font-mono rounded-xl bg-zinc-50 dark:bg-[#242424] border border-zinc-300 dark:border-zinc-700 text-zinc-900 dark:text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-[#E50914]"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-zinc-200 dark:border-zinc-800">
+                <button
+                  type="button"
+                  onClick={() => setShowAddNodeModal(false)}
+                  className="px-4 py-2 text-xs font-semibold rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 transition-colors cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={addingNode}
+                  className="inline-flex items-center gap-2 px-5 py-2 text-xs font-bold text-white bg-[#E50914] hover:bg-[#F40612] rounded-xl shadow-md transition-all cursor-pointer disabled:opacity-50 active:scale-95"
+                >
+                  {addingNode && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <span>{addingNode ? 'Vinculando...' : 'Conectar Servidor'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

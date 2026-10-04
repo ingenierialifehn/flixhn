@@ -14,6 +14,7 @@ import {
   Layers,
   MessageSquare,
   Gauge,
+  Settings,
   X,
   Check,
   Tv,
@@ -65,6 +66,18 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
   const [showEpisodeDrawer, setShowEpisodeDrawer] = useState(false);
   const [showAudioMenu, setShowAudioMenu] = useState(false);
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
+  const [showQualityMenu, setShowQualityMenu] = useState(false);
+
+  // Niveles y selector de calidad dinámica (Punto 4)
+  const [qualityLevels, setQualityLevels] = useState([]);
+  const [selectedQuality, setSelectedQuality] = useState(-1); // -1 = Auto
+  const [activeResolution, setActiveResolution] = useState('');
+
+  // Control estricto de la barra de progreso y tooltip de previsualización (Puntos 2 & 3)
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragPercent, setDragPercent] = useState(0);
+  const [hoverPosition, setHoverPosition] = useState(null); // { percent, time }
+  const progressBarRef = useRef(null);
 
   // Velocidad de reproducción (0.75x, 1x, 1.25x, 1.5x)
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
@@ -288,6 +301,27 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
           if (isCancelled) return;
           setIsLoading(false);
 
+          // Niveles de Calidad HLS dinámicos (Punto 4)
+          if (hls.levels && hls.levels.length > 0) {
+            const lvls = hls.levels.map((lvl, index) => {
+              const h = lvl.height || 0;
+              let label = h > 0 ? `${h}p` : `${Math.round((lvl.bitrate || 0) / 1000)}k`;
+              if (h >= 2160) label = '4K (2160p)';
+              else if (h >= 1440) label = '2K (1440p)';
+              else if (h >= 1080) label = '1080p';
+              else if (h >= 720) label = '720p';
+              else if (h >= 480) label = '480p';
+              return { id: index, height: h, bitrate: lvl.bitrate, label };
+            });
+            setQualityLevels(lvls);
+            const current = hls.currentLevel;
+            if (current >= 0 && lvls[current]) {
+              setActiveResolution(lvls[current].label);
+            } else if (lvls[0]) {
+              setActiveResolution(lvls[0].label);
+            }
+          }
+
           // Pistas de Audio HLS
           if (hls.audioTracks && hls.audioTracks.length > 0) {
             setAudioTracks(hls.audioTracks.map((t, idx) => ({
@@ -314,6 +348,19 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
           video.play().then(() => {
             if (!isCancelled) setIsPlaying(true);
           }).catch(() => {});
+        });
+
+        // Escuchar cambios de nivel de resolución en tiempo real (Punto 4)
+        hls.on(Hls.Events.LEVEL_SWITCHED, (event, data) => {
+          if (hls.levels && hls.levels[data.level]) {
+            const h = hls.levels[data.level].height || 0;
+            let label = h > 0 ? `${h}p` : 'Auto';
+            if (h >= 2160) label = '4K';
+            else if (h >= 1080) label = '1080p';
+            else if (h >= 720) label = '720p';
+            else if (h >= 480) label = '480p';
+            setActiveResolution(label);
+          }
         });
 
         hls.on(Hls.Events.ERROR, (event, data) => {
@@ -482,6 +529,18 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
         const handleReady = () => {
           if (isCancelled) return;
           setIsLoading(false);
+
+          // Detección de resolución nativa para Direct Play MP4 (Punto 4)
+          if (video.videoHeight) {
+            const h = video.videoHeight;
+            let label = `${h}p`;
+            if (h >= 2160) label = '4K';
+            else if (h >= 1080) label = 'Full HD (1080p)';
+            else if (h >= 720) label = 'HD (720p)';
+            else if (h >= 480) label = 'SD (480p)';
+            setActiveResolution(label);
+          }
+
           if (resumeSeconds > 0) {
             video.currentTime = resumeSeconds;
           }
@@ -574,7 +633,9 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
   const handleTimeUpdate = () => {
     const video = videoRef.current;
     if (video) {
-      setCurrentTime(video.currentTime);
+      if (!isDragging) {
+        setCurrentTime(video.currentTime);
+      }
       setDuration(video.duration || 0);
 
       if (video.buffered.length > 0) {
@@ -603,18 +664,77 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
   const handleSkip = (seconds) => {
     const video = videoRef.current;
     if (video) {
-      video.currentTime = Math.max(0, Math.min(video.duration, video.currentTime + seconds));
+      const targetTime = Math.max(0, Math.min(video.duration, video.currentTime + seconds));
+      video.currentTime = targetTime;
+      setCurrentTime(targetTime);
     }
   };
 
-  // Barra de progreso (Seek)
+  // Barra de progreso y scrubber en tiempo real (Puntos 2 & 3)
   const handleSeek = (e) => {
     const video = videoRef.current;
-    if (video && duration) {
-      const rect = e.currentTarget.getBoundingClientRect();
+    if (video && duration > 0 && progressBarRef.current) {
+      const rect = progressBarRef.current.getBoundingClientRect();
       const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-      video.currentTime = pos * duration;
+      const targetTime = pos * duration;
+      video.currentTime = targetTime;
+      setCurrentTime(targetTime);
+      setDragPercent(pos * 100);
     }
+  };
+
+  const handleProgressBarMouseDown = (e) => {
+    setIsDragging(true);
+    handleSeek(e);
+  };
+
+  const handleProgressBarMouseMove = (e) => {
+    if (!progressBarRef.current || duration <= 0) return;
+    const rect = progressBarRef.current.getBoundingClientRect();
+    const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const targetTime = pos * duration;
+    setHoverPosition({
+      percent: pos * 100,
+      time: targetTime,
+    });
+    if (isDragging) {
+      setDragPercent(pos * 100);
+      setCurrentTime(targetTime);
+      if (videoRef.current) {
+        videoRef.current.currentTime = targetTime;
+      }
+    }
+  };
+
+  const handleProgressBarMouseLeave = () => {
+    setHoverPosition(null);
+  };
+
+  useEffect(() => {
+    const handleGlobalMouseUp = () => {
+      if (isDragging) {
+        setIsDragging(false);
+      }
+    };
+    window.addEventListener('mouseup', handleGlobalMouseUp);
+    return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
+  }, [isDragging]);
+
+  // Cambio de Calidad (Punto 4)
+  const handleQualityChange = (levelId) => {
+    setSelectedQuality(levelId);
+    if (hlsRef.current) {
+      hlsRef.current.currentLevel = levelId;
+      if (levelId === -1) {
+        const curr = hlsRef.current.currentLevel;
+        if (curr >= 0 && qualityLevels[curr]) {
+          setActiveResolution(qualityLevels[curr].label);
+        }
+      } else if (qualityLevels[levelId]) {
+        setActiveResolution(qualityLevels[levelId].label);
+      }
+    }
+    setShowQualityMenu(false);
   };
 
   // Control de Volumen
@@ -815,12 +935,6 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
         >
           <ArrowLeft className="w-6 h-6 stroke-[2.5]" />
         </button>
-
-        <div className="text-right">
-          <span className="text-xs font-mono font-bold text-white/80 bg-neutral-900/80 px-3 py-1.5 rounded-full border border-neutral-700/80">
-            {playbackMode === 'hls' ? 'FlixHN HLS Core' : 'FlixHN DirectPlay Core'}
-          </span>
-        </div>
       </div>
 
       {/* Barra Inferior Estilo Netflix (Imagen 3 de referencia) */}
@@ -832,20 +946,59 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
         {/* Barra de Progreso Superior Roja #E50914 con Tiempo al Extremo Derecho */}
         <div className="flex items-center gap-4">
           <div
-            onClick={handleSeek}
-            className="relative flex-1 h-1.5 hover:h-2.5 bg-neutral-700/80 rounded-full cursor-pointer transition-all group"
+            ref={progressBarRef}
+            onMouseDown={handleProgressBarMouseDown}
+            onMouseMove={handleProgressBarMouseMove}
+            onMouseLeave={handleProgressBarMouseLeave}
+            className="relative flex-1 h-2 hover:h-2.5 bg-neutral-700/80 rounded-full cursor-pointer transition-all group py-1 -my-1"
           >
+            {/* Tooltip de Previsualización estilo Netflix en hover (Punto 3) */}
+            {hoverPosition && duration > 0 && (
+              <div
+                className="absolute bottom-6 pointer-events-none z-50 flex flex-col items-center -translate-x-1/2 transition-opacity duration-100 select-none"
+                style={{ left: `${Math.max(6, Math.min(94, hoverPosition.percent))}%` }}
+              >
+                <div className="bg-zinc-950/95 border border-zinc-700/80 rounded-lg p-1.5 shadow-2xl flex flex-col items-center gap-1 backdrop-blur-md">
+                  {(currentEpisode?.thumbnail_url || title?.backdrop_url || title?.poster_url) ? (
+                    <div className="w-36 h-20 bg-zinc-900 rounded overflow-hidden relative shadow-inner">
+                      <img
+                        src={currentEpisode?.thumbnail_url || title?.backdrop_url || title?.poster_url}
+                        alt="Preview"
+                        className="w-full h-full object-cover"
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent flex items-end justify-center pb-1">
+                        <span className="font-mono text-[11px] font-bold text-white drop-shadow">
+                          {formatTime(hoverPosition.time)}
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="w-28 h-14 bg-zinc-900/90 rounded flex flex-col items-center justify-center border border-zinc-800">
+                      <Play className="w-4 h-4 text-[#E50914] mb-0.5 fill-[#E50914]" />
+                      <span className="font-mono text-xs font-bold text-white">
+                        {formatTime(hoverPosition.time)}
+                      </span>
+                    </div>
+                  )}
+                  <span className="font-mono text-xs font-bold text-zinc-200">
+                    {formatTime(hoverPosition.time)}
+                  </span>
+                </div>
+                <div className="w-0 h-0 border-x-4 border-x-transparent border-t-4 border-t-zinc-700" />
+              </div>
+            )}
+
             {/* Buffer precargado */}
             <div
-              className="absolute top-0 left-0 bottom-0 bg-neutral-500/50 rounded-full"
+              className="absolute top-0 left-0 bottom-0 bg-neutral-500/50 rounded-full pointer-events-none"
               style={{ width: `${buffered}%` }}
             />
-            {/* Tiempo reproducido en rojo #E50914 */}
+            {/* Tiempo reproducido en rojo #E50914 - estricto (currentTime / duration) * 100 o dragPercent (Punto 2) */}
             <div
-              className="absolute top-0 left-0 bottom-0 bg-[#E50914] rounded-full relative"
-              style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
+              className="absolute top-0 left-0 bottom-0 bg-[#E50914] rounded-full pointer-events-none"
+              style={{ width: `${isDragging ? dragPercent : (duration > 0 ? (currentTime / duration) * 100 : 0)}%` }}
             >
-              <div className="absolute right-0 top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full shadow-md scale-0 group-hover:scale-100 transition-transform" />
+              <div className="absolute right-0 top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full shadow-md scale-0 group-hover:scale-100 transition-transform pointer-events-none" />
             </div>
           </div>
 
@@ -1132,6 +1285,78 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
                       {playbackSpeed === speed && <Check className="w-3 h-3" />}
                     </button>
                   ))}
+                </div>
+              )}
+            </div>
+
+            {/* Selector de Calidad Dinámico (Punto 4) */}
+            <div className="relative">
+              <button
+                onClick={() => {
+                  setShowQualityMenu(!showQualityMenu);
+                  setShowEpisodeDrawer(false);
+                  setShowAudioMenu(false);
+                  setShowSpeedMenu(false);
+                }}
+                className={`p-1.5 rounded transition-colors text-xs font-mono font-bold flex items-center gap-1 cursor-pointer ${
+                  showQualityMenu ? 'text-[#E50914]' : 'text-white hover:text-[#E50914]'
+                }`}
+                title="Calidad de reproducción"
+                type="button"
+              >
+                <Settings className="w-4 h-4 md:w-5 md:h-5" />
+                <span className="hidden sm:inline">
+                  {playbackMode === 'hls'
+                    ? (selectedQuality === -1 ? (activeResolution ? `Auto (${activeResolution})` : 'Auto') : (qualityLevels.find(q => q.id === selectedQuality)?.label || 'Auto'))
+                    : (activeResolution || 'HD')}
+                </span>
+              </button>
+
+              {showQualityMenu && (
+                <div className="absolute right-0 bottom-12 w-48 bg-zinc-950/95 border border-zinc-800 rounded-xl shadow-2xl p-2 z-50 text-xs animate-fadeIn space-y-1">
+                  <div className="px-2 py-1 font-bold text-zinc-400 border-b border-zinc-800 text-[10px] uppercase">
+                    Calidad de Video
+                  </div>
+
+                  {playbackMode === 'hls' ? (
+                    <>
+                      <button
+                        onClick={() => handleQualityChange(-1)}
+                        className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded text-left transition-colors cursor-pointer ${
+                          selectedQuality === -1
+                            ? 'text-[#E50914] font-bold bg-[#E50914]/15'
+                            : 'text-zinc-300 hover:bg-zinc-800'
+                        }`}
+                        type="button"
+                      >
+                        <span>Auto {activeResolution ? `(${activeResolution})` : ''}</span>
+                        {selectedQuality === -1 && <Check className="w-3.5 h-3.5" />}
+                      </button>
+                      {qualityLevels.map((lvl) => (
+                        <button
+                          key={lvl.id}
+                          onClick={() => handleQualityChange(lvl.id)}
+                          className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded text-left transition-colors cursor-pointer ${
+                            selectedQuality === lvl.id
+                              ? 'text-[#E50914] font-bold bg-[#E50914]/15'
+                              : 'text-zinc-300 hover:bg-zinc-800'
+                          }`}
+                          type="button"
+                        >
+                          <span>{lvl.label}</span>
+                          {selectedQuality === lvl.id && <Check className="w-3.5 h-3.5" />}
+                        </button>
+                      ))}
+                    </>
+                  ) : (
+                    <div className="px-2.5 py-2 text-zinc-300">
+                      <p className="text-zinc-400 text-[10px] mb-1">DirectPlay Nativo</p>
+                      <div className="flex items-center justify-between text-[#E50914] font-bold">
+                        <span>{activeResolution || 'HD Directo'}</span>
+                        <Check className="w-3.5 h-3.5" />
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

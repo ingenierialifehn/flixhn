@@ -79,19 +79,19 @@ const AdminSidebar = ({
       {/* Cabecera del Sidebar */}
       {!isCollapsed ? (
         <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
-          <a
-            href="/admin"
+          <div
             onClick={(e) => {
-              e.preventDefault();
-              if (onSelectTab) {
-                onSelectTab('dashboard', '/admin');
+              if (e) e.preventDefault();
+              if (typeof onBackToBrowse === 'function') {
+                onBackToBrowse();
               } else {
-                window.location.href = '/admin';
+                window.history.pushState({}, '', '/browse');
+                window.dispatchEvent(new PopStateEvent('popstate'));
               }
               if (onCloseMobile) onCloseMobile();
             }}
-            className="flex items-center gap-2 cursor-pointer no-underline text-inherit"
-            title="FlixHN ISP Core - Dashboard"
+            className="flex items-center gap-2 cursor-pointer select-none"
+            title="Ir a navegación de medios (Browse)"
           >
             <div className="flex items-center gap-1 select-none">
               <span className="font-display text-2xl tracking-wider text-[#E50914] font-black">
@@ -104,7 +104,7 @@ const AdminSidebar = ({
             <span className="text-[10px] font-mono uppercase bg-zinc-900 text-zinc-400 px-2 py-0.5 rounded border border-zinc-800">
               ISP Core
             </span>
-          </a>
+          </div>
 
           {/* Botón contraer en Desktop */}
           {onToggleCollapse && (
@@ -133,23 +133,23 @@ const AdminSidebar = ({
         </div>
       ) : (
         <div className="p-3 border-b border-zinc-800 flex flex-col items-center justify-center gap-2">
-          <a
-            href="/admin"
+          <div
             onClick={(e) => {
-              e.preventDefault();
-              if (onSelectTab) {
-                onSelectTab('dashboard', '/admin');
+              if (e) e.preventDefault();
+              if (typeof onBackToBrowse === 'function') {
+                onBackToBrowse();
               } else {
-                window.location.href = '/admin';
+                window.history.pushState({}, '', '/browse');
+                window.dispatchEvent(new PopStateEvent('popstate'));
               }
             }}
-            className="flex items-center justify-center select-none cursor-pointer no-underline text-inherit"
-            title="FlixHN ISP Core - Dashboard"
+            className="flex items-center justify-center select-none cursor-pointer"
+            title="Ir a navegación de medios (Browse)"
           >
             <span className="bg-[#E50914] text-white text-xs font-black px-2 py-1 rounded tracking-widest shadow-md">
               HN
             </span>
-          </a>
+          </div>
 
           {/* Botón expandir en Desktop */}
           {onToggleCollapse && (

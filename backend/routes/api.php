@@ -7,6 +7,9 @@ use App\Http\Controllers\PlaybackController;
 use App\Http\Controllers\AdminTitleController;
 use App\Http\Controllers\AdminUserController;
 use App\Http\Controllers\NetworkSettingController;
+use App\Http\Controllers\ServerControlController;
+use App\Http\Controllers\MediaNodeController;
+use App\Http\Controllers\AlertController;
 use App\Http\Middleware\EnsureAdmin;
 
 /*
@@ -41,7 +44,7 @@ Route::get('/media/backdrop', function (\Illuminate\Http\Request $request) {
 });
 
 Route::post('/auth/login', [AuthController::class, 'login']);
-Route::post('/login', [AuthController::class, 'login']);
+Route::post('/login', [AuthController::class, 'login'])->name('login');
 
 /*
 |--------------------------------------------------------------------------
@@ -101,5 +104,22 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/network', [NetworkSettingController::class, 'updateSettings']);
         Route::get('/network-settings', [NetworkSettingController::class, 'index']);
         Route::post('/network-settings', [NetworkSettingController::class, 'updateSettings']);
+
+        // Control de Servidor (Reiniciar, Detener, Iniciar y Cambio de Nombre)
+        Route::post('/server/{action}', [ServerControlController::class, 'control']);
+        Route::patch('/server/name', [ServerControlController::class, 'updateName']);
+        Route::get('/server/status', [ServerControlController::class, 'status']);
+
+        // Soporte Multi-Servidor (Nodos de Medios)
+        Route::get('/nodes', [MediaNodeController::class, 'index']);
+        Route::post('/nodes', [MediaNodeController::class, 'store']);
+        Route::post('/nodes/{id}/activate', [MediaNodeController::class, 'activate']);
+        Route::post('/nodes/{id}/sync', [MediaNodeController::class, 'sync']);
+        Route::delete('/nodes/{id}', [MediaNodeController::class, 'destroy']);
+
+        // Alertas del Sistema en Tiempo Real
+        Route::get('/alerts', [AlertController::class, 'index']);
+        Route::post('/alerts/{id}/dismiss', [AlertController::class, 'dismiss']);
+        Route::post('/alerts/dismiss-all', [AlertController::class, 'dismissAll']);
     });
 });

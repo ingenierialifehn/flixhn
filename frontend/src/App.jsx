@@ -3,7 +3,7 @@ import { useAuth } from './context/AuthContext';
 import { useLanguage } from './context/LanguageContext';
 import Login from './components/Login';
 import ProfileSelector from './components/ProfileSelector';
-import Navbar from './components/Navbar';
+import Navbar from './components/Navbar.jsx';
 import Billboard from './components/Billboard';
 import MovieRow from './components/MovieRow';
 import MovieCard from './components/MovieCard';
@@ -80,18 +80,23 @@ function App() {
     loadCatalog();
   }, [loadCatalog]);
 
-  // Sincronización de URL /admin, /login y navegación del navegador
+  // Sincronización de URL /admin, /browse, /login y navegación del navegador (Blindaje de Sesión)
   useEffect(() => {
-    if (window.location.pathname.startsWith('/admin') && user?.role === 'admin') {
+    const currentPath = window.location.pathname;
+    if (currentPath.startsWith('/admin') && user?.role === 'admin') {
       setCurrentTab((prev) => (prev !== 'admin' ? 'admin' : prev));
-    } else if (window.location.pathname === '/login' && token && user) {
-      window.history.replaceState({}, '', '/');
+    } else if (currentPath.startsWith('/browse') || currentPath === '/' || currentPath === '') {
+      setCurrentTab((prev) => (prev !== 'home' ? 'home' : prev));
+    } else if (currentPath === '/login' && token && user) {
+      window.history.replaceState({}, '', '/browse');
+      setCurrentTab('home');
     }
 
     const handlePopState = () => {
-      if (window.location.pathname.startsWith('/admin') && user?.role === 'admin') {
+      const path = window.location.pathname;
+      if (path.startsWith('/admin') && user?.role === 'admin') {
         setCurrentTab((prev) => (prev !== 'admin' ? 'admin' : prev));
-      } else if (window.location.pathname === '/' || window.location.pathname === '') {
+      } else if (path === '/' || path === '' || path.startsWith('/browse')) {
         setCurrentTab((prev) => (prev !== 'home' ? 'home' : prev));
       }
     };
@@ -212,7 +217,7 @@ function App() {
       <AdminLayout
         onBackToBrowse={() => {
           setCurrentTab('home');
-          window.history.pushState({}, '', '/');
+          window.history.pushState({}, '', '/browse');
           loadCatalog();
         }}
       />
