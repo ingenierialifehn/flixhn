@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="450" viewBox="0 0 300 450">
+  <defs>
+    <linearGradient id="flixBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1f1f1f"/>
+      <stop offset="50%" stop-color="#141414"/>
+      <stop offset="100%" stop-color="#0a0a0a"/>
+    </linearGradient>
+    <linearGradient id="redGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#E50914"/>
+      <stop offset="100%" stop-color="#B81D24"/>
+    </linearGradient>
+  </defs>
+  <rect width="300" height="450" fill="url(#flixBg)"/>
+  <rect x="1" y="1" width="298" height="448" fill="none" stroke="#2e2e2e" stroke-width="2" rx="8"/>
+  
+  <g transform="translate(150, 180) scale(1.4)">
+    <circle cx="0" cy="0" r="32" fill="#222" stroke="#333" stroke-width="2"/>
+    <path d="M-8,-14 L12,0 L-8,14 Z" fill="url(#redGrad)"/>
+  </g>
+  
+  <text x="150" y="255" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="20" font-weight="900" fill="#E50914" text-anchor="middle" letter-spacing="4">FLIX<tspan fill="#ffffff">HN</tspan></text>
+  <text x="150" y="280" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" font-weight="500" fill="#777777" text-anchor="middle" letter-spacing="1">STREAMING LOCAL</text>
+  <line x1="100" y1="300" x2="200" y2="300" stroke="#333333" stroke-width="1"/>
+</svg>

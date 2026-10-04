@@ -1,0 +1,99 @@
+services:
+  # Database Service (MySQL 8.0)
+  db:
+    image: mysql:8.0
+    container_name: flixhn_db
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${DB_DATABASE:-flixhn}
+      MYSQL_USER: ${DB_USERNAME:-flixhn_user}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-flixhn_secret}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root_secret}
+    volumes:
+      - db_data:/var/lib/mysql
+    networks:
+      - flixhn_net
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_ROOT_PASSWORD:-root_secret}"]
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # Backend Service (PHP 8.3 FPM + Laravel 11)
+  backend:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+    container_name: flixhn_backend
+    restart: unless-stopped
+    working_dir: /var/www/html
+    volumes:
+      - ./backend:/var/www/html
+      - backend_vendor:/var/www/html/vendor
+      - ./media:/var/media:ro
+    environment:
+      DB_CONNECTION: mysql
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_DATABASE: ${DB_DATABASE:-flixhn}
+      DB_USERNAME: ${DB_USERNAME:-flixhn_user}
+      DB_PASSWORD: ${DB_PASSWORD:-flixhn_secret}
+      APP_ENV: ${APP_ENV:-local}
+      APP_DEBUG: ${APP_DEBUG:-true}
+      APP_KEY: ${APP_KEY:-base64:XG8d2m0qL1zOa8Pq3K9yN5wV8jR4eU1iB6tY7sA2dC0=}
+      SANCTUM_STATEFUL_DOMAINS: "localhost,127.0.0.1"
+      SESSION_DRIVER: cookie
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - flixhn_net
+
+  # Frontend Service (Node / Vite Dev Server o Static Serve)
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend/Dockerfile
+    container_name: flixhn_frontend
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+    environment:
+      - VITE_API_URL=/api
+      - VITE_STREAM_URL=http://localhost:7000/media
+      - NODE_OPTIONS=--import /app/fs-shim.js
+    networks:
+      - flixhn_net
+
+  # Nginx Gateway & Video Streaming Server
+  nginx:
+    build:
+      context: .
+      dockerfile: docker/nginx/Dockerfile
+    container_name: flixhn_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"       # Web Portal & API
+      - "7000:7000"   # High-Performance HLS / Media Streaming
+    volumes:
+      - ./backend:/var/www/html
+      - ./media:/var/media:ro
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - flixhn_net
+
+volumes:
+  db_data:
+    driver: local
+  backend_vendor:
+    driver: local
+
+networks:
+  flixhn_net:
+    driver: bridge

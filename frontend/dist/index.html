@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#141414" />
+    <meta name="description" content="FlixHN - Plataforma de Streaming On-Net de Ultra Alta Velocidad para Redes de Fibra Óptica del ISP." />
+
+    <!-- Favicon Oficial FlixHN -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/favicon.svg" />
+
+    <!-- Google Fonts: Bebas Neue (Títulos cinemáticos) e Inter (Interfaz fluida) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+
+    <!-- Theme initialization script (prevents flash of wrong theme) -->
+    <script>
+      (function() {
+        try {
+          var theme = localStorage.getItem('flixhn_theme');
+          if (theme === 'light') {
+            document.documentElement.classList.remove('dark');
+            document.documentElement.style.colorScheme = 'light';
+          } else {
+            document.documentElement.classList.add('dark');
+            document.documentElement.style.colorScheme = 'dark';
+          }
+        } catch (e) {}
+      })();
+    </script>
+
+    <title>FlixHN - Streaming Local</title>
+    <script type="module" crossorigin src="/assets/index-DH68YGIj.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-CX-4K05p.css">
+  </head>
+  <body class="bg-gray-100 text-gray-900 dark:bg-[#141414] dark:text-white selection:bg-[#E50914] selection:text-white antialiased overflow-x-hidden min-h-screen transition-colors duration-200">
+    <div id="root"></div>
+  </body>
+</html>

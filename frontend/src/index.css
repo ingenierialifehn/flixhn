@@ -1,0 +1,89 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Estilos de la barra de desplazamiento estilo Netflix */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 6px;
+}
+
+.dark ::-webkit-scrollbar-track,
+::-webkit-scrollbar-track {
+  background: #141414;
+}
+
+:root:not(.dark) ::-webkit-scrollbar-track {
+  background: #f3f4f6;
+}
+
+.dark ::-webkit-scrollbar-thumb,
+::-webkit-scrollbar-thumb {
+  background: #333333;
+  border-radius: 4px;
+}
+
+:root:not(.dark) ::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #E50914;
+}
+
+/* Ocultar scrollbar estándar en carruseles horizontales pero permitiendo navegación táctil y con botones */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Sombras y gradientes cinemáticos de Netflix */
+.text-shadow-netflix {
+  text-shadow: 2px 2px 8px rgba(0, 0, 0, 0.85);
+}
+
+.gradient-billboard {
+  background: linear-gradient(
+    77deg,
+    rgba(0, 0, 0, 0.8) 0%,
+    rgba(0, 0, 0, 0.5) 45%,
+    transparent 85%
+  );
+}
+
+.gradient-bottom-vignette {
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(20, 20, 20, 0.4) 60%,
+    #141414 100%
+  );
+}
+
+:root:not(.dark) .gradient-bottom-vignette {
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(243, 244, 246, 0.5) 60%,
+    #f3f4f6 100%
+  );
+}
+
+/* Soporte modo claro para tarjetas administrativas de FlixHN */
+:root:not(.dark) .admin-card {
+  background-color: #ffffff !important;
+  border-color: #e4e4e7 !important;
+  color: #18181b !important;
+}
+
+:root:not(.dark) .admin-card .admin-card-title {
+  color: #71717a !important;
+}
+
+:root:not(.dark) .admin-card .admin-card-value {
+  color: #09090b !important;
+}
