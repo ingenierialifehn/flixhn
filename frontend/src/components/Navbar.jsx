@@ -174,7 +174,7 @@ const Navbar = ({
         </div>
 
         {/* Enlaces de Navegación estilo Netflix */}
-        <div className="hidden md:flex items-center gap-5 lg:gap-6 text-sm font-medium select-none">
+        <div className="flex items-center gap-6 text-sm font-medium select-none">
           <button
             type="button"
             onClick={() => {

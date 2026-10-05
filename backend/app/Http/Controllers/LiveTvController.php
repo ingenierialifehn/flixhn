@@ -9,72 +9,30 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Http;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
+use App\Services\M3uParserService;
+
 class LiveTvController extends Controller
 {
     /**
-     * Lista canales agrupados por categoría para el Portal de Usuarios (/livetv).
+     * Lista canales para la vista de TV en Vivo (/livetv).
+     * Devuelve únicamente los canales persistidos en la tabla tv_channels.
+     */
+    public function getChannels(Request $request): JsonResponse
+    {
+        return response()->json(
+            TvChannel::where('is_active', true)
+                ->orderByRaw('CAST(channel_number AS UNSIGNED) ASC')
+                ->orderBy('name', 'asc')
+                ->get()
+        );
+    }
+
+    /**
+     * Alias para retrocompatibilidad
      */
     public function channels(Request $request): JsonResponse
     {
-        $query = TvChannel::where('is_active', true)
-            ->whereHas('tvSource', function ($q) {
-                $q->where('is_active', true);
-            });
-
-        // Búsqueda por término
-        if ($request->filled('q')) {
-            $search = '%' . trim($request->q) . '%';
-            $query->where(function ($q) use ($search) {
-                $q->where('name', 'like', $search)
-                  ->orWhere('group_title', 'like', $search)
-                  ->orWhere('channel_number', 'like', $search);
-            });
-        }
-
-        // Filtro específico por categoría
-        if ($request->filled('category') && strtolower($request->category) !== 'todos' && strtolower($request->category) !== 'all') {
-            $query->where('group_title', $request->category);
-        }
-
-        // Lista de canales
-        $channels = $query->orderBy('group_title')
-            ->orderByRaw('CAST(channel_number AS UNSIGNED) ASC, name ASC')
-            ->get();
-
-        // Categorías disponibles con conteos
-        $categoriesQuery = TvChannel::where('is_active', true)
-            ->whereHas('tvSource', function ($q) {
-                $q->where('is_active', true);
-            })
-            ->selectRaw('group_title, count(*) as count')
-            ->groupBy('group_title')
-            ->orderBy('group_title')
-            ->get();
-
-        $totalActive = $categoriesQuery->sum('count');
-
-        $categories = [
-            [
-                'id' => 'all',
-                'name' => 'Todos los Canales',
-                'count' => $totalActive,
-            ],
-        ];
-
-        foreach ($categoriesQuery as $cat) {
-            $categories[] = [
-                'id' => $cat->group_title,
-                'name' => $cat->group_title,
-                'count' => $cat->count,
-            ];
-        }
-
-        return response()->json([
-            'status' => 'success',
-            'categories' => $categories,
-            'channels' => $channels,
-            'total_channels' => $totalActive,
-        ]);
+        return $this->getChannels($request);
     }
 
     /**

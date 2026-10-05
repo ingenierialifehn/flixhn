@@ -156,7 +156,7 @@ const ServerHeader = ({ server = null }) => {
       )}
 
       {/* Fila Principal: Identificación del Servidor y Estado */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5 border-b border-zinc-800 pb-5">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
         <div className="flex items-start gap-4">
           <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-[#E50914] shadow-inner shrink-0">
             <Server className="w-7 h-7" />
@@ -324,53 +324,6 @@ const ServerHeader = ({ server = null }) => {
               </div>
               <p className="font-mono text-xs text-zinc-100 font-semibold">{wanIp}</p>
             </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Fila Secundaria: Métricas de Recursos en Tiempo Real */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-5 text-xs">
-        {/* CPU */}
-        <div className="bg-zinc-900/90 border border-zinc-800 p-3.5 rounded-lg flex items-center gap-3 shadow-none">
-          <div className="p-2 bg-red-500/10 border border-red-500/20 rounded-md text-[#E50914]">
-            <Cpu className="w-4 h-4" />
-          </div>
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Uso CPU Nodo</p>
-            <p className="text-sm font-bold text-white mt-0.5">{cpuUsage}</p>
-          </div>
-        </div>
-
-        {/* Memoria RAM */}
-        <div className="bg-zinc-900/90 border border-zinc-800 p-3.5 rounded-lg flex items-center gap-3 shadow-none">
-          <div className="p-2 bg-red-500/10 border border-red-500/20 rounded-md text-[#E50914]">
-            <Activity className="w-4 h-4 text-emerald-400" />
-          </div>
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-zinc-400">RAM En Uso</p>
-            <p className="text-sm font-bold text-white mt-0.5">{ramUsage}</p>
-          </div>
-        </div>
-
-        {/* Almacenamiento NVMe */}
-        <div className="bg-zinc-900/90 border border-zinc-800 p-3.5 rounded-lg flex items-center gap-3 shadow-none">
-          <div className="p-2 bg-red-500/10 border border-red-500/20 rounded-md text-[#E50914]">
-            <HardDrive className="w-4 h-4 text-purple-400" />
-          </div>
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Almacenamiento Local</p>
-            <p className="text-sm font-bold text-white mt-0.5">{storageText}</p>
-          </div>
-        </div>
-
-        {/* Conexión Local */}
-        <div className="bg-zinc-900/90 border border-zinc-800 p-3.5 rounded-lg flex items-center gap-3 shadow-none">
-          <div className="p-2 bg-red-500/10 border border-red-500/20 rounded-md text-[#E50914]">
-            <Wifi className="w-4 h-4 text-emerald-400" />
-          </div>
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Conectividad Local</p>
-            <p className="text-sm font-bold text-emerald-400 mt-0.5">Direct Play On-Net</p>
           </div>
         </div>
       </div>

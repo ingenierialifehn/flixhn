@@ -49,6 +49,10 @@ Route::get('/media/backdrop', function (\Illuminate\Http\Request $request) {
 Route::post('/auth/login', [AuthController::class, 'login']);
 Route::post('/login', [AuthController::class, 'login'])->name('login');
 
+// Acceso público al portal Live TV y proxy de streaming
+Route::get('/livetv/channels', [LiveTvController::class, 'getChannels']);
+Route::get('/livetv/proxy', [LiveTvController::class, 'proxy']);
+
 /*
 |--------------------------------------------------------------------------
 | Rutas Protegidas por Token Sanctum (Abonados y Administradores)
@@ -131,6 +135,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/tv-sources/{id}', [TvSourceController::class, 'show']);
         Route::put('/tv-sources/{id}', [TvSourceController::class, 'update']);
         Route::post('/tv-sources/{id}/refresh', [TvSourceController::class, 'refresh']);
+        Route::post('/tv-sources/{id}/sync', [TvSourceController::class, 'refresh']);
         Route::post('/tv-sources/{id}/seed-demo', [TvSourceController::class, 'seedDemo']);
         Route::delete('/tv-sources/{id}', [TvSourceController::class, 'destroy']);
         Route::get('/tv-channels', [TvSourceController::class, 'channels']);
@@ -141,8 +146,4 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/tv-guide-sources/{id}/refresh', [TvGuideSourceController::class, 'refresh']);
         Route::delete('/tv-guide-sources/{id}', [TvGuideSourceController::class, 'destroy']);
     });
-
-    // Portal de Clientes: Canales de TV en Vivo y Proxy de Streaming
-    Route::get('/livetv/channels', [LiveTvController::class, 'channels']);
-    Route::get('/livetv/proxy', [LiveTvController::class, 'proxy']);
 });

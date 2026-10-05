@@ -1,30 +1,19 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Tv,
   Plus,
   RefreshCw,
-  MoreVertical,
   Edit2,
+  Pencil,
   Trash2,
   Search,
-  ArrowLeft,
   CheckCircle2,
   AlertTriangle,
   Play,
-  Layers,
-  Settings,
-  Radio,
-  ExternalLink,
-  Wifi,
   Database,
   Sliders,
-  Sparkles,
-  Info,
-  Clock,
-  Check,
   X,
   RadioTower,
-  Eye,
 } from 'lucide-react';
 import api from '../../services/api';
 import LiveTvPlayer from '../../components/LiveTvPlayer';
@@ -45,11 +34,9 @@ export default function LiveTvManagement() {
   const [notification, setNotification] = useState(null);
 
   // Estados de modales
-  const [showTypeModal, setShowTypeModal] = useState(false);
-  const [showM3uForm, setShowM3uForm] = useState(false);
+  const [isSourceModalOpen, setIsSourceModalOpen] = useState(false);
   const [showHdHomerunModal, setShowHdHomerunModal] = useState(false);
   const [showGuideModal, setShowGuideModal] = useState(false);
-  const [activeMenuSourceId, setActiveMenuSourceId] = useState(null);
   const [editingSource, setEditingSource] = useState(null);
 
   // Reproductor de prueba en vivo
@@ -83,13 +70,6 @@ export default function LiveTvManagement() {
     type: 'xmltv',
     url: 'http://65.187.110.22:58004/xmltv.php?username=emby&password=emby',
   });
-
-  // Cerrar menú de 3 puntos al hacer clic fuera
-  useEffect(() => {
-    const handleOutside = () => setActiveMenuSourceId(null);
-    document.addEventListener('click', handleOutside);
-    return () => document.removeEventListener('click', handleOutside);
-  }, []);
 
   const showToast = (message, type = 'success') => {
     setNotification({ message, type });
@@ -155,14 +135,8 @@ export default function LiveTvManagement() {
     }
   }, [activeTab, loadChannels]);
 
-  // Abrir formulario para crear fuente
+  // Abrir modal para crear fuente
   const handleOpenAddSource = () => {
-    setShowTypeModal(true);
-  };
-
-  // Seleccionar M3U desde el modal de tipo
-  const handleSelectM3uType = () => {
-    setShowTypeModal(false);
     setEditingSource(null);
     setFormData({
       name: 'M3U',
@@ -178,19 +152,12 @@ export default function LiveTvManagement() {
       allow_channel_number_mapping: false,
       tags: '',
     });
-    setShowM3uForm(true);
+    setIsSourceModalOpen(true);
   };
 
-  // Seleccionar HD Homerun desde el modal de tipo
-  const handleSelectHdHomerunType = () => {
-    setShowTypeModal(false);
-    setShowHdHomerunModal(true);
-  };
-
-  // Abrir formulario para editar fuente
+  // Abrir modal para editar fuente (precargando datos)
   const handleEditSource = (source, e) => {
     if (e) e.stopPropagation();
-    setActiveMenuSourceId(null);
     setEditingSource(source);
     setFormData({
       name: source.name || 'M3U',
@@ -199,35 +166,45 @@ export default function LiveTvManagement() {
       user_agent: source.user_agent || '',
       referer_mode: source.referer_mode || 'Ninguno',
       referrer_header: source.referrer_header || '',
-      stream_limit: source.stream_limit || 0,
+      stream_limit: source.stream_limit ?? 0,
       group_filter: source.group_filter || '',
       import_guide_from_m3u: source.import_guide_from_m3u ?? true,
       preferred_image_source: source.preferred_image_source || 'Sintonizador / M3U',
       allow_channel_number_mapping: source.allow_channel_number_mapping ?? false,
       tags: source.tags || '',
     });
-    setShowM3uForm(true);
+    setIsSourceModalOpen(true);
   };
 
-  // Guardar fuente M3U
+  // Guardar fuente M3U (Creación o Edición)
   const handleSaveM3u = async (e) => {
     if (e) e.preventDefault();
     setActionLoading(true);
     try {
       if (editingSource) {
         const res = await api.put(`/admin/tv-sources/${editingSource.id}`, formData);
-        showToast(res.data?.message || 'Fuente de TV actualizada.');
+        const count = res.data?.total_synced ?? res.data?.sync?.total_synced ?? res.data?.count;
+        if (count !== undefined) {
+          showToast(`Fuente actualizada. Se sincronizaron ${count} canales.`);
+        } else {
+          showToast(res.data?.message || 'Fuente de TV actualizada con éxito.');
+        }
       } else {
         const res = await api.post('/admin/tv-sources', formData);
-        showToast(res.data?.message || 'Fuente de TV guardada y sincronizada.');
+        const count = res.data?.total_synced ?? res.data?.sync?.total_synced ?? res.data?.count;
+        if (count !== undefined) {
+          showToast(`Fuente guardada. Se sincronizaron ${count} canales.`);
+        } else {
+          showToast(res.data?.message || 'Fuente de TV guardada y sincronizada.');
+        }
       }
-      setShowM3uForm(false);
+      setIsSourceModalOpen(false);
       setEditingSource(null);
       await loadSources();
       if (activeTab === 'channels') loadChannels();
     } catch (err) {
       console.error('Error guardando fuente M3U:', err);
-      showToast(err.response?.data?.message || 'Error al guardar la fuente de TV.', 'error');
+      showToast(err.response?.data?.error || err.response?.data?.message || 'Error al guardar la fuente de TV.', 'error');
     } finally {
       setActionLoading(false);
     }
@@ -236,16 +213,20 @@ export default function LiveTvManagement() {
   // Sincronizar fuente M3U
   const handleSyncSource = async (sourceId, e) => {
     if (e) e.stopPropagation();
-    setActiveMenuSourceId(null);
     setActionLoading(true);
     try {
-      const res = await api.post(`/admin/tv-sources/${sourceId}/refresh`, { fallback_demo: true });
-      showToast(res.data?.message || 'Canales sincronizados correctamente.');
+      const res = await api.post(`/admin/tv-sources/${sourceId}/refresh`);
+      const total = res.data?.total_synced ?? res.data?.sync?.total_synced ?? res.data?.count;
+      if (total !== undefined) {
+        showToast(`Se sincronizaron ${total} canales en la base de datos.`);
+      } else {
+        showToast(res.data?.message || 'Canales sincronizados correctamente.');
+      }
       await loadSources();
       if (activeTab === 'channels') loadChannels();
     } catch (err) {
       console.error('Error sincronizando canales:', err);
-      showToast('Error al conectar con la fuente IPTV.', 'error');
+      showToast(err.response?.data?.error || err.response?.data?.message || 'Error al conectar con la fuente IPTV.', 'error');
     } finally {
       setActionLoading(false);
     }
@@ -254,7 +235,6 @@ export default function LiveTvManagement() {
   // Eliminar fuente de TV
   const handleDeleteSource = async (sourceId, e) => {
     if (e) e.stopPropagation();
-    setActiveMenuSourceId(null);
     if (!window.confirm('¿Deseas eliminar esta fuente de TV y todos sus canales asociados?')) {
       return;
     }
@@ -277,16 +257,35 @@ export default function LiveTvManagement() {
   const handleRefreshGuide = async () => {
     setRefreshingGuide(true);
     try {
+      let totalSynced = 0;
+      let hasSources = false;
+      if (sources.length > 0) {
+        hasSources = true;
+        const results = await Promise.all(
+          sources.map((s) => api.post(`/admin/tv-sources/${s.id}/refresh`))
+        );
+        results.forEach((r) => {
+          const count = r.data?.total_synced ?? r.data?.sync?.total_synced ?? r.data?.count ?? 0;
+          totalSynced += count;
+        });
+      }
       if (guideSources.length > 0) {
         await Promise.all(
           guideSources.map((g) => api.post(`/admin/tv-guide-sources/${g.id}/refresh`))
         );
+        await loadGuideSources();
       }
-      showToast('Datos de la guía electrónica de programas (EPG) actualizados.');
-      await loadGuideSources();
+      await loadSources();
+      if (activeTab === 'channels') loadChannels();
+
+      if (hasSources) {
+        showToast(`Se sincronizaron ${totalSynced} canales en la base de datos.`);
+      } else {
+        showToast('Datos de la guía electrónica de programas (EPG) actualizados.');
+      }
     } catch (err) {
       console.error('Error actualizando guía EPG:', err);
-      showToast('Guía actualizada con los datos disponibles.', 'info');
+      showToast(err.response?.data?.error || err.response?.data?.message || 'Guía actualizada con los datos disponibles.', 'info');
     } finally {
       setRefreshingGuide(false);
     }
@@ -322,16 +321,16 @@ export default function LiveTvManagement() {
   };
 
   return (
-    <div className="space-y-6 text-zinc-100 animate-fadeIn">
-      {/* Notificación Toast */}
+    <div className="bg-[#141414] text-white min-h-screen -m-6 md:-m-8 p-6 md:p-8 space-y-6 animate-fadeIn">
+      {/* Notificación Toast Flotante */}
       {notification && (
         <div
           className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 px-5 py-3 rounded-lg shadow-2xl border transition-all duration-300 animate-slideUp ${
             notification.type === 'error'
-              ? 'bg-red-950/95 border-red-700 text-red-200'
+              ? 'bg-[#181818] border-red-700 text-red-200'
               : notification.type === 'info'
-              ? 'bg-blue-950/95 border-blue-700 text-blue-200'
-              : 'bg-zinc-900/95 border-emerald-600 text-emerald-200'
+              ? 'bg-[#181818] border-blue-700 text-blue-200'
+              : 'bg-[#181818] border-emerald-600 text-emerald-200'
           }`}
         >
           {notification.type === 'error' ? (
@@ -339,72 +338,76 @@ export default function LiveTvManagement() {
           ) : (
             <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
           )}
-          <span className="text-sm font-medium">{notification.message}</span>
+          <span className="text-xs font-semibold">{notification.message}</span>
           <button
             onClick={() => setNotification(null)}
-            className="p-1 hover:text-white rounded"
+            className="p-1 hover:text-white rounded ml-2"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
       )}
 
-      {/* Pestañas Superiores de Navegación del Módulo */}
+      {/* Cabecera Principal de la Sección */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-xl md:text-2xl font-bold text-white tracking-wide flex items-center gap-2">
+            <Tv className="w-6 h-6 text-[#E50914]" />
+            TV en Vivo (Live TV)
+          </h1>
+          <p className="text-xs text-zinc-400 mt-1">
+            Gestión de sintonizadores, fuentes IPTV M3U/M3U8 y datos de guía de programación (EPG).
+          </p>
+        </div>
+      </div>
+
+      {/* Pestañas Superiores (Setup, Channels, Advanced) */}
       <div className="flex items-center gap-2 border-b border-zinc-800 pb-3">
         <button
           type="button"
-          onClick={() => {
-            setShowM3uForm(false);
-            setActiveTab('setup');
-          }}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all cursor-pointer ${
-            activeTab === 'setup' && !showM3uForm
-              ? 'bg-zinc-800 text-white shadow-sm font-semibold'
-              : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
+          onClick={() => setActiveTab('setup')}
+          className={`px-4 py-1.5 rounded-md text-xs transition-colors cursor-pointer ${
+            activeTab === 'setup'
+              ? 'bg-[#E50914] text-white font-semibold'
+              : 'text-zinc-400 hover:text-white'
           }`}
         >
-          Configuración
+          Setup
         </button>
         <button
           type="button"
-          onClick={() => {
-            setShowM3uForm(false);
-            setActiveTab('channels');
-          }}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all cursor-pointer ${
+          onClick={() => setActiveTab('channels')}
+          className={`px-4 py-1.5 rounded-md text-xs transition-colors cursor-pointer ${
             activeTab === 'channels'
-              ? 'bg-zinc-800 text-white shadow-sm font-semibold'
-              : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
+              ? 'bg-[#E50914] text-white font-semibold'
+              : 'text-zinc-400 hover:text-white'
           }`}
         >
-          Canales
+          Channels
         </button>
         <button
           type="button"
-          onClick={() => {
-            setShowM3uForm(false);
-            setActiveTab('advanced');
-          }}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all cursor-pointer ${
+          onClick={() => setActiveTab('advanced')}
+          className={`px-4 py-1.5 rounded-md text-xs transition-colors cursor-pointer ${
             activeTab === 'advanced'
-              ? 'bg-zinc-800 text-white shadow-sm font-semibold'
-              : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
+              ? 'bg-[#E50914] text-white font-semibold'
+              : 'text-zinc-400 hover:text-white'
           }`}
         >
-          Avanzado
+          Advanced
         </button>
       </div>
 
       {/* ========================================================================= */}
-      {/* VISTA 1: CONFIGURACIÓN (SETUP) */}
+      {/* PESTAÑA 1: SETUP (CONFIGURACIÓN) */}
       {/* ========================================================================= */}
-      {activeTab === 'setup' && !showM3uForm && (
+      {activeTab === 'setup' && (
         <div className="space-y-8 animate-fadeIn">
-          {/* SECCIÓN 1: FUENTES DE TV */}
+          {/* SECCIÓN DE TV SOURCES */}
           <section className="space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
-                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
                   <Tv className="w-5 h-5 text-[#E50914]" />
                   Fuentes de TV
                 </h2>
@@ -417,17 +420,17 @@ export default function LiveTvManagement() {
                 <button
                   type="button"
                   onClick={handleOpenAddSource}
-                  className="flex items-center gap-2 bg-[#E50914] hover:bg-[#F40612] text-white px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-md active:scale-95 cursor-pointer"
+                  className="bg-[#E50914] hover:bg-[#b80710] text-white text-xs font-semibold px-4 py-2 rounded-lg flex items-center gap-2 transition-colors cursor-pointer shadow-md active:scale-95"
                 >
                   <Plus className="w-4 h-4" />
-                  Agregar Fuente de TV
+                  + Agregar Fuente de TV
                 </button>
 
                 <button
                   type="button"
                   onClick={handleRefreshGuide}
                   disabled={refreshingGuide}
-                  className="flex items-center gap-2 bg-[#181818] hover:bg-zinc-800 text-zinc-200 hover:text-white px-3.5 py-2 rounded-lg text-xs font-semibold border border-zinc-800 transition-colors shadow-sm disabled:opacity-60 cursor-pointer"
+                  className="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold px-4 py-2 rounded-lg flex items-center gap-2 transition-colors cursor-pointer disabled:opacity-60"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${refreshingGuide ? 'animate-spin text-[#E50914]' : ''}`} />
                   Actualizar Datos de Guía
@@ -435,11 +438,11 @@ export default function LiveTvManagement() {
               </div>
             </div>
 
-            {/* Grid de Fuentes Configuradas */}
+            {/* Grid de Tarjetas de Fuentes (Sources) */}
             {loading ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {[1, 2].map((i) => (
-                  <div key={i} className="h-40 bg-[#181818] border border-zinc-800 rounded-lg animate-pulse" />
+                  <div key={i} className="h-48 bg-[#181818] border border-zinc-800 rounded-lg animate-pulse" />
                 ))}
               </div>
             ) : sources.length === 0 ? (
@@ -450,124 +453,101 @@ export default function LiveTvManagement() {
                   Agrega una lista M3U de tu proveedor IPTV para importar canales y habilitar la TV en vivo para los suscriptores.
                 </p>
                 <button
+                  type="button"
                   onClick={handleOpenAddSource}
-                  className="inline-flex items-center gap-2 bg-[#E50914] text-white px-4 py-2 rounded-lg text-xs font-bold shadow-md hover:bg-[#F40612] transition-colors cursor-pointer"
+                  className="inline-flex items-center gap-2 bg-[#E50914] hover:bg-[#b80710] text-white px-4 py-2 rounded-lg text-xs font-semibold shadow-md transition-colors cursor-pointer"
                 >
                   <Plus className="w-4 h-4" />
-                  Agregar Fuente M3U
+                  + Agregar Fuente de TV
                 </button>
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {sources.map((src) => {
-                  const isMenuOpen = activeMenuSourceId === src.id;
-                  const truncatedUrl = src.url?.length > 45 ? `${src.url.substring(0, 42)}...` : src.url;
-
-                  return (
-                    <div
-                      key={src.id}
-                      className="bg-[#181818] border border-zinc-800 hover:border-zinc-700 rounded-lg p-4 flex flex-col justify-between space-y-4 shadow-sm transition-all group relative"
-                    >
-                      {/* Cabecera y Menú de Tres Puntos */}
-                      <div className="flex items-start justify-between gap-2">
+                {sources.map((src) => (
+                  <div
+                    key={src.id}
+                    className="bg-[#181818] border border-zinc-800 rounded-lg p-5 flex flex-col justify-between hover:border-zinc-700 transition-all shadow-md max-w-sm group"
+                  >
+                    <div>
+                      {/* Cabecera de la tarjeta: Badge y Acciones */}
+                      <div className="flex items-center justify-between gap-2 mb-3">
                         <div className="flex items-center gap-2">
                           <span className="px-2 py-0.5 rounded text-[10px] font-mono uppercase font-bold bg-[#E50914]/20 text-[#E50914] border border-[#E50914]/30">
                             {src.type || 'M3U'}
                           </span>
-                          <span className="text-xs font-bold text-white truncate max-w-[170px]">
-                            {src.name || 'M3U'}
+                          <span className="text-[10px] font-mono bg-zinc-900 text-zinc-400 px-1.5 py-0.5 rounded border border-zinc-800">
+                            {src.tv_channels_count || src.channels_count || 0} CANALES
                           </span>
                         </div>
 
-                        {/* Botón de Tres Puntos */}
-                        <div className="relative">
+                        {/* Botones de acción rápida: Sincronizar, Editar (Pencil) y Eliminar (Trash2) */}
+                        <div className="flex items-center gap-1">
                           <button
                             type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setActiveMenuSourceId(isMenuOpen ? null : src.id);
-                            }}
-                            className="p-1 text-zinc-400 hover:text-white rounded hover:bg-zinc-800 transition-colors cursor-pointer"
-                            title="Opciones de la fuente"
+                            onClick={(e) => handleSyncSource(src.id, e)}
+                            title="Sincronizar Canales"
+                            className="p-1.5 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded transition-colors cursor-pointer"
                           >
-                            <MoreVertical className="w-4 h-4" />
+                            <RefreshCw className="w-3.5 h-3.5" />
                           </button>
-
-                          {/* Menú Desplegable Flotante */}
-                          {isMenuOpen && (
-                            <div
-                              onClick={(e) => e.stopPropagation()}
-                              className="absolute right-0 mt-1 w-44 bg-[#202020] border border-zinc-700 rounded-md shadow-2xl py-1.5 z-40 text-xs animate-fadeIn"
-                            >
-                              <button
-                                onClick={(e) => handleEditSource(src, e)}
-                                className="w-full text-left px-3 py-2 hover:bg-zinc-700/60 flex items-center gap-2 text-zinc-200 hover:text-white transition-colors cursor-pointer"
-                              >
-                                <Edit2 className="w-3.5 h-3.5 text-zinc-400" />
-                                Editar
-                              </button>
-                              <button
-                                onClick={(e) => handleSyncSource(src.id, e)}
-                                className="w-full text-left px-3 py-2 hover:bg-zinc-700/60 flex items-center gap-2 text-zinc-200 hover:text-white transition-colors cursor-pointer"
-                              >
-                                <RefreshCw className="w-3.5 h-3.5 text-zinc-400" />
-                                Sincronizar Canales
-                              </button>
-                              <div className="border-t border-zinc-700/60 my-1"></div>
-                              <button
-                                onClick={(e) => handleDeleteSource(src.id, e)}
-                                className="w-full text-left px-3 py-2 hover:bg-red-900/30 flex items-center gap-2 text-red-400 hover:text-red-300 transition-colors cursor-pointer"
-                              >
-                                <Trash2 className="w-3.5 h-3.5 text-red-400" />
-                                Eliminar
-                              </button>
-                            </div>
-                          )}
+                          <button
+                            type="button"
+                            onClick={(e) => handleEditSource(src, e)}
+                            title="Editar Fuente"
+                            className="p-1.5 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded transition-colors cursor-pointer"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => handleDeleteSource(src.id, e)}
+                            title="Eliminar Fuente"
+                            className="p-1.5 text-zinc-400 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       </div>
 
-                      {/* Miniatura Central con Ícono de Pantalla de Video */}
-                      <div className="h-28 bg-[#121212] border border-zinc-850 rounded-md flex items-center justify-center relative overflow-hidden group-hover:border-zinc-700 transition-colors">
-                        <div className="w-12 h-12 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-400 group-hover:text-[#E50914] group-hover:scale-110 transition-all">
-                          <Tv className="w-6 h-6 stroke-[1.5]" />
-                        </div>
-                        <span className="absolute bottom-2 right-2 text-[10px] font-mono text-zinc-500 bg-black/60 px-1.5 py-0.5 rounded">
-                          {src.tv_channels_count || src.channels_count || 0} CANALES
-                        </span>
+                      {/* Área central de vista previa: contenedor oscuro */}
+                      <div className="bg-zinc-900/60 rounded-md p-6 flex items-center justify-center text-zinc-500 group-hover:text-zinc-400 transition-colors">
+                        <Tv className="w-10 h-10 stroke-[1.5] group-hover:scale-110 group-hover:text-[#E50914] transition-all" />
                       </div>
 
-                      {/* Subtítulo / URL y Estado */}
-                      <div className="space-y-1">
-                        <p
-                          className="text-xs text-zinc-400 font-mono truncate cursor-pointer hover:text-zinc-200"
-                          title={src.url}
-                        >
-                          {truncatedUrl}
-                        </p>
-                        <div className="flex items-center justify-between text-[11px] text-zinc-500 pt-1 border-t border-zinc-850">
-                          <span className="flex items-center gap-1">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                            Activa
-                          </span>
-                          <span>
-                            {src.last_synced_at
-                              ? new Date(src.last_synced_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                              : 'Pendiente'}
-                          </span>
-                        </div>
-                      </div>
+                      {/* Título de la fuente */}
+                      <h3 className="text-sm font-bold text-white mt-3 truncate" title={src.name || 'M3U'}>
+                        {src.name || 'M3U'}
+                      </h3>
+
+                      {/* URL de la fuente */}
+                      <p className="text-xs font-mono text-zinc-500 truncate mt-1" title={src.url}>
+                        {src.url}
+                      </p>
                     </div>
-                  );
-                })}
+
+                    {/* Footer de la tarjeta con estado y fecha */}
+                    <div className="flex items-center justify-between text-[11px] text-zinc-500 pt-3 border-t border-zinc-800 mt-4">
+                      <span className="flex items-center gap-1.5 text-zinc-400">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                        Activa
+                      </span>
+                      <span className="text-[10px] font-mono text-zinc-500">
+                        {src.last_synced_at
+                          ? new Date(src.last_synced_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                          : 'Pendiente'}
+                      </span>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </section>
 
-          {/* SECCIÓN 2: FUENTES DE DATOS DE GUÍA (EPG) */}
-          <section className="space-y-4 pt-4 border-t border-zinc-800">
+          {/* SECCIÓN DE FUENTES DE GUÍA (EPG) */}
+          <section className="space-y-4 pt-6 border-t border-zinc-800">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
-                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
                   <Database className="w-5 h-5 text-indigo-400" />
                   Fuentes de Datos de Guía (Guide Data Sources - EPG)
                 </h2>
@@ -579,7 +559,7 @@ export default function LiveTvManagement() {
               <button
                 type="button"
                 onClick={() => setShowGuideModal(true)}
-                className="flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 text-white px-3.5 py-2 rounded-lg text-xs font-semibold border border-zinc-700 transition-colors shadow-sm cursor-pointer"
+                className="flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold px-4 py-2 rounded-lg border border-zinc-700 transition-colors shadow-sm cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
                 Agregar Fuente de Guía
@@ -596,7 +576,7 @@ export default function LiveTvManagement() {
                 guideSources.map((guide) => (
                   <div
                     key={guide.id}
-                    className="bg-[#181818] border border-zinc-800 rounded-lg p-3.5 flex items-center justify-between gap-4"
+                    className="bg-[#181818] border border-zinc-800 rounded-lg p-4 flex items-center justify-between gap-4 hover:border-zinc-700 transition-all"
                   >
                     <div className="flex items-center gap-3 min-w-0">
                       <div className="w-8 h-8 rounded bg-zinc-900 border border-zinc-800 flex items-center justify-center text-indigo-400 shrink-0">
@@ -609,7 +589,7 @@ export default function LiveTvManagement() {
                             {guide.type}
                           </span>
                         </div>
-                        <p className="text-[11px] text-zinc-400 font-mono truncate" title={guide.url}>
+                        <p className="text-[11px] text-zinc-400 font-mono truncate mt-0.5" title={guide.url}>
                           {guide.url}
                         </p>
                       </div>
@@ -618,7 +598,7 @@ export default function LiveTvManagement() {
                     <div className="flex items-center gap-2 shrink-0">
                       <button
                         onClick={() => handleDeleteGuideSource(guide.id)}
-                        className="p-1.5 text-zinc-400 hover:text-red-400 rounded hover:bg-zinc-800 transition-colors"
+                        className="p-1.5 text-zinc-400 hover:text-red-400 rounded hover:bg-zinc-800 transition-colors cursor-pointer"
                         title="Eliminar fuente de guía"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -633,223 +613,14 @@ export default function LiveTvManagement() {
       )}
 
       {/* ========================================================================= */}
-      {/* VISTA 2: FORMULARIO DE CONFIGURACIÓN DE FUENTE M3U (IMAGEN 3) */}
-      {/* ========================================================================= */}
-      {showM3uForm && (
-        <div className="bg-[#181818] border border-zinc-800 rounded-xl p-6 md:p-8 space-y-6 max-w-3xl mx-auto shadow-2xl animate-fadeIn">
-          {/* Encabezado con flecha de retorno */}
-          <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
-            <button
-              type="button"
-              onClick={() => {
-                setShowM3uForm(false);
-                setEditingSource(null);
-              }}
-              className="flex items-center gap-2 text-zinc-400 hover:text-white text-sm font-semibold transition-colors cursor-pointer group"
-            >
-              <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
-              Configuración de Fuente de TV
-            </button>
-            <span className="text-xs font-mono uppercase bg-zinc-900 text-zinc-400 px-2 py-1 rounded border border-zinc-800">
-              IPTV M3U Core
-            </span>
-          </div>
-
-          <form onSubmit={handleSaveM3u} className="space-y-5 text-xs">
-            {/* 1. Archivo o URL (File or url) con lupa */}
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-zinc-300">
-                Archivo o URL:
-              </label>
-              <div className="relative">
-                <input
-                  type="text"
-                  required
-                  value={formData.url}
-                  onChange={(e) => setFormData({ ...formData, url: e.target.value })}
-                  placeholder="http://proveedor-iptv:puerto/get.php?username=...&password=..."
-                  className="w-full bg-[#121212] border border-zinc-700 focus:border-[#E50914] rounded-md px-3 py-2.5 text-xs text-white placeholder-zinc-500 font-mono outline-none pr-10 transition-colors"
-                />
-                <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none text-zinc-400">
-                  <Search className="w-4 h-4" />
-                </div>
-              </div>
-              <p className="text-[11px] text-zinc-500">
-                Introduce la URL HLS completa del proveedor o ruta al archivo M3U local.
-              </p>
-            </div>
-
-            {/* 2. Encabezado HTTP User-Agent */}
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-zinc-300">
-                Encabezado HTTP User-Agent:
-              </label>
-              <input
-                type="text"
-                value={formData.user_agent}
-                onChange={(e) => setFormData({ ...formData, user_agent: e.target.value })}
-                placeholder="FlixHN/2.0 (IPTV Sintonizador; HLS Client)"
-                className="w-full bg-[#121212] border border-zinc-700 focus:border-[#E50914] rounded-md px-3 py-2 text-xs text-white placeholder-zinc-500 font-mono outline-none transition-colors"
-              />
-            </div>
-
-            {/* 3 & 4. Modo de encabezado Referer y Encabezado Referrer */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <label className="block text-xs font-medium text-zinc-300">
-                  Modo de encabezado Referer:
-                </label>
-                <select
-                  value={formData.referer_mode}
-                  onChange={(e) => setFormData({ ...formData, referer_mode: e.target.value })}
-                  className="w-full bg-[#121212] border border-zinc-700 focus:border-[#E50914] rounded-md px-3 py-2 text-xs text-white outline-none transition-colors cursor-pointer"
-                >
-                  <option value="Ninguno">Ninguno</option>
-                  <option value="Referer">Referer</option>
-                  <option value="Referrer">Referrer</option>
-                  <option value="Ambos">Ambos</option>
-                </select>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="block text-xs font-medium text-zinc-300">
-                  Encabezado HTTP Referrer:
-                </label>
-                <input
-                  type="text"
-                  value={formData.referrer_header}
-                  onChange={(e) => setFormData({ ...formData, referrer_header: e.target.value })}
-                  placeholder="https://proveedor.iptv"
-                  className="w-full bg-[#121212] border border-zinc-700 focus:border-[#E50914] rounded-md px-3 py-2 text-xs text-white placeholder-zinc-500 font-mono outline-none transition-colors"
-                />
-              </div>
-            </div>
-
-            {/* 5. Límite de transmisiones simultáneas */}
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-zinc-300">
-                Límite de transmisiones simultáneas:
-              </label>
-              <input
-                type="number"
-                min="0"
-                value={formData.stream_limit}
-                onChange={(e) => setFormData({ ...formData, stream_limit: parseInt(e.target.value, 10) || 0 })}
-                className="w-36 bg-[#121212] border border-zinc-700 focus:border-[#E50914] rounded-md px-3 py-2 text-xs text-white font-mono outline-none transition-colors"
-              />
-              <span className="text-[11px] text-zinc-500 ml-2">0 para sin límite</span>
-            </div>
-
-            {/* 6. Importar solo canales que contengan estos grupos */}
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-zinc-300">
-                Importar solo canales que contengan estos grupos:
-              </label>
-              <input
-                type="text"
-                value={formData.group_filter}
-                onChange={(e) => setFormData({ ...formData, group_filter: e.target.value })}
-                placeholder="Deportes; Noticias; Cine; Honduras"
-                className="w-full bg-[#121212] border border-zinc-700 focus:border-[#E50914] rounded-md px-3 py-2 text-xs text-white placeholder-zinc-500 outline-none transition-colors"
-              />
-              <p className="text-[11px] text-zinc-500">
-                Separa múltiples grupos con punto y coma (;). Déjalo vacío para importar todos los canales.
-              </p>
-            </div>
-
-            {/* 7. Checkbox: Importar guía directamente desde el M3U */}
-            <div className="flex items-center gap-3 pt-1">
-              <input
-                type="checkbox"
-                id="import_guide"
-                checked={formData.import_guide_from_m3u}
-                onChange={(e) => setFormData({ ...formData, import_guide_from_m3u: e.target.checked })}
-                className="w-4 h-4 rounded border-zinc-700 bg-zinc-900 text-[#E50914] focus:ring-0 cursor-pointer"
-              />
-              <label htmlFor="import_guide" className="text-xs text-zinc-300 select-none cursor-pointer">
-                Importar guía directamente desde el M3U cuando esté disponible
-              </label>
-            </div>
-
-            {/* 8. Fuente preferida de imagen de canal */}
-            <div className="space-y-1.5 pt-1">
-              <label className="block text-xs font-medium text-zinc-300">
-                Fuente preferida de imagen de canal:
-              </label>
-              <select
-                value={formData.preferred_image_source}
-                onChange={(e) => setFormData({ ...formData, preferred_image_source: e.target.value })}
-                className="w-full max-w-sm bg-[#121212] border border-zinc-700 focus:border-[#E50914] rounded-md px-3 py-2 text-xs text-white outline-none transition-colors cursor-pointer"
-              >
-                <option value="Sintonizador / M3U">Sintonizador / M3U</option>
-                <option value="Fuente de datos de guía">Fuente de datos de guía</option>
-              </select>
-            </div>
-
-            {/* 9. Checkbox: Permitir mapeo a datos de guía usando números de canal */}
-            <div className="flex items-center gap-3 pt-1">
-              <input
-                type="checkbox"
-                id="allow_mapping"
-                checked={formData.allow_channel_number_mapping}
-                onChange={(e) => setFormData({ ...formData, allow_channel_number_mapping: e.target.checked })}
-                className="w-4 h-4 rounded border-zinc-700 bg-zinc-900 text-[#E50914] focus:ring-0 cursor-pointer"
-              />
-              <label htmlFor="allow_mapping" className="text-xs text-zinc-300 select-none cursor-pointer">
-                Permitir mapeo a datos de guía usando números de canal
-              </label>
-            </div>
-
-            {/* 10. Etiquetas adicionales para canales */}
-            <div className="space-y-1.5 pt-1">
-              <label className="block text-xs font-medium text-zinc-300">
-                Etiquetas adicionales para canales:
-              </label>
-              <input
-                type="text"
-                value={formData.tags}
-                onChange={(e) => setFormData({ ...formData, tags: e.target.value })}
-                placeholder="FIBRA_ISP; IPTV_LIVE; HD"
-                className="w-full bg-[#121212] border border-zinc-700 focus:border-[#E50914] rounded-md px-3 py-2 text-xs text-white placeholder-zinc-500 outline-none transition-colors"
-              />
-            </div>
-
-            {/* Botones de Acción */}
-            <div className="flex items-center gap-3 pt-6 border-t border-zinc-800">
-              <button
-                type="submit"
-                disabled={actionLoading}
-                className="bg-green-600 hover:bg-green-700 text-white font-medium px-6 py-2 rounded-md text-xs transition-colors shadow-md disabled:opacity-50 cursor-pointer flex items-center gap-2"
-              >
-                {actionLoading && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
-                {actionLoading ? 'Sincronizando...' : 'Guardar'}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setShowM3uForm(false);
-                  setEditingSource(null);
-                }}
-                disabled={actionLoading}
-                className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white font-medium px-5 py-2 rounded-md text-xs transition-colors cursor-pointer"
-              >
-                Cancelar
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* VISTA 3: CANALES (CHANNELS) */}
+      {/* PESTAÑA 2: CHANNELS (CANALES) */}
       {/* ========================================================================= */}
       {activeTab === 'channels' && (
         <div className="space-y-5 animate-fadeIn">
           {/* Barra de Filtros y Búsqueda */}
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-[#181818] p-4 rounded-xl border border-zinc-800">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-[#181818] p-4 rounded-xl border border-zinc-800 shadow-sm">
             <div className="relative flex-1 max-w-md">
-              <Search className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <Search className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
                 type="text"
                 value={channelSearch}
@@ -858,7 +629,7 @@ export default function LiveTvManagement() {
                   setChannelsPage(1);
                 }}
                 placeholder="Buscar canal por nombre, número o grupo..."
-                className="w-full bg-[#121212] border border-zinc-700 focus:border-[#E50914] rounded-lg pl-9 pr-3 py-2 text-xs text-white outline-none transition-colors"
+                className="w-full bg-[#121212] border border-zinc-700 focus:border-red-600 rounded-lg pl-9 pr-3 py-2 text-xs text-white outline-none transition-colors"
               />
             </div>
 
@@ -870,7 +641,7 @@ export default function LiveTvManagement() {
                   setSelectedCategory(e.target.value);
                   setChannelsPage(1);
                 }}
-                className="bg-[#121212] border border-zinc-700 text-xs text-zinc-200 rounded-lg px-3 py-2 outline-none cursor-pointer"
+                className="bg-[#121212] border border-zinc-700 focus:border-red-600 text-xs text-zinc-200 rounded-lg px-3 py-2 outline-none cursor-pointer"
               >
                 <option value="all">Todas las categorías</option>
                 {categories.map((c) => (
@@ -934,7 +705,7 @@ export default function LiveTvManagement() {
                           #{ch.channel_number || '-'}
                         </td>
                         <td className="py-3 px-4">
-                          <span className="bg-zinc-800 text-zinc-300 px-2 py-0.5 rounded text-[11px] font-medium border border-zinc-700/60">
+                          <span className="bg-zinc-900 text-zinc-300 px-2 py-0.5 rounded text-[11px] font-medium border border-zinc-800">
                             {ch.group_title || 'General'}
                           </span>
                         </td>
@@ -951,7 +722,7 @@ export default function LiveTvManagement() {
                           <button
                             type="button"
                             onClick={() => setPreviewChannel(ch)}
-                            className="inline-flex items-center gap-1.5 bg-[#E50914] hover:bg-[#F40612] text-white px-2.5 py-1 rounded text-xs font-medium transition-colors shadow-sm cursor-pointer"
+                            className="inline-flex items-center gap-1.5 bg-[#E50914] hover:bg-[#b80710] text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors shadow-sm cursor-pointer"
                           >
                             <Play className="w-3 h-3 fill-current" />
                             Probar
@@ -968,10 +739,10 @@ export default function LiveTvManagement() {
       )}
 
       {/* ========================================================================= */}
-      {/* VISTA 4: AVANZADO (ADVANCED) */}
+      {/* PESTAÑA 3: ADVANCED (AVANZADO) */}
       {/* ========================================================================= */}
       {activeTab === 'advanced' && (
-        <div className="bg-[#181818] border border-zinc-800 rounded-xl p-6 md:p-8 space-y-6 max-w-2xl animate-fadeIn">
+        <div className="bg-[#181818] border border-zinc-800 rounded-xl p-6 md:p-8 space-y-6 max-w-2xl text-white shadow-sm animate-fadeIn">
           <h3 className="text-base font-bold text-white flex items-center gap-2">
             <Sliders className="w-4 h-4 text-[#E50914]" />
             Parámetros de Transmisión HLS On-Net
@@ -985,7 +756,7 @@ export default function LiveTvManagement() {
               <input
                 type="number"
                 defaultValue="3"
-                className="w-32 bg-[#121212] border border-zinc-700 rounded px-3 py-1.5 text-white font-mono outline-none"
+                className="w-32 bg-[#121212] border border-zinc-700 focus:border-red-600 rounded px-3 py-1.5 text-white font-mono outline-none transition-colors"
               />
               <p className="text-[11px] text-zinc-500">
                 Tiempo de búfer objetivo en el reproductor del cliente antes del inicio de reproducción.
@@ -999,7 +770,7 @@ export default function LiveTvManagement() {
               <input
                 type="number"
                 defaultValue="12"
-                className="w-32 bg-[#121212] border border-zinc-700 rounded px-3 py-1.5 text-white font-mono outline-none"
+                className="w-32 bg-[#121212] border border-zinc-700 focus:border-red-600 rounded px-3 py-1.5 text-white font-mono outline-none transition-colors"
               />
               <p className="text-[11px] text-zinc-500">
                 Frecuencia con la que el servidor descarga actualizaciones de la guía XMLTV.
@@ -1010,7 +781,7 @@ export default function LiveTvManagement() {
               <button
                 type="button"
                 onClick={() => showToast('Parámetros avanzados guardados con éxito.')}
-                className="bg-[#E50914] hover:bg-[#F40612] text-white px-5 py-2 rounded-md font-semibold transition-colors cursor-pointer"
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs px-5 py-2.5 rounded-lg transition-colors cursor-pointer"
               >
                 Guardar Preferencias Avanzadas
               </button>
@@ -1020,112 +791,229 @@ export default function LiveTvManagement() {
       )}
 
       {/* ========================================================================= */}
-      {/* MODAL: SELECCIÓN DE TIPO DE FUENTE (IMAGEN 2) */}
+      {/* MODAL FLOTANTE: CONFIGURACIÓN DE FUENTE DE TV (M3U) - AGREGAR / EDITAR */}
       {/* ========================================================================= */}
-      {showTypeModal && (
+      {isSourceModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
           <div
             onClick={(e) => e.stopPropagation()}
-            className="bg-[#181818] border border-zinc-700 shadow-2xl rounded-lg p-6 w-full max-w-md space-y-5 animate-scaleUp"
+            className="bg-[#181818] border border-zinc-800 w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl p-6 md:p-8 shadow-2xl space-y-5 text-white"
           >
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-              <h3 className="text-base font-bold text-white">Agregar Fuente de TV</h3>
-              <button
-                onClick={() => setShowTypeModal(false)}
-                className="p-1 text-zinc-400 hover:text-white rounded"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <p className="text-xs text-zinc-400">
-              Selecciona el tipo de sintonizador o proveedor de televisión en vivo que deseas conectar a FlixHN:
-            </p>
-
-            <div className="space-y-3">
-              {/* Opción 1: HD Homerun */}
+            {/* Cabecera del modal */}
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
+              <div>
+                <h3 className="text-base md:text-lg font-bold text-white flex items-center gap-2">
+                  <Tv className="w-5 h-5 text-[#E50914]" />
+                  Configuración de Fuente de TV (M3U)
+                </h3>
+                <p className="text-xs text-zinc-400 mt-1">
+                  {editingSource
+                    ? `Modificando parámetros de la fuente: ${editingSource.name || 'M3U'}`
+                    : 'Agrega una nueva lista IPTV M3U/M3U8 para la red de fibra óptica.'}
+                </p>
+              </div>
               <button
                 type="button"
-                onClick={handleSelectHdHomerunType}
-                className="w-full bg-[#202020] hover:bg-zinc-800 border border-zinc-750 hover:border-zinc-600 rounded-lg p-4 flex items-center gap-4 text-left transition-all group cursor-pointer"
-              >
-                <div className="w-10 h-10 rounded-lg bg-zinc-900 border border-zinc-700 flex items-center justify-center text-zinc-400 group-hover:text-white group-hover:bg-[#E50914]/20 group-hover:border-[#E50914]/50 transition-colors">
-                  <RadioTower className="w-5 h-5" />
-                </div>
-                <div>
-                  <h4 className="text-sm font-bold text-white">HD Homerun</h4>
-                  <p className="text-[11px] text-zinc-400">
-                    Detector automático de sintonizadores de TV digital en la red de área local (LAN).
-                  </p>
-                </div>
-              </button>
-
-              {/* Opción 2: M3U */}
-              <button
-                type="button"
-                onClick={handleSelectM3uType}
-                className="w-full bg-[#202020] hover:bg-zinc-800 border border-zinc-750 hover:border-[#E50914] rounded-lg p-4 flex items-center gap-4 text-left transition-all group cursor-pointer"
-              >
-                <div className="w-10 h-10 rounded-lg bg-zinc-900 border border-zinc-700 flex items-center justify-center text-zinc-400 group-hover:text-[#E50914] group-hover:bg-[#E50914]/20 group-hover:border-[#E50914]/50 transition-colors">
-                  <Tv className="w-5 h-5" />
-                </div>
-                <div>
-                  <h4 className="text-sm font-bold text-white flex items-center gap-1.5">
-                    M3U
-                    <span className="text-[10px] bg-[#E50914] text-white px-1.5 py-0.2 rounded font-mono font-bold">
-                      Recomendado
-                    </span>
-                  </h4>
-                  <p className="text-[11px] text-zinc-400">
-                    Lista de canales IPTV, flujos HLS (.m3u8), TS y protocolos HTTP del proveedor.
-                  </p>
-                </div>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* MODAL: HD HOMERUN SCAN */}
-      {/* ========================================================================= */}
-      {showHdHomerunModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-[#181818] border border-zinc-700 shadow-2xl rounded-lg p-6 w-full max-w-md space-y-4">
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-              <h3 className="text-base font-bold text-white">Detector HD Homerun LAN</h3>
-              <button onClick={() => setShowHdHomerunModal(false)} className="text-zinc-400 hover:text-white">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="py-6 text-center space-y-3">
-              <RadioTower className="w-12 h-12 text-[#E50914] mx-auto animate-pulse" />
-              <p className="text-xs text-zinc-300">
-                Buscando sintonizadores HD Homerun compatibles en la subred local (UDP 65001)...
-              </p>
-              <p className="text-[11px] text-zinc-500">
-                No se detectaron sintonizadores de hardware activos en esta interfaz de red. Puedes utilizar una lista M3U para conectar tus canales de fibra óptica.
-              </p>
-            </div>
-
-            <div className="flex justify-end gap-2 border-t border-zinc-800 pt-3">
-              <button
                 onClick={() => {
-                  setShowHdHomerunModal(false);
-                  handleSelectM3uType();
+                  setIsSourceModalOpen(false);
+                  setEditingSource(null);
                 }}
-                className="bg-[#E50914] text-white text-xs font-bold px-4 py-2 rounded"
+                className="p-1.5 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-800 transition-colors cursor-pointer"
+                title="Cerrar modal"
               >
-                Configurar M3U en su lugar
-              </button>
-              <button
-                onClick={() => setShowHdHomerunModal(false)}
-                className="bg-zinc-800 text-zinc-300 text-xs px-3 py-2 rounded"
-              >
-                Cerrar
+                <X className="w-5 h-5" />
               </button>
             </div>
+
+            {/* Formulario dentro del modal */}
+            <form onSubmit={handleSaveM3u} className="space-y-4 text-xs">
+              {/* Nombre de la fuente */}
+              <div>
+                <label className="text-[11px] font-semibold text-zinc-300 block mb-1 uppercase tracking-wider">
+                  Nombre de la Fuente
+                </label>
+                <input
+                  type="text"
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  placeholder="M3U Principal"
+                  className="w-full bg-[#121212] border border-zinc-700 focus:border-red-600 rounded-lg px-3 py-2 text-xs text-white outline-none transition-colors"
+                />
+                <p className="text-[10px] text-zinc-500 mt-1">Identificador visible de esta fuente en el panel.</p>
+              </div>
+
+              {/* 1. Archivo o URL (File or URL) */}
+              <div>
+                <label className="text-[11px] font-semibold text-zinc-300 block mb-1 uppercase tracking-wider">
+                  Archivo o URL (File or URL) <span className="text-red-500">*</span>
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    required
+                    value={formData.url}
+                    onChange={(e) => setFormData({ ...formData, url: e.target.value })}
+                    placeholder="http://proveedor-iptv:puerto/get.php?username=...&password=..."
+                    className="w-full bg-[#121212] border border-zinc-700 focus:border-red-600 rounded-lg px-3 py-2 text-xs text-white outline-none transition-colors font-mono pr-9"
+                  />
+                  <Search className="w-4 h-4 text-zinc-500 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+                <p className="text-[10px] text-zinc-500 mt-1">Introduce la URL HLS completa del proveedor o ruta al archivo M3U local.</p>
+              </div>
+
+              {/* 2. User-Agent HTTP Header */}
+              <div>
+                <label className="text-[11px] font-semibold text-zinc-300 block mb-1 uppercase tracking-wider">
+                  User-Agent HTTP Header
+                </label>
+                <input
+                  type="text"
+                  value={formData.user_agent}
+                  onChange={(e) => setFormData({ ...formData, user_agent: e.target.value })}
+                  placeholder="FlixHN/2.0 (IPTV Sintonizador; HLS Client)"
+                  className="w-full bg-[#121212] border border-zinc-700 focus:border-red-600 rounded-lg px-3 py-2 text-xs text-white outline-none transition-colors font-mono"
+                />
+                <p className="text-[10px] text-zinc-500 mt-1">Cadena opcional de agente de usuario para peticiones HTTP al proveedor.</p>
+              </div>
+
+              {/* 3 & 4. Referer Header Mode & Referrer HTTP Header */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[11px] font-semibold text-zinc-300 block mb-1 uppercase tracking-wider">
+                    Referer Header Mode
+                  </label>
+                  <select
+                    value={formData.referer_mode}
+                    onChange={(e) => setFormData({ ...formData, referer_mode: e.target.value })}
+                    className="w-full bg-[#121212] border border-zinc-700 focus:border-red-600 rounded-lg px-3 py-2 text-xs text-white outline-none transition-colors cursor-pointer"
+                  >
+                    <option value="Ninguno">Ninguno</option>
+                    <option value="Referer">Referer</option>
+                    <option value="Referrer">Referrer</option>
+                    <option value="Ambos">Ambos</option>
+                  </select>
+                  <p className="text-[10px] text-zinc-500 mt-1">Modo de inclusión del encabezado HTTP Referer.</p>
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-semibold text-zinc-300 block mb-1 uppercase tracking-wider">
+                    Referrer HTTP Header
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.referrer_header}
+                    onChange={(e) => setFormData({ ...formData, referrer_header: e.target.value })}
+                    placeholder="https://proveedor.iptv"
+                    className="w-full bg-[#121212] border border-zinc-700 focus:border-red-600 rounded-lg px-3 py-2 text-xs text-white outline-none transition-colors font-mono"
+                  />
+                  <p className="text-[10px] text-zinc-500 mt-1">Valor exacto del encabezado Referrer a enviar.</p>
+                </div>
+              </div>
+
+              {/* 5. Límite de transmisiones simultáneas */}
+              <div>
+                <label className="text-[11px] font-semibold text-zinc-300 block mb-1 uppercase tracking-wider">
+                  Límite de transmisiones simultáneas (Simultaneous stream limit)
+                </label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="number"
+                    min="0"
+                    value={formData.stream_limit}
+                    onChange={(e) => setFormData({ ...formData, stream_limit: parseInt(e.target.value, 10) || 0 })}
+                    className="w-32 bg-[#121212] border border-zinc-700 focus:border-red-600 rounded-lg px-3 py-2 text-xs text-white outline-none transition-colors font-mono"
+                  />
+                  <span className="text-[11px] text-zinc-400">0 para sin límite</span>
+                </div>
+                <p className="text-[10px] text-zinc-500 mt-1">Límite de conexiones simultáneas permitidas para esta fuente IPTV.</p>
+              </div>
+
+              {/* 6. Filtrar por grupos de canales */}
+              <div>
+                <label className="text-[11px] font-semibold text-zinc-300 block mb-1 uppercase tracking-wider">
+                  Filtrar por grupos de canales (Only import channels containing these groups)
+                </label>
+                <input
+                  type="text"
+                  value={formData.group_filter}
+                  onChange={(e) => setFormData({ ...formData, group_filter: e.target.value })}
+                  placeholder="Deportes; Noticias; Cine; Honduras"
+                  className="w-full bg-[#121212] border border-zinc-700 focus:border-red-600 rounded-lg px-3 py-2 text-xs text-white outline-none transition-colors"
+                />
+                <p className="text-[10px] text-zinc-500 mt-1">Separa múltiples grupos con punto y coma (;). Déjalo vacío para importar todos los canales.</p>
+              </div>
+
+              {/* 7. Checkbox estilizado: Importar guía directamente desde el M3U */}
+              <div className="pt-1">
+                <label className="flex items-center gap-3 p-3 rounded-lg bg-[#121212] border border-zinc-800 hover:border-zinc-700 transition-colors cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    id="modal_import_guide"
+                    checked={formData.import_guide_from_m3u}
+                    onChange={(e) => setFormData({ ...formData, import_guide_from_m3u: e.target.checked })}
+                    className="w-4 h-4 rounded border-zinc-700 bg-zinc-900 text-[#E50914] focus:ring-0 cursor-pointer accent-[#E50914]"
+                  />
+                  <div>
+                    <span className="text-xs font-semibold text-zinc-200">Importar guía directamente desde el M3U</span>
+                    <p className="text-[10px] text-zinc-500">Mapear automáticamente la información EPG integrada en los atributos tvg-* del M3U.</p>
+                  </div>
+                </label>
+              </div>
+
+              {/* 8. Preferencia de imágenes de canales */}
+              <div>
+                <label className="text-[11px] font-semibold text-zinc-300 block mb-1 uppercase tracking-wider">
+                  Preferencia de imágenes de canales
+                </label>
+                <select
+                  value={formData.preferred_image_source}
+                  onChange={(e) => setFormData({ ...formData, preferred_image_source: e.target.value })}
+                  className="w-full bg-[#121212] border border-zinc-700 focus:border-red-600 rounded-lg px-3 py-2 text-xs text-white outline-none transition-colors cursor-pointer"
+                >
+                  <option value="Sintonizador / M3U">Sintonizador / M3U</option>
+                  <option value="Fuente de datos de guía">Fuente de datos de guía</option>
+                </select>
+                <p className="text-[10px] text-zinc-500 mt-1">Prioridad del logotipo de canal entre el archivo M3U y la fuente de guía XMLTV.</p>
+              </div>
+
+              {/* 9. Tags adicionales para canales */}
+              <div>
+                <label className="text-[11px] font-semibold text-zinc-300 block mb-1 uppercase tracking-wider">
+                  Tags adicionales para canales
+                </label>
+                <input
+                  type="text"
+                  value={formData.tags}
+                  onChange={(e) => setFormData({ ...formData, tags: e.target.value })}
+                  placeholder="FIBRA_ISP; IPTV_LIVE; HD"
+                  className="w-full bg-[#121212] border border-zinc-700 focus:border-red-600 rounded-lg px-3 py-2 text-xs text-white outline-none transition-colors"
+                />
+                <p className="text-[10px] text-zinc-500 mt-1">Etiquetas opcionales separadas por punto y coma (;) aplicadas a todos los canales de esta fuente.</p>
+              </div>
+
+              {/* Pie del modal (Acciones) */}
+              <div className="flex items-center justify-end gap-3 pt-5 border-t border-zinc-800">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsSourceModalOpen(false);
+                    setEditingSource(null);
+                  }}
+                  disabled={actionLoading}
+                  className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-semibold text-xs px-4 py-2.5 rounded-lg transition-colors cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={actionLoading}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs px-5 py-2.5 rounded-lg transition-colors cursor-pointer flex items-center gap-2 shadow-lg disabled:opacity-50"
+                >
+                  {actionLoading && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                  Guardar Cambios
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
@@ -1135,50 +1023,67 @@ export default function LiveTvManagement() {
       {/* ========================================================================= */}
       {showGuideModal && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-[#181818] border border-zinc-700 shadow-2xl rounded-lg p-6 w-full max-w-md space-y-4">
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-[#181818] border border-zinc-800 shadow-2xl rounded-xl p-6 md:p-8 w-full max-w-md space-y-5 text-white"
+          >
             <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-              <h3 className="text-base font-bold text-white">Agregar Fuente de Guía EPG</h3>
-              <button onClick={() => setShowGuideModal(false)} className="text-zinc-400 hover:text-white">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <Database className="w-5 h-5 text-indigo-400" />
+                Agregar Fuente de Guía EPG
+              </h3>
+              <button
+                onClick={() => setShowGuideModal(false)}
+                className="p-1.5 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-800 transition-colors cursor-pointer"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <form onSubmit={handleSaveGuideSource} className="space-y-4 text-xs">
-              <div className="space-y-1">
-                <label className="text-zinc-300 font-medium">Nombre de la Guía:</label>
+              <div>
+                <label className="text-[11px] font-semibold text-zinc-300 block mb-1 uppercase tracking-wider">
+                  Nombre de la Guía
+                </label>
                 <input
                   type="text"
                   required
                   value={guideFormData.name}
                   onChange={(e) => setGuideFormData({ ...guideFormData, name: e.target.value })}
-                  className="w-full bg-[#121212] border border-zinc-700 rounded px-3 py-2 text-white"
+                  placeholder="Guía XMLTV Nacional"
+                  className="w-full bg-[#121212] border border-zinc-700 focus:border-red-600 rounded-lg px-3 py-2 text-xs text-white outline-none transition-colors"
                 />
               </div>
 
-              <div className="space-y-1">
-                <label className="text-zinc-300 font-medium">URL del XMLTV / EPG:</label>
+              <div>
+                <label className="text-[11px] font-semibold text-zinc-300 block mb-1 uppercase tracking-wider">
+                  URL del XMLTV / EPG
+                </label>
                 <input
                   type="text"
                   required
                   value={guideFormData.url}
                   onChange={(e) => setGuideFormData({ ...guideFormData, url: e.target.value })}
-                  className="w-full bg-[#121212] border border-zinc-700 rounded px-3 py-2 text-white font-mono"
+                  placeholder="http://proveedor-iptv:puerto/xmltv.php?..."
+                  className="w-full bg-[#121212] border border-zinc-700 focus:border-red-600 rounded-lg px-3 py-2 text-xs text-white font-mono outline-none transition-colors"
                 />
               </div>
 
-              <div className="flex justify-end gap-2 pt-3 border-t border-zinc-800">
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-zinc-800">
                 <button
                   type="button"
                   onClick={() => setShowGuideModal(false)}
-                  className="bg-zinc-800 text-zinc-300 px-4 py-2 rounded text-xs"
+                  disabled={actionLoading}
+                  className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-semibold text-xs px-4 py-2.5 rounded-lg transition-colors cursor-pointer"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
                   disabled={actionLoading}
-                  className="bg-[#E50914] text-white px-5 py-2 rounded text-xs font-bold"
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs px-5 py-2.5 rounded-lg transition-colors cursor-pointer flex items-center gap-2 shadow-lg"
                 >
+                  {actionLoading && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
                   Guardar Guía
                 </button>
               </div>
