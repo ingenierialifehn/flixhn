@@ -23,6 +23,20 @@ php artisan route:cache || echo "==> [FlixHN] Advertencia: route:cache falló o 
 echo "==> [FlixHN] Optimizando vistas de Laravel..."
 php artisan view:cache || echo "==> [FlixHN] Advertencia: view:cache falló o fue omitido."
 
+# Ejecutar migraciones en TiDB Cloud
+echo "==> [FlixHN] Ejecutando migraciones en TiDB Cloud..."
+php artisan migrate --force
+
+# Ejecutar seeders iniciales solo si la tabla de usuarios está vacía
+echo "==> [FlixHN] Verificando usuarios iniciales en la base de datos..."
+USER_COUNT=$(php artisan tinker --execute="echo \App\Models\User::count();" 2>/dev/null | tr -dc '0-9' || echo "0")
+if [ "$USER_COUNT" = "0" ] || [ -z "$USER_COUNT" ]; then
+    echo "==> [FlixHN] Base de datos vacía. Ejecutando seeders iniciales..."
+    php artisan db:seed --force --no-interaction || true
+else
+    echo "==> [FlixHN] Base de datos ya cuenta con ${USER_COUNT} usuario(s). Omitiendo seeders."
+fi
+
 # Iniciar Supervisor en primer plano
 echo "==> [FlixHN] Iniciando Supervisord (PHP-FPM + Nginx)..."
 exec /usr/bin/supervisord -n -c /etc/supervisor/conf.d/supervisord.conf
