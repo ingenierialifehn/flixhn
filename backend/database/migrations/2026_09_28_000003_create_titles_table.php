@@ -11,21 +11,23 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('titles', function (Blueprint $table) {
-            $table->id();
-            $table->string('name');
-            $table->string('slug')->unique();
-            $table->enum('type', ['movie', 'series'])->default('movie');
-            $table->text('description');
-            $table->string('poster_url');
-            $table->string('backdrop_url');
-            $table->unsignedSmallInteger('release_year');
-            $table->string('genre');
-            $table->boolean('is_featured')->default(false);
-            $table->string('stream_path')->nullable(); // Para películas: ruta local HLS/MP4 o URL
-            $table->unsignedInteger('duration_seconds')->nullable(); // Para películas
-            $table->timestamps();
-        });
+        if (!Schema::hasTable('titles')) {
+            Schema::create('titles', function (Blueprint $table) {
+                $table->id();
+                $table->string('name');
+                $table->string('slug')->unique();
+                $table->enum('type', ['movie', 'series'])->default('movie');
+                $table->text('description');
+                $table->string('poster_url');
+                $table->string('backdrop_url');
+                $table->unsignedSmallInteger('release_year');
+                $table->string('genre');
+                $table->boolean('is_featured')->default(false);
+                $table->string('stream_path')->nullable(); // Para películas: ruta local HLS/MP4 o URL
+                $table->unsignedInteger('duration_seconds')->nullable(); // Para películas
+                $table->timestamps();
+            });
+        }
     }
 
     /**

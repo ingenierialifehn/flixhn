@@ -11,14 +11,16 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('profiles', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('user_id')->constrained('users')->onDelete('cascade');
-            $table->string('name');
-            $table->string('avatar_color')->default('#E50914');
-            $table->boolean('is_kids')->default(false);
-            $table->timestamps();
-        });
+        if (!Schema::hasTable('profiles')) {
+            Schema::create('profiles', function (Blueprint $table) {
+                $table->id();
+                $table->foreignId('user_id')->constrained('users')->onDelete('cascade');
+                $table->string('name');
+                $table->string('avatar_color')->default('#E50914');
+                $table->boolean('is_kids')->default(false);
+                $table->timestamps();
+            });
+        }
     }
 
     /**

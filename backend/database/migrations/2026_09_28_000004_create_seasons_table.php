@@ -11,13 +11,15 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('seasons', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('title_id')->constrained('titles')->onDelete('cascade');
-            $table->unsignedSmallInteger('season_number')->default(1);
-            $table->string('title')->default('Temporada 1');
-            $table->timestamps();
-        });
+        if (!Schema::hasTable('seasons')) {
+            Schema::create('seasons', function (Blueprint $table) {
+                $table->id();
+                $table->foreignId('title_id')->constrained('titles')->onDelete('cascade');
+                $table->unsignedSmallInteger('season_number')->default(1);
+                $table->string('title')->default('Temporada 1');
+                $table->timestamps();
+            });
+        }
     }
 
     /**

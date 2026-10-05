@@ -25,7 +25,7 @@ php artisan view:cache || echo "==> [FlixHN] Advertencia: view:cache falló o fu
 
 # Ejecutar migraciones en TiDB Cloud
 echo "==> [FlixHN] Ejecutando migraciones en TiDB Cloud..."
-php artisan migrate --force
+php artisan migrate --force || echo "==> [FlixHN] Advertencia en migraciones, continuando..."
 
 # Ejecutar seeders iniciales solo si la tabla de usuarios está vacía
 echo "==> [FlixHN] Verificando usuarios iniciales en la base de datos..."

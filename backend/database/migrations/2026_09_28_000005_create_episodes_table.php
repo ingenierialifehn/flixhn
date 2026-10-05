@@ -11,18 +11,20 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('episodes', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('title_id')->constrained('titles')->onDelete('cascade');
-            $table->foreignId('season_id')->nullable()->constrained('seasons')->onDelete('cascade');
-            $table->unsignedSmallInteger('episode_number');
-            $table->string('title');
-            $table->text('description')->nullable();
-            $table->string('stream_path'); // Ruta relativa en /media o URL HLS
-            $table->unsignedInteger('duration_seconds')->default(0);
-            $table->string('thumbnail_url')->nullable();
-            $table->timestamps();
-        });
+        if (!Schema::hasTable('episodes')) {
+            Schema::create('episodes', function (Blueprint $table) {
+                $table->id();
+                $table->foreignId('title_id')->constrained('titles')->onDelete('cascade');
+                $table->foreignId('season_id')->nullable()->constrained('seasons')->onDelete('cascade');
+                $table->unsignedSmallInteger('episode_number');
+                $table->string('title');
+                $table->text('description')->nullable();
+                $table->string('stream_path'); // Ruta relativa en /media o URL HLS
+                $table->unsignedInteger('duration_seconds')->default(0);
+                $table->string('thumbnail_url')->nullable();
+                $table->timestamps();
+            });
+        }
     }
 
     /**

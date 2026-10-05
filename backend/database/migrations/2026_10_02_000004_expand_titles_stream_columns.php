@@ -11,10 +11,16 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('titles', function (Blueprint $table) {
-            $table->text('stream_path')->nullable()->change();
-            $table->text('source_path')->nullable()->change();
-        });
+        if (Schema::hasTable('titles')) {
+            Schema::table('titles', function (Blueprint $table) {
+                if (Schema::hasColumn('titles', 'stream_path')) {
+                    $table->text('stream_path')->nullable()->change();
+                }
+                if (Schema::hasColumn('titles', 'source_path')) {
+                    $table->text('source_path')->nullable()->change();
+                }
+            });
+        }
     }
 
     /**

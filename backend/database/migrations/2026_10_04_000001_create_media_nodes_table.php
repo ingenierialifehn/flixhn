@@ -11,16 +11,18 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('media_nodes', function (Blueprint $table) {
-            $table->id();
-            $table->string('name');
-            $table->string('ip_address');
-            $table->integer('port')->default(6789);
-            $table->text('api_key')->nullable();
-            $table->boolean('is_active')->default(true);
-            $table->boolean('is_master')->default(false);
-            $table->timestamps();
-        });
+        if (!Schema::hasTable('media_nodes')) {
+            Schema::create('media_nodes', function (Blueprint $table) {
+                $table->id();
+                $table->string('name');
+                $table->string('ip_address');
+                $table->integer('port')->default(6789);
+                $table->text('api_key')->nullable();
+                $table->boolean('is_active')->default(true);
+                $table->boolean('is_master')->default(false);
+                $table->timestamps();
+            });
+        }
     }
 
     /**

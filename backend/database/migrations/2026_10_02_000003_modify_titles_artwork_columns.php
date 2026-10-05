@@ -11,11 +11,13 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('titles', function (Blueprint $table) {
-            $table->text('poster_url')->nullable()->change();
-            $table->text('backdrop_url')->nullable()->change();
-            $table->text('description')->nullable()->change();
-        });
+        if (Schema::hasTable('titles')) {
+            Schema::table('titles', function (Blueprint $table) {
+                $table->text('poster_url')->nullable()->change();
+                $table->text('backdrop_url')->nullable()->change();
+                $table->text('description')->nullable()->change();
+            });
+        }
     }
 
     /**

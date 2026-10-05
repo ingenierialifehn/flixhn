@@ -11,21 +11,29 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('titles', function (Blueprint $table) {
-            // Índices de alta concurrencia requeridos para ISP
-            if (Schema::hasColumn('titles', 'category_id')) {
-                $table->index('category_id', 'titles_category_id_idx');
-            }
-            if (Schema::hasColumn('titles', 'type')) {
-                $table->index('type', 'titles_type_idx');
-            }
-            if (Schema::hasColumn('titles', 'release_year')) {
-                $table->index('release_year', 'titles_release_year_idx');
-            }
-            if (Schema::hasColumn('titles', 'created_at')) {
-                $table->index('created_at', 'titles_created_at_idx');
-            }
-        });
+        if (!Schema::hasTable('titles')) {
+            return;
+        }
+
+        try {
+            Schema::table('titles', function (Blueprint $table) {
+                // Índices de alta concurrencia requeridos para ISP
+                if (Schema::hasColumn('titles', 'category_id')) {
+                    $table->index('category_id', 'titles_category_id_idx');
+                }
+                if (Schema::hasColumn('titles', 'type')) {
+                    $table->index('type', 'titles_type_idx');
+                }
+                if (Schema::hasColumn('titles', 'release_year')) {
+                    $table->index('release_year', 'titles_release_year_idx');
+                }
+                if (Schema::hasColumn('titles', 'created_at')) {
+                    $table->index('created_at', 'titles_created_at_idx');
+                }
+            });
+        } catch (\Throwable $e) {
+            // Ignorar si los índices ya existen en TiDB Cloud
+        }
     }
 
     /**
