@@ -19,12 +19,11 @@ class LiveTvController extends Controller
      */
     public function getChannels(Request $request): JsonResponse
     {
-        return response()->json(
-            TvChannel::where('is_active', true)
-                ->orderByRaw('CAST(channel_number AS UNSIGNED) ASC')
-                ->orderBy('name', 'asc')
-                ->get()
-        );
+        $channels = TvChannel::where('is_active', true)
+            ->orderBy('name', 'asc')
+            ->get();
+
+        return response()->json($channels);
     }
 
     /**

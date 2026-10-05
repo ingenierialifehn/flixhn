@@ -189,6 +189,11 @@ class M3uSyncService
                     $groupTitle = $this->guessCategory($name);
                 }
 
+                // Si no trae logo_url desde el M3U, resolver logotipo oficial basado en su nombre
+                if (empty($logoUrl)) {
+                    $logoUrl = $this->resolveFallbackLogo($name);
+                }
+
                 $currentChannel = [
                     'tv_source_id' => $sourceId,
                     'name' => $name,
@@ -238,5 +243,22 @@ class M3uSyncService
             return 'Música y Entretenimiento';
         }
         return 'General';
+    }
+
+    /**
+     * Resuelve un logotipo oficial o dinámico para el canal basado en su nombre limpio.
+     */
+    public function resolveFallbackLogo(string $name): ?string
+    {
+        $clean = preg_replace('/\[[^\]]*\]|\([^\)]*\)/', ' ', $name);
+        $clean = preg_replace('/\b(hd|fhd|4k|sd|1080p|720p|hevc|h264|h265|latino|lat|esp|es|honduras|hon|hnd|mx|rd|gua)\b/i', ' ', $clean);
+        $clean = preg_replace('/[^a-zA-Z0-9\s+]/', ' ', $clean);
+        $clean = strtolower(trim(preg_replace('/-+/', '-', preg_replace('/\s+/', '-', trim($clean))), '-'));
+
+        if (empty($clean)) {
+            return null;
+        }
+
+        return "https://tvlogos.b-cdn.net/{$clean}.png";
     }
 }

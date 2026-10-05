@@ -22,11 +22,25 @@ class TvChannel extends Model
         'tvg_id',
         'tvg_name',
         'is_active',
+        'is_online',
+        'status',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
+        'is_online' => 'boolean',
     ];
+
+    protected $appends = [
+        'is_online',
+    ];
+
+    public function getIsOnlineAttribute(): bool
+    {
+        return array_key_exists('is_online', $this->attributes) 
+            ? (bool)$this->attributes['is_online'] 
+            : true;
+    }
 
     public function tvSource(): BelongsTo
     {
