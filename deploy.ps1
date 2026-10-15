@@ -11,10 +11,11 @@ git push origin $Branch
 
 Write-Host ">>> Conectando al servidor para desplegar FlixHN..." -ForegroundColor Cyan
 
-# Comandos remotos concatenados adaptados a FlixHN
+# Comandos remotos con limpieza de archivos sin seguimiento (git clean -fd)
 $RemoteCommands = @(
     "cd ~/flixhn",
     "git checkout -- .",
+    "git clean -fd",
     "git pull origin $Branch",
     "docker compose -f ~/flixhn/docker-compose.yml exec -T backend chmod -R 777 storage bootstrap/cache",
     "docker compose -f ~/flixhn/docker-compose.yml exec -T backend chown -R www-data:www-data storage bootstrap/cache",
