@@ -6,6 +6,7 @@ use App\Models\Title;
 use App\Models\User;
 use App\Models\Season;
 use App\Models\Episode;
+use App\Models\Category;
 use App\Models\PlaybackProgress;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -286,17 +287,435 @@ class AdminTitleController extends Controller
     }
 
     /**
-     * Listar todos los títulos del catálogo con relaciones.
+     * Listar títulos del catálogo con soporte para navegación por directorios / carpetas.
+     * Soporta parámetro opcional ?folder= o ?path=
      */
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
-        $titles = Title::with(['seasons:id,title_id,season_number'])
-            ->orderBy('created_at', 'desc')
+        // 1. Resolver y sanitizar directorio base multimedia
+        $baseMediaDir = env('MEDIA_PATH');
+        if (!$baseMediaDir || !is_dir($baseMediaDir)) {
+            $baseMediaDir = is_dir('/var/media') ? '/var/media' : base_path('../media');
+        }
+        if (!is_dir($baseMediaDir)) {
+            $baseMediaDir = base_path('media');
+        }
+        if (!is_dir($baseMediaDir)) {
+            @mkdir($baseMediaDir, 0777, true);
+        }
+        $realBase = realpath($baseMediaDir) ?: $baseMediaDir;
+
+        // Si se solicita expresamente lista plana de todo el catálogo (retrocompatibilidad)
+        if ($request->boolean('all') || $request->boolean('flat')) {
+            $titles = Title::with(['seasons:id,title_id,season_number'])
+                ->orderBy('created_at', 'desc')
+                ->get();
+
+            return response()->json([
+                'titles' => $titles,
+                'folders' => [],
+                'breadcrumbs' => [['name' => 'Inicio', 'path' => '']],
+                'current_folder' => '',
+                'parent_folder' => null,
+            ]);
+        }
+
+        // 2. Parámetro de ruta (folder o path) y sanitización estricta contra Directory Traversal
+        $rawPath = (string) ($request->query('folder', $request->query('path', '')));
+        $rawPath = trim(str_replace("\0", '', $rawPath));
+        $rawPath = str_replace('\\', '/', $rawPath);
+        $rawPath = trim($rawPath, '/');
+
+        // Sanitización Directory Traversal: bloquear cualquier secuencia '..'
+        if (preg_match('#(?:^|/)\.\.(?:/|$)#', $rawPath)) {
+            return response()->json([
+                'message' => 'Acceso denegado: intento de Directory Traversal detectado.',
+            ], 403);
+        }
+
+        $parts = array_values(array_filter(explode('/', $rawPath), fn($p) => $p !== '' && $p !== '.'));
+        $cleanPath = implode('/', $parts);
+
+        // Validar que la ruta resuelta permanezca estrictamente dentro de $realBase
+        $currentFullPath = $cleanPath !== '' ? $baseMediaDir . '/' . $cleanPath : $baseMediaDir;
+        if (file_exists($currentFullPath)) {
+            $realCurrent = realpath($currentFullPath);
+            if ($realCurrent !== false && !str_starts_with($realCurrent, $realBase)) {
+                return response()->json([
+                    'message' => 'Acceso denegado: la ruta solicitada está fuera del almacenamiento multimedia.',
+                ], 403);
+            }
+        }
+
+        // 3. Construcción dinámica de Breadcrumbs
+        $breadcrumbs = [
+            ['name' => 'Inicio', 'path' => ''],
+        ];
+        $accum = [];
+        foreach ($parts as $segment) {
+            $accum[] = $segment;
+            $subPath = implode('/', $accum);
+            $displayName = match (strtolower($segment)) {
+                'movies' => 'Películas',
+                'series' => 'Series',
+                default => null,
+            };
+            if (!$displayName) {
+                $foundCat = Category::where('slug', $segment)
+                    ->orWhere('folder_path', $segment)
+                    ->orWhere('name', $segment)
+                    ->first();
+                $displayName = $foundCat ? $foundCat->name : ucfirst(str_replace(['-', '_'], ' ', $segment));
+            }
+            $breadcrumbs[] = [
+                'name' => $displayName,
+                'path' => $subPath,
+            ];
+        }
+
+        // 4. Determinar carpeta padre para botón "Subir un nivel"
+        $parentFolder = null;
+        if (count($parts) > 1) {
+            $parentFolder = implode('/', array_slice($parts, 0, count($parts) - 1));
+        } elseif (count($parts) === 1) {
+            $parentFolder = '';
+        }
+
+        // 5. Función auxiliar para conteo seguro de elementos válidos en directorios físicos
+        $videoExtensions = ['mp4', 'mkv', 'webm', 'avi', 'mov', 'm3u8', 'ts'];
+        $countPhysicalItems = function (string $dirPath) use ($videoExtensions): int {
+            if (!is_dir($dirPath)) return 0;
+            $entries = @scandir($dirPath) ?: [];
+            $count = 0;
+            foreach ($entries as $e) {
+                if ($e === '.' || $e === '..' || str_starts_with($e, '.')) continue;
+                $p = $dirPath . '/' . $e;
+                if (is_dir($p)) {
+                    $count++;
+                } elseif (is_file($p)) {
+                    $ext = strtolower(pathinfo($e, PATHINFO_EXTENSION));
+                    if (in_array($ext, $videoExtensions)) {
+                        $count++;
+                    }
+                }
+            }
+            return $count;
+        };
+
+        // 6. Detección de carpetas y archivos para el nivel solicitado
+        $folders = [];
+        $titles = collect();
+
+        if ($cleanPath === '') {
+            // ==========================================
+            // NIVEL RAÍZ (Inicio)
+            // ==========================================
+            $movieCount = Title::where('type', 'movie')->count();
+            $seriesCount = Title::where('type', 'series')->count();
+
+            $folders[] = [
+                'name' => 'Películas',
+                'relative_path' => 'movies',
+                'path' => 'movies',
+                'items_count' => $movieCount,
+                'type' => 'library',
+            ];
+            $folders[] = [
+                'name' => 'Series',
+                'relative_path' => 'series',
+                'path' => 'series',
+                'items_count' => $seriesCount,
+                'type' => 'library',
+            ];
+
+            // Subcarpetas físicas adicionales en raíz (si existieran)
+            if (is_dir($baseMediaDir)) {
+                $dirEntries = @scandir($baseMediaDir) ?: [];
+                foreach ($dirEntries as $entry) {
+                    if ($entry === '.' || $entry === '..' || str_starts_with($entry, '.')) {
+                        continue;
+                    }
+                    $fullEntry = $baseMediaDir . '/' . $entry;
+                    if (is_dir($fullEntry)) {
+                        $lower = strtolower($entry);
+                        if ($lower === 'movies' || $lower === 'series' || $lower === 'peliculas') {
+                            continue;
+                        }
+                        $folders[] = [
+                            'name' => ucfirst(str_replace(['-', '_'], ' ', $entry)),
+                            'relative_path' => $entry,
+                            'path' => $entry,
+                            'items_count' => $countPhysicalItems($fullEntry),
+                            'type' => 'folder',
+                        ];
+                    } elseif (is_file($fullEntry)) {
+                        $ext = strtolower(pathinfo($entry, PATHINFO_EXTENSION));
+                        if (in_array($ext, $videoExtensions)) {
+                            $titles->push($this->wrapPhysicalFileAsTitle($fullEntry, $entry, $baseMediaDir));
+                        }
+                    }
+                }
+            }
+        } elseif ($cleanPath === 'movies' || $cleanPath === 'peliculas') {
+            // ==========================================
+            // NIVEL: Películas
+            // ==========================================
+            // A. Subcarpetas físicas en /var/media/movies
+            $moviesDir = $baseMediaDir . '/movies';
+            if (is_dir($moviesDir)) {
+                $dirEntries = @scandir($moviesDir) ?: [];
+                foreach ($dirEntries as $entry) {
+                    if ($entry === '.' || $entry === '..' || str_starts_with($entry, '.')) {
+                        continue;
+                    }
+                    $fullEntry = $moviesDir . '/' . $entry;
+                    if (is_dir($fullEntry)) {
+                        $folders[] = [
+                            'name' => ucfirst(str_replace(['-', '_'], ' ', $entry)),
+                            'relative_path' => 'movies/' . $entry,
+                            'path' => 'movies/' . $entry,
+                            'items_count' => $countPhysicalItems($fullEntry),
+                            'type' => 'folder',
+                        ];
+                    } elseif (is_file($fullEntry)) {
+                        $ext = strtolower(pathinfo($entry, PATHINFO_EXTENSION));
+                        if (in_array($ext, $videoExtensions)) {
+                            $titles->push($this->wrapPhysicalFileAsTitle($fullEntry, 'movies/' . $entry, $baseMediaDir));
+                        }
+                    }
+                }
+            }
+
+            // B. Categorías / Géneros de películas del catálogo
+            $movieCategories = Category::withCount(['titles' => function ($q) {
+                $q->where('type', 'movie');
+            }])
+            ->where(function ($q) {
+                $q->where('type', 'movie')->orWhere('type', 'mixed');
+            })
+            ->orderBy('sort_order', 'asc')
             ->get();
 
+            $existingPaths = array_map(fn($f) => strtolower($f['relative_path']), $folders);
+
+            foreach ($movieCategories as $cat) {
+                $subRel = 'movies/' . ($cat->folder_path ?: $cat->slug);
+                if (in_array(strtolower($subRel), $existingPaths)) {
+                    continue;
+                }
+
+                $titleCount = $cat->titles_count ?: Title::where('type', 'movie')
+                    ->where(function ($q) use ($cat) {
+                        $q->where('category_id', $cat->id)->orWhere('genre', $cat->name);
+                    })->count();
+
+                if ($titleCount > 0 || is_dir($baseMediaDir . '/' . $subRel)) {
+                    $folders[] = [
+                        'name' => $cat->name,
+                        'relative_path' => $subRel,
+                        'path' => $subRel,
+                        'items_count' => $titleCount,
+                        'type' => 'category',
+                    ];
+                }
+            }
+
+            // Películas no categorizadas o con stream_path directo
+            $unassignedMovies = Title::with(['seasons:id,title_id,season_number'])
+                ->where('type', 'movie')
+                ->where(function ($q) {
+                    $q->whereNull('category_id')->orWhere('stream_path', 'LIKE', 'movies/%');
+                })
+                ->whereNotIn('id', $titles->pluck('id')->filter()->toArray())
+                ->take(50)
+                ->get();
+            $titles = $titles->concat($unassignedMovies);
+
+        } elseif ($cleanPath === 'series') {
+            // ==========================================
+            // NIVEL: Series
+            // ==========================================
+            // A. Subcarpetas físicas en /var/media/series
+            $seriesDir = $baseMediaDir . '/series';
+            if (is_dir($seriesDir)) {
+                $dirEntries = @scandir($seriesDir) ?: [];
+                foreach ($dirEntries as $entry) {
+                    if ($entry === '.' || $entry === '..' || str_starts_with($entry, '.')) {
+                        continue;
+                    }
+                    $fullEntry = $seriesDir . '/' . $entry;
+                    if (is_dir($fullEntry)) {
+                        $folders[] = [
+                            'name' => ucfirst(str_replace(['-', '_'], ' ', $entry)),
+                            'relative_path' => 'series/' . $entry,
+                            'path' => 'series/' . $entry,
+                            'items_count' => $countPhysicalItems($fullEntry),
+                            'type' => 'folder',
+                        ];
+                    }
+                }
+            }
+
+            // B. Categorías de Series del catálogo
+            $seriesCategories = Category::withCount(['titles' => function ($q) {
+                $q->where('type', 'series');
+            }])
+            ->where(function ($q) {
+                $q->where('type', 'series')->orWhere('type', 'mixed');
+            })
+            ->orderBy('sort_order', 'asc')
+            ->get();
+
+            $existingPaths = array_map(fn($f) => strtolower($f['relative_path']), $folders);
+
+            foreach ($seriesCategories as $cat) {
+                $subRel = 'series/' . ($cat->folder_path ?: $cat->slug);
+                if (in_array(strtolower($subRel), $existingPaths)) {
+                    continue;
+                }
+
+                $titleCount = $cat->titles_count ?: Title::where('type', 'series')
+                    ->where(function ($q) use ($cat) {
+                        $q->where('category_id', $cat->id)->orWhere('genre', $cat->name);
+                    })->count();
+
+                if ($titleCount > 0 || is_dir($baseMediaDir . '/' . $subRel)) {
+                    $folders[] = [
+                        'name' => $cat->name,
+                        'relative_path' => $subRel,
+                        'path' => $subRel,
+                        'items_count' => $titleCount,
+                        'type' => 'category',
+                    ];
+                }
+            }
+
+        } else {
+            // ==========================================
+            // NIVEL: Subcarpetas intermedias o profundas
+            // ==========================================
+            $lastSegment = end($parts);
+            $parentSegment = count($parts) > 1 ? $parts[count($parts) - 2] : null;
+
+            // 1. Subcarpetas y archivos físicos reales en el directorio
+            if (is_dir($currentFullPath)) {
+                $dirEntries = @scandir($currentFullPath) ?: [];
+                foreach ($dirEntries as $entry) {
+                    if ($entry === '.' || $entry === '..' || str_starts_with($entry, '.')) {
+                        continue;
+                    }
+                    $fullEntry = $currentFullPath . '/' . $entry;
+                    if (is_dir($fullEntry)) {
+                        $folders[] = [
+                            'name' => ucfirst(str_replace(['-', '_'], ' ', $entry)),
+                            'relative_path' => $cleanPath . '/' . $entry,
+                            'path' => $cleanPath . '/' . $entry,
+                            'items_count' => $countPhysicalItems($fullEntry),
+                            'type' => 'folder',
+                        ];
+                    } elseif (is_file($fullEntry)) {
+                        $ext = strtolower(pathinfo($entry, PATHINFO_EXTENSION));
+                        if (in_array($ext, $videoExtensions)) {
+                            $titles->push($this->wrapPhysicalFileAsTitle($fullEntry, $cleanPath . '/' . $entry, $baseMediaDir));
+                        }
+                    }
+                }
+            }
+
+            // 2. Buscar categoría o género asociado al segmento
+            $matchedCategory = Category::where('slug', $lastSegment)
+                ->orWhere('folder_path', $lastSegment)
+                ->orWhere('name', $lastSegment)
+                ->first();
+
+            $dbTitlesQuery = Title::with(['seasons:id,title_id,season_number']);
+
+            if ($matchedCategory) {
+                $dbTitlesQuery->where(function ($q) use ($matchedCategory, $cleanPath, $lastSegment) {
+                    $q->where('category_id', $matchedCategory->id)
+                      ->orWhere('genre', $matchedCategory->name)
+                      ->orWhere('stream_path', 'LIKE', '%' . $lastSegment . '/%')
+                      ->orWhere('source_path', 'LIKE', '%' . $lastSegment . '%');
+                });
+            } else {
+                $dbTitlesQuery->where(function ($q) use ($cleanPath, $lastSegment) {
+                    $q->where('genre', 'LIKE', '%' . $lastSegment . '%')
+                      ->orWhere('name', 'LIKE', '%' . $lastSegment . '%')
+                      ->orWhere('stream_path', 'LIKE', '%' . $cleanPath . '%')
+                      ->orWhere('source_path', 'LIKE', '%' . $cleanPath . '%');
+                });
+            }
+
+            if ($parentSegment === 'movies' || $parts[0] === 'movies' || $parts[0] === 'peliculas') {
+                $dbTitlesQuery->where('type', 'movie');
+            } elseif ($parentSegment === 'series' || $parts[0] === 'series') {
+                $dbTitlesQuery->where('type', 'series');
+            }
+
+            $existingIds = $titles->pluck('id')->filter()->toArray();
+            $dbTitles = $dbTitlesQuery->orderBy('name', 'asc')->get();
+
+            foreach ($dbTitles as $dbt) {
+                if (!in_array($dbt->id, $existingIds)) {
+                    $titles->push($dbt);
+                }
+            }
+        }
+
         return response()->json([
-            'titles' => $titles,
+            'titles' => $titles->values(),
+            'folders' => $folders,
+            'current_folder' => $cleanPath,
+            'breadcrumbs' => $breadcrumbs,
+            'parent_folder' => $parentFolder,
+            'total_titles' => $titles->count(),
+            'total_folders' => count($folders),
         ]);
+    }
+
+    /**
+     * Mapear un archivo físico de almacenamiento como estructura equivalente a Title.
+     */
+    protected function wrapPhysicalFileAsTitle(string $fullPath, string $relativePath, string $baseMediaDir): mixed
+    {
+        $filename = basename($fullPath);
+        $baseNameNoExt = pathinfo($filename, PATHINFO_FILENAME);
+
+        // Buscar si ya existe en la base de datos por stream_path, source_path o nombre
+        $existing = Title::with(['seasons:id,title_id,season_number'])
+            ->where('stream_path', 'LIKE', '%' . $relativePath . '%')
+            ->orWhere('source_path', 'LIKE', '%' . $relativePath . '%')
+            ->orWhere('name', $baseNameNoExt)
+            ->first();
+
+        if ($existing) {
+            return $existing;
+        }
+
+        $type = str_contains(strtolower($relativePath), 'serie') ? 'series' : 'movie';
+        $categoryName = str_contains(strtolower($relativePath), 'movies') ? 'Películas' : (str_contains(strtolower($relativePath), 'series') ? 'Series' : 'Local');
+
+        return [
+            'id' => 'file-' . substr(md5($relativePath), 0, 10),
+            'name' => $baseNameNoExt,
+            'slug' => Str::slug($baseNameNoExt) . '-' . substr(md5($relativePath), 0, 4),
+            'type' => $type,
+            'genre' => $categoryName,
+            'release_year' => (int) date('Y'),
+            'description' => "Archivo multimedia local detectado en {$relativePath}",
+            'poster_url' => url('/api/media/poster?title=' . urlencode($baseNameNoExt)),
+            'backdrop_url' => url('/api/media/backdrop?title=' . urlencode($baseNameNoExt)),
+            'is_featured' => false,
+            'stream_path' => $relativePath,
+            'source_path' => 'local://' . $relativePath,
+            'duration_seconds' => 0,
+            'seasons' => [],
+            'title' => $baseNameNoExt,
+            'overview' => "Archivo multimedia local detectado en {$relativePath}",
+            'stream_url' => url('/media/' . ltrim($relativePath, '/')),
+            'year' => (int) date('Y'),
+            'is_new' => true,
+        ];
     }
 
     /**
