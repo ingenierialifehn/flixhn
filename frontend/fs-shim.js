@@ -1,11 +1,10 @@
-// Concurrency and retry limiter for Docker on Windows NTFS mounts to prevent EIO
 import fs from 'node:fs';
 
 if (!globalThis.__fs_shim_applied) {
   globalThis.__fs_shim_applied = true;
 
   // 1. Synchronous operations retry helper
-  function retrySync(fn, fallbackVal, maxRetries = 15) {
+  function retrySync(fn, fallbackVal, maxRetries = 25) {
     let retries = maxRetries;
     while (true) {
       try {
@@ -13,7 +12,8 @@ if (!globalThis.__fs_shim_applied) {
       } catch (err) {
         if ((err?.code === 'EIO' || err?.code === 'EBUSY') && retries > 0) {
           retries--;
-          const end = Date.now() + 5;
+          const delay = Math.min(10 + (maxRetries - retries) * 5, 100);
+          const end = Date.now() + delay;
           while (Date.now() < end) {} // sync backoff
         } else if ((err?.code === 'EIO' || err?.code === 'EBUSY') && fallbackVal !== undefined) {
           return fallbackVal;
@@ -24,8 +24,8 @@ if (!globalThis.__fs_shim_applied) {
     }
   }
 
-  // 2. Async operations retry helper
-  async function retryAsync(fn, fallbackVal, maxRetries = 15) {
+  // 2. Async operations retry helper with progressive backoff
+  async function retryAsync(fn, fallbackVal, maxRetries = 30) {
     let retries = maxRetries;
     while (true) {
       try {
@@ -33,7 +33,8 @@ if (!globalThis.__fs_shim_applied) {
       } catch (err) {
         if ((err?.code === 'EIO' || err?.code === 'EBUSY') && retries > 0) {
           retries--;
-          await new Promise((r) => setTimeout(r, 20));
+          const delay = Math.min(20 + (maxRetries - retries) * 15, 300);
+          await new Promise((r) => setTimeout(r, delay));
         } else if ((err?.code === 'EIO' || err?.code === 'EBUSY') && fallbackVal !== undefined) {
           return fallbackVal;
         } else {
@@ -98,64 +99,25 @@ if (!globalThis.__fs_shim_applied) {
     };
   }
 
-  // 7. Promises readFile concurrency limiter & retry
-  const origReadFile = fs.promises.readFile;
-  let active = 0;
-  const queue = [];
-
-  function runQueue() {
-    while (active < 4 && queue.length > 0) {
-      active++;
-      const { fn, resolve, reject } = queue.shift();
-      fn().then(resolve, reject).finally(() => {
-        active--;
-        runQueue();
-      });
+  // 7. Safe patch helper
+  const safePatchAsync = (target, prop, fallbackVal) => {
+    if (!target) return;
+    try {
+      const orig = target[prop];
+      if (typeof orig === 'function') {
+        target[prop] = function (...args) {
+          return retryAsync(() => orig.apply(target, args), fallbackVal ? (typeof args[0] === 'string' ? args[0] : args[0]?.toString()) : undefined);
+        };
+      }
+    } catch {
+      // Ignore read-only namespace targets
     }
-  }
-
-  fs.promises.readFile = function limitedReadFile(...args) {
-    return new Promise((resolve, reject) => {
-      queue.push({
-        fn: () => retryAsync(() => origReadFile.apply(fs.promises, args)),
-        resolve,
-        reject,
-      });
-      runQueue();
-    });
   };
 
-  // 8. Promises stat / lstat / realpath / open
-  if (fs.promises) {
-    if (fs.promises.open) {
-      const origOpen = fs.promises.open;
-      fs.promises.open = function (...args) {
-        return retryAsync(() => origOpen.apply(fs.promises, args));
-      };
-    }
-
-    if (fs.promises.stat) {
-      const origStat = fs.promises.stat;
-      fs.promises.stat = function (...args) {
-        return retryAsync(() => origStat.apply(fs.promises, args));
-      };
-    }
-
-    if (fs.promises.lstat) {
-      const origLstat = fs.promises.lstat;
-      fs.promises.lstat = function (...args) {
-        return retryAsync(() => origLstat.apply(fs.promises, args));
-      };
-    }
-
-    if (fs.promises.realpath) {
-      const origRealpath = fs.promises.realpath;
-      fs.promises.realpath = function (p, options) {
-        return retryAsync(
-          () => origRealpath.call(fs.promises, p, options),
-          typeof p === 'string' ? p : p?.toString()
-        );
-      };
-    }
-  }
+  // Patch fs.promises methods (open, readFile, stat, lstat, realpath)
+  safePatchAsync(fs.promises, 'open');
+  safePatchAsync(fs.promises, 'readFile');
+  safePatchAsync(fs.promises, 'stat');
+  safePatchAsync(fs.promises, 'lstat');
+  safePatchAsync(fs.promises, 'realpath', true);
 }
