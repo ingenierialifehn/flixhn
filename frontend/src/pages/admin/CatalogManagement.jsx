@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import api from '../../services/api';
-import { Film, Plus, Trash2, X, RefreshCw } from 'lucide-react';
+import { Film, Plus, Trash2, X, RefreshCw, Search, ChevronLeft, ChevronRight, Filter } from 'lucide-react';
 
 const CatalogManagement = ({ titles = [], onRefresh }) => {
   const [showAddTitle, setShowAddTitle] = useState(false);
@@ -85,6 +85,56 @@ const CatalogManagement = ({ titles = [], onRefresh }) => {
   const [mediaApiKey, setMediaApiKey] = useState('');
   const [syncingRemote, setSyncingRemote] = useState(false);
   const [syncStatus, setSyncStatus] = useState(null);
+
+  // Filtros y Paginación
+  const [searchTerm, setSearchTerm] = useState('');
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 50;
+
+  // Precargar URL y API Key guardadas en la configuración del servidor
+  useEffect(() => {
+    let isMounted = true;
+    api.get('/admin/network-settings')
+      .then((res) => {
+        if (!isMounted) return;
+        const s = res?.data?.settings || res?.data?.data || res?.data || {};
+        if (s.media_server_url || s.emby_server_url) {
+          setMediaServerUrl(s.media_server_url || s.emby_server_url);
+        }
+        if (s.media_server_api_key || s.emby_api_key) {
+          setMediaApiKey(s.media_server_api_key || s.emby_api_key);
+        }
+      })
+      .catch((err) => {
+        console.warn('No se pudo precargar la configuración del servidor:', err);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const filteredTitles = useMemo(() => {
+    return (titles || []).filter((t) => {
+      const matchType = typeFilter === 'all' || t.type === typeFilter;
+      const s = searchTerm.trim().toLowerCase();
+      const matchSearch = !s ||
+        (t.name && t.name.toLowerCase().includes(s)) ||
+        (t.genre && t.genre.toLowerCase().includes(s)) ||
+        (t.release_year && String(t.release_year).includes(s));
+      return matchType && matchSearch;
+    });
+  }, [titles, typeFilter, searchTerm]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredTitles.length / pageSize));
+  const paginatedTitles = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredTitles.slice(start, start + pageSize);
+  }, [filteredTitles, currentPage, pageSize]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, typeFilter]);
 
   const handleSyncRemote = async () => {
     setSyncingRemote(true);
@@ -240,6 +290,52 @@ const CatalogManagement = ({ titles = [], onRefresh }) => {
         )}
       </div>
 
+      {/* Barra de Filtros y Búsqueda */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-[#181818] p-3 rounded-xl border border-zinc-800">
+        <div className="relative flex-1 max-w-md">
+          <Search className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="Buscar por título, género o año..."
+            className="w-full pl-9 pr-3 py-1.5 text-xs rounded-lg bg-zinc-900 border border-zinc-800 text-white placeholder-zinc-500 focus:outline-none focus:border-[#E50914]"
+          />
+        </div>
+
+        <div className="flex items-center gap-2">
+          <div className="flex bg-zinc-900 rounded-lg p-0.5 border border-zinc-800 text-xs">
+            <button
+              onClick={() => setTypeFilter('all')}
+              className={`px-3 py-1 rounded-md font-medium transition-colors ${
+                typeFilter === 'all' ? 'bg-[#E50914] text-white' : 'text-zinc-400 hover:text-white'
+              }`}
+            >
+              Todos ({(titles || []).length})
+            </button>
+            <button
+              onClick={() => setTypeFilter('movie')}
+              className={`px-3 py-1 rounded-md font-medium transition-colors ${
+                typeFilter === 'movie' ? 'bg-[#E50914] text-white' : 'text-zinc-400 hover:text-white'
+              }`}
+            >
+              Películas
+            </button>
+            <button
+              onClick={() => setTypeFilter('series')}
+              className={`px-3 py-1 rounded-md font-medium transition-colors ${
+                typeFilter === 'series' ? 'bg-[#E50914] text-white' : 'text-zinc-400 hover:text-white'
+              }`}
+            >
+              Series
+            </button>
+          </div>
+          <span className="text-[11px] text-zinc-400 font-mono hidden md:inline ml-2">
+            {filteredTitles.length} títulos
+          </span>
+        </div>
+      </div>
+
       {/* Tabla de Títulos */}
       <div className="overflow-x-auto admin-card bg-[#181818] rounded-xl border border-zinc-800 shadow-xl transition-colors">
         <table className="w-full text-left text-xs">
@@ -254,8 +350,8 @@ const CatalogManagement = ({ titles = [], onRefresh }) => {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200 dark:divide-zinc-800/80">
-            {(titles || []).length > 0 ? (
-              (titles || []).map((t) => (
+            {paginatedTitles.length > 0 ? (
+              paginatedTitles.map((t) => (
                 <tr key={t.id} className="hover:bg-gray-50 dark:hover:bg-zinc-800/40 transition-colors">
                   <td className="p-3.5 flex items-center gap-3">
                     <img
@@ -304,7 +400,7 @@ const CatalogManagement = ({ titles = [], onRefresh }) => {
                             season_id: t.seasons?.[0]?.id || '',
                           }));
                         }}
-                        className="text-purple-700 dark:text-purple-400 hover:text-purple-800 dark:hover:text-purple-300 font-semibold text-xs px-2 py-1 rounded bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800/60 transition-colors"
+                        className="text-purple-700 dark:text-purple-400 hover:text-purple-800 dark:hover:text-purple-300 font-semibold text-xs px-2 py-1 rounded bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800/60 transition-colors cursor-pointer"
                         title="Gestionar Episodios"
                       >
                         + Episodio
@@ -312,7 +408,7 @@ const CatalogManagement = ({ titles = [], onRefresh }) => {
                     )}
                     <button
                       onClick={() => handleDeleteTitle(t.id)}
-                      className="text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors"
+                      className="text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer"
                       title="Eliminar título"
                     >
                       <Trash2 className="w-4 h-4 inline" />
@@ -323,12 +419,43 @@ const CatalogManagement = ({ titles = [], onRefresh }) => {
             ) : (
               <tr>
                 <td colSpan="6" className="p-8 text-center text-gray-400 dark:text-zinc-500 text-xs">
-                  No hay títulos registrados en el catálogo. Usa el botón "Agregar Película o Serie" para añadir contenido local.
+                  {searchTerm || typeFilter !== 'all'
+                    ? 'No se encontraron títulos que coincidan con los filtros aplicados.'
+                    : 'No hay títulos registrados en el catálogo. Usa el botón "Sincronizar Catálogo" para descargar títulos del servidor de medios.'}
                 </td>
               </tr>
             )}
           </tbody>
         </table>
+
+        {/* Paginación */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between p-3.5 border-t border-zinc-800 text-xs text-zinc-400">
+            <div>
+              Mostrando {Math.min((currentPage - 1) * pageSize + 1, filteredTitles.length)} a{' '}
+              {Math.min(currentPage * pageSize, filteredTitles.length)} de {filteredTitles.length} títulos
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                disabled={currentPage === 1}
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                className="px-2.5 py-1 rounded bg-zinc-900 border border-zinc-800 disabled:opacity-40 hover:bg-zinc-800 text-white flex items-center gap-1 cursor-pointer"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" /> Anterior
+              </button>
+              <span className="font-mono text-zinc-300 px-2">
+                Pág. {currentPage} de {totalPages}
+              </span>
+              <button
+                disabled={currentPage >= totalPages}
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                className="px-2.5 py-1 rounded bg-zinc-900 border border-zinc-800 disabled:opacity-40 hover:bg-zinc-800 text-white flex items-center gap-1 cursor-pointer"
+              >
+                Siguiente <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Modal Agregar Título */}

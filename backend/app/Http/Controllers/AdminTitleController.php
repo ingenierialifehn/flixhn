@@ -290,7 +290,7 @@ class AdminTitleController extends Controller
      */
     public function index(): JsonResponse
     {
-        $titles = Title::with(['seasons.episodes'])
+        $titles = Title::with(['seasons:id,title_id,season_number'])
             ->orderBy('created_at', 'desc')
             ->get();
 

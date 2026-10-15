@@ -230,7 +230,13 @@ class Filesystem
 
         file_put_contents($tempPath, $content);
 
-        rename($tempPath, $path);
+        if (@rename($tempPath, $path) === false) {
+            @unlink($path);
+            if (@rename($tempPath, $path) === false) {
+                file_put_contents($path, $content);
+                @unlink($tempPath);
+            }
+        }
     }
 
     /**

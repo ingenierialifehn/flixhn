@@ -106,23 +106,31 @@ class MediaNodeController extends Controller
     /**
      * Sincroniza el catálogo multimedia de un nodo específico.
      */
-    public function sync(int $id, MediaSyncService $syncService): JsonResponse
+    public function sync(int $id, \App\Services\RemoteMediaConnectorService $remoteService, MediaSyncService $syncService): JsonResponse
     {
         $node = MediaNode::findOrFail($id);
         $baseUrl = "http://{$node->ip_address}:{$node->port}";
 
         try {
-            $stats = $syncService->syncFromEmby($baseUrl, $node->api_key);
+            $resp = $remoteService->syncCatalog($baseUrl, $node->api_key);
             ServerSetting::set('last_sync_at', now()->toIso8601String());
 
+            if ($resp->getStatusCode() === 200) {
+                return $resp;
+            }
+
+            // Fallback
+            $stats = $syncService->syncEmby($baseUrl, $node->api_key);
             return response()->json([
                 'status' => 'success',
+                'success' => true,
                 'message' => "Catálogo de '{$node->name}' sincronizado exitosamente.",
                 'stats' => $stats,
             ]);
         } catch (\Throwable $e) {
             return response()->json([
                 'status' => 'error',
+                'success' => false,
                 'message' => "Error al sincronizar con el nodo '{$node->name}': " . $e->getMessage(),
             ], 500);
         }

@@ -200,19 +200,29 @@ const AdminLayout = ({ onBackToBrowse }) => {
 
   const loadData = useCallback(async () => {
     try {
-      const [resStats, resTitles, resSubs] = await Promise.all([
+      const [resStatsSettled, resTitlesSettled, resSubsSettled] = await Promise.allSettled([
         api.get('/admin/dashboard-stats'),
         api.get('/admin/titles'),
         api.get('/admin/users'),
       ]);
 
-      const statsData = resStats?.data || {};
-      setStats(statsData);
-      setNowPlaying(statsData?.active_streams || statsData?.now_playing || []);
-      setAlerts(statsData?.alerts || []);
-      setActivity(statsData?.activity || []);
-      setTitles(resTitles?.data?.titles || resTitles?.data?.data || []);
-      setSubscribers(resSubs?.data?.users || resSubs?.data?.data || []);
+      if (resStatsSettled.status === 'fulfilled') {
+        const statsData = resStatsSettled.value?.data || {};
+        setStats(statsData);
+        setNowPlaying(statsData?.active_streams || statsData?.now_playing || []);
+        setAlerts(statsData?.alerts || []);
+        setActivity(statsData?.activity || []);
+      }
+
+      if (resTitlesSettled.status === 'fulfilled') {
+        const tData = resTitlesSettled.value?.data;
+        setTitles(tData?.titles || tData?.data || []);
+      }
+
+      if (resSubsSettled.status === 'fulfilled') {
+        const sData = resSubsSettled.value?.data;
+        setSubscribers(sData?.users || sData?.data || []);
+      }
     } catch (err) {
       console.error('Error cargando datos de administración FlixHN:', err);
     } finally {
