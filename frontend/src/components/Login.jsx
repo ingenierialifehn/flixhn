@@ -54,7 +54,7 @@ const Login = () => {
 
         <div className="flex items-center gap-2 bg-neutral-900/90 border border-neutral-800 px-3 py-1.5 rounded-full text-xs text-zinc-300 shadow-sm">
           <Server className="w-3.5 h-3.5 text-green-500" />
-          <span className="hidden sm:inline">Red Local ISP On-Net Fer</span>
+          <span className="hidden sm:inline">Red Local ISP On-Net</span>
           <span className="sm:hidden">On-Net</span>
         </div>
       </header>
