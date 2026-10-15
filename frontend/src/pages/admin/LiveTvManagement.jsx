@@ -681,13 +681,13 @@ export default function LiveTvManagement() {
                       <tr key={ch.id} className="hover:bg-zinc-800/40 transition-colors">
                         <td className="py-3 px-4 flex items-center gap-3">
                           <div className="w-9 h-9 rounded bg-[#121212] border border-zinc-800 flex items-center justify-center overflow-hidden shrink-0">
-                            {ch.logo_url ? (
+                            {(ch.logo || ch.logo_url || ch.tvg_logo) ? (
                               <img
-                                src={ch.logo_url}
+                                src={ch.logo || ch.logo_url || ch.tvg_logo}
                                 alt={ch.name}
                                 className="w-full h-full object-contain p-1"
                                 onError={(e) => {
-                                  e.target.style.display = 'none';
+                                  e.currentTarget.style.display = 'none';
                                 }}
                               />
                             ) : (

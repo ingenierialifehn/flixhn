@@ -170,6 +170,9 @@ class M3uParserService
 
             DB::commit();
 
+            // Despachar descarga y persistencia local de logotipos en segundo plano
+            app(\App\Services\TvLogoService::class)->dispatchBackgroundSync();
+
             $elapsed = round(microtime(true) - $startTime, 2);
 
             return [
@@ -224,6 +227,11 @@ class M3uParserService
                 }
                 if (empty($name)) {
                     $name = $tvgName ?: $tvgId ?: "Canal {$channelCounter}";
+                }
+
+                // Si no trae tvg-logo o es dominio obsoleto, resolver logotipo oficial/abierto
+                if (empty($tvgLogo) || str_contains($tvgLogo, 'tvlogos.b-cdn.net')) {
+                    $tvgLogo = app(\App\Services\TvLogoService::class)->resolveCandidateLogoUrl($name, null, $tvgId);
                 }
 
                 $currentChannel = [

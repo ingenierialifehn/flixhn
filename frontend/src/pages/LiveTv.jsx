@@ -51,18 +51,6 @@ export default function LiveTv({ onPlayChannel }) {
     }
   };
 
-  // Helper para resolver logotipo fallback oficial basado en marca limpia
-  const getFallbackLogo = (channelName) => {
-    if (!channelName) return '';
-    const clean = channelName
-      .toLowerCase()
-      .replace(/\[[^\]]*\]|\([^\)]*\)/g, ' ')
-      .replace(/\b(hd|fhd|4k|sd|1080p|720p|hevc|latino|esp|honduras|hon|hnd|mx|rd|gua)\b/gi, '')
-      .replace(/[^a-zA-Z0-9\s-]/g, ' ')
-      .trim()
-      .replace(/\s+/g, '-');
-    return `https://tvlogos.b-cdn.net/${clean}.png`;
-  };
 
   // Filtrado dinámico con ordenamiento alfabético estricto (A-Z)
   const filteredChannels = channels
@@ -186,7 +174,7 @@ export default function LiveTv({ onPlayChannel }) {
             const isNew = channel.created_at && 
               (new Date() - new Date(channel.created_at)) / (1000 * 60 * 60 * 24) <= 7;
             const isOffline = channel.is_online === false || channel.status === 'offline';
-            const channelLogo = channel.logo_url || getFallbackLogo(channel.name);
+            const channelLogo = channel.logo || channel.logo_url || channel.tvg_logo;
 
             return (
               <div
@@ -219,34 +207,32 @@ export default function LiveTv({ onPlayChannel }) {
                   )}
                 </div>
 
-                {/* Logo o Icono con fallback dinámico y onError */}
-                <div className="h-20 w-full flex items-center justify-center p-2 my-1 relative">
+                {/* Logo o Icono con persistencia local y fallback seguro */}
+                <div className="h-24 w-full bg-[#121212] rounded-md flex items-center justify-center p-2.5 my-1 relative overflow-hidden border border-zinc-800/60 group-hover:border-zinc-700/80 transition-all">
                   {channelLogo ? (
                     <>
                       <img
                         src={channelLogo}
                         alt={channel.name}
-                        className="max-h-full max-w-full object-contain filter drop-shadow"
+                        loading="lazy"
+                        className="max-h-full max-w-full object-contain filter drop-shadow select-none transition-transform duration-200 group-hover:scale-105"
                         onError={(e) => {
-                          const fallback = getFallbackLogo(channel.name);
-                          if (fallback && !e.currentTarget.dataset.fallbackTried && e.currentTarget.src !== fallback) {
-                            e.currentTarget.dataset.fallbackTried = 'true';
-                            e.currentTarget.src = fallback;
-                          } else {
-                            e.currentTarget.style.display = 'none';
-                            const icon = e.currentTarget.parentElement?.querySelector('.channel-fallback-icon');
-                            if (icon) {
-                              icon.style.display = 'flex';
-                            }
+                          e.currentTarget.style.display = 'none';
+                          const fallback = e.currentTarget.parentElement?.querySelector('.channel-fallback-icon');
+                          if (fallback) {
+                            fallback.classList.remove('hidden');
+                            fallback.classList.add('flex');
                           }
                         }}
                       />
-                      <div className="channel-fallback-icon hidden items-center justify-center">
+                      <div className="channel-fallback-icon hidden items-center justify-center w-full h-full">
                         <Tv className="w-8 h-8 text-zinc-600 group-hover:text-red-500 transition-colors" />
                       </div>
                     </>
                   ) : (
-                    <Tv className="w-8 h-8 text-zinc-600 group-hover:text-red-500 transition-colors" />
+                    <div className="flex items-center justify-center w-full h-full">
+                      <Tv className="w-8 h-8 text-zinc-600 group-hover:text-red-500 transition-colors" />
+                    </div>
                   )}
                 </div>
 

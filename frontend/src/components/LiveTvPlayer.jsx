@@ -320,12 +320,12 @@ export default function LiveTvPlayer({
 
           {/* Logo del Canal */}
           <div className="w-10 h-10 rounded-md bg-[#181818] border border-zinc-800 flex items-center justify-center overflow-hidden shrink-0">
-            {currentChannel?.logo_url ? (
+            {(currentChannel?.logo || currentChannel?.logo_url || currentChannel?.tvg_logo) ? (
               <img
-                src={currentChannel.logo_url}
+                src={currentChannel.logo || currentChannel.logo_url || currentChannel.tvg_logo}
                 alt={currentChannel.name}
                 className="w-full h-full object-contain p-1"
-                onError={(e) => { e.target.style.display = 'none'; }}
+                onError={(e) => { e.currentTarget.style.display = 'none'; }}
               />
             ) : (
               <Tv className="w-5 h-5 text-zinc-500" />
@@ -514,12 +514,12 @@ export default function LiveTvPlayer({
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
                       <div className="w-8 h-8 rounded bg-black/60 border border-zinc-800 flex items-center justify-center overflow-hidden shrink-0">
-                        {ch.logo_url ? (
+                        {(ch.logo || ch.logo_url || ch.tvg_logo) ? (
                           <img
-                            src={ch.logo_url}
+                            src={ch.logo || ch.logo_url || ch.tvg_logo}
                             alt={ch.name}
                             className="w-full h-full object-contain p-0.5"
-                            onError={(e) => { e.target.style.display = 'none'; }}
+                            onError={(e) => { e.currentTarget.style.display = 'none'; }}
                           />
                         ) : (
                           <Tv className="w-3.5 h-3.5 text-zinc-500" />

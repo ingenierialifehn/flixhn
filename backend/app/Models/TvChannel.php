@@ -33,6 +33,7 @@ class TvChannel extends Model
 
     protected $appends = [
         'is_online',
+        'logo',
     ];
 
     public function getIsOnlineAttribute(): bool
@@ -40,6 +41,27 @@ class TvChannel extends Model
         return array_key_exists('is_online', $this->attributes) 
             ? (bool)$this->attributes['is_online'] 
             : true;
+    }
+
+    public function getLogoAttribute(): ?string
+    {
+        return $this->logo_url;
+    }
+
+    public function getLogoUrlAttribute(?string $value): ?string
+    {
+        if (!empty($value) && str_starts_with($value, '/storage/')) {
+            return $value;
+        }
+
+        if (!empty($this->id)) {
+            $local = app(\App\Services\TvLogoService::class)->findExistingLocalLogo($this->id);
+            if ($local) {
+                return $local;
+            }
+        }
+
+        return $value;
     }
 
     public function tvSource(): BelongsTo

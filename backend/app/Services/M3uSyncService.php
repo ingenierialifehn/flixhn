@@ -115,6 +115,9 @@ class M3uSyncService
 
         $totalCount = count($parsedChannels);
 
+        // Despachar descarga y persistencia local de logotipos en segundo plano
+        app(\App\Services\TvLogoService::class)->dispatchBackgroundSync();
+
         if ($source) {
             $source->update([
                 'channels_count' => $totalCount,
@@ -189,9 +192,9 @@ class M3uSyncService
                     $groupTitle = $this->guessCategory($name);
                 }
 
-                // Si no trae logo_url desde el M3U, resolver logotipo oficial basado en su nombre
-                if (empty($logoUrl)) {
-                    $logoUrl = $this->resolveFallbackLogo($name);
+                // Si no trae logo_url desde el M3U o es un dominio obsoleto, resolver mediante TvLogoService (curado e iptv-org)
+                if (empty($logoUrl) || str_contains($logoUrl, 'tvlogos.b-cdn.net')) {
+                    $logoUrl = $this->resolveFallbackLogo($name, $tvgId);
                 }
 
                 $currentChannel = [
@@ -246,19 +249,10 @@ class M3uSyncService
     }
 
     /**
-     * Resuelve un logotipo oficial o dinámico para el canal basado en su nombre limpio.
+     * Resuelve un logotipo oficial o dinámico para el canal mediante TvLogoService.
      */
-    public function resolveFallbackLogo(string $name): ?string
+    public function resolveFallbackLogo(string $name, ?string $tvgId = null): ?string
     {
-        $clean = preg_replace('/\[[^\]]*\]|\([^\)]*\)/', ' ', $name);
-        $clean = preg_replace('/\b(hd|fhd|4k|sd|1080p|720p|hevc|h264|h265|latino|lat|esp|es|honduras|hon|hnd|mx|rd|gua)\b/i', ' ', $clean);
-        $clean = preg_replace('/[^a-zA-Z0-9\s+]/', ' ', $clean);
-        $clean = strtolower(trim(preg_replace('/-+/', '-', preg_replace('/\s+/', '-', trim($clean))), '-'));
-
-        if (empty($clean)) {
-            return null;
-        }
-
-        return "https://tvlogos.b-cdn.net/{$clean}.png";
+        return app(\App\Services\TvLogoService::class)->resolveCandidateLogoUrl($name, null, $tvgId);
     }
 }
