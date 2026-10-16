@@ -1,6 +1,6 @@
 FROM php:8.3-fpm-alpine
 
-RUN apk add --no-cache curl git ffmpeg
+RUN apk add --no-cache curl git ffmpeg mariadb-client
 
 COPY --from=mlocati/php-extension-installer /usr/bin/install-php-extensions /usr/local/bin/
 

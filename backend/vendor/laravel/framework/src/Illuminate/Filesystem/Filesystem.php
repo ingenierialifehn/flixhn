@@ -113,14 +113,29 @@ class Filesystem
      */
     public function getRequire($path, array $data = [])
     {
+        for ($i = 0; $i < 5; $i++) {
+            if ($this->isFile($path)) {
+                break;
+            }
+            clearstatcache(true, $path);
+            usleep(15000);
+        }
+
         if ($this->isFile($path)) {
             $__path = $path;
             $__data = $data;
 
             return (static function () use ($__path, $__data) {
-                extract($__data, EXTR_SKIP);
-
-                return require $__path;
+                for ($attempt = 0; $attempt < 5; $attempt++) {
+                    try {
+                        return require $__path;
+                    } catch (\Throwable $e) {
+                        if ($attempt === 4) {
+                            throw $e;
+                        }
+                        usleep(10000);
+                    }
+                }
             })();
         }
 

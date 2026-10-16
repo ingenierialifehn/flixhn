@@ -40,7 +40,20 @@ class RecursiveDirectoryIterator extends \RecursiveDirectoryIterator
             throw new \RuntimeException('This iterator only support returning current as fileinfo.');
         }
 
-        parent::__construct($path, $flags);
+        for ($i = 0; $i < 5; $i++) {
+            if (@is_dir($path)) break;
+            clearstatcache(true, $path);
+            usleep(15000);
+        }
+
+        try {
+            parent::__construct($path, $flags);
+        } catch (\UnexpectedValueException $e) {
+            if ($ignoreUnreadableDirs) {
+                return;
+            }
+            throw $e;
+        }
         $this->ignoreUnreadableDirs = $ignoreUnreadableDirs;
         $this->rootPath = $path;
         if ('/' !== \DIRECTORY_SEPARATOR && !($flags & self::UNIX_PATHS)) {

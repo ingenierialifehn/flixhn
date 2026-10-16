@@ -45,6 +45,10 @@ services:
       APP_KEY: ${APP_KEY:-base64:XG8d2m0qL1zOa8Pq3K9yN5wV8jR4eU1iB6tY7sA2dC0=}
       SANCTUM_STATEFUL_DOMAINS: "localhost,127.0.0.1"
       SESSION_DRIVER: cookie
+      LOG_CHANNEL: stderr
+      APP_CONFIG_CACHE: /tmp/config.php
+      APP_PACKAGES_CACHE: /tmp/packages.php
+      APP_SERVICES_CACHE: /tmp/services.php
     depends_on:
       db:
         condition: service_healthy
@@ -61,6 +65,7 @@ services:
     working_dir: /app
     volumes:
       - ./frontend:/app
+      - /app/node_modules
     environment:
       - VITE_API_URL=/api
       - VITE_STREAM_URL=http://localhost:7000/media

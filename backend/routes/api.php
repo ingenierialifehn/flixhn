@@ -13,6 +13,8 @@ use App\Http\Controllers\AlertController;
 use App\Http\Controllers\TvSourceController;
 use App\Http\Controllers\TvGuideSourceController;
 use App\Http\Controllers\LiveTvController;
+use App\Http\Controllers\TranscodingSettingController;
+use App\Http\Controllers\DatabaseAdminController;
 use App\Http\Middleware\EnsureAdmin;
 
 /*
@@ -111,6 +113,21 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/network', [NetworkSettingController::class, 'updateSettings']);
         Route::get('/network-settings', [NetworkSettingController::class, 'index']);
         Route::post('/network-settings', [NetworkSettingController::class, 'updateSettings']);
+
+        // Parámetros y Motor de Transcodificación / Mapeo de Tonos
+        Route::get('/transcoding', [TranscodingSettingController::class, 'index']);
+        Route::post('/transcoding', [TranscodingSettingController::class, 'update']);
+        Route::post('/transcoding/validate-path', [TranscodingSettingController::class, 'validatePath']);
+
+        // Administración y Mantenimiento de Base de Datos
+        Route::get('/database/settings', [DatabaseAdminController::class, 'settings']);
+        Route::post('/database/settings', [DatabaseAdminController::class, 'updateSettings']);
+        Route::get('/database/backups', [DatabaseAdminController::class, 'backups']);
+        Route::post('/database/backups/create', [DatabaseAdminController::class, 'createBackup']);
+        Route::get('/database/backups/download/{filename}', [DatabaseAdminController::class, 'downloadBackup']);
+        Route::post('/database/backups/restore/{filename}', [DatabaseAdminController::class, 'restoreBackup']);
+        Route::delete('/database/backups/{filename}', [DatabaseAdminController::class, 'deleteBackup']);
+        Route::post('/database/optimize', [DatabaseAdminController::class, 'optimize']);
 
         // Control de Servidor (Reiniciar, Detener, Iniciar y Cambio de Nombre)
         Route::post('/server/{action}', [ServerControlController::class, 'control']);

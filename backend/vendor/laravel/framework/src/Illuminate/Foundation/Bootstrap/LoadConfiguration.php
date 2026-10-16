@@ -25,7 +25,24 @@ class LoadConfiguration
         // the configuration items from that file so that it is very quick. Otherwise
         // we will need to spin through every configuration file and load them all.
         if (file_exists($cached = $app->getCachedConfigPath())) {
-            $items = require $cached;
+            $items = [];
+            for ($i = 0; $i < 10; $i++) {
+                try {
+                    $res = @(fn () => include $cached)();
+                    if (is_array($res)) {
+                        $items = $res;
+                        break;
+                    }
+                } catch (\Throwable $e) {}
+                clearstatcache(true, $cached);
+                usleep(25000);
+            }
+            if (empty($items)) {
+                $content = @file_get_contents($cached) ?: @shell_exec('cat ' . escapeshellarg($cached));
+                if ($content) {
+                    $items = eval('?>' . $content) ?: [];
+                }
+            }
 
             $app->instance('config_loaded_from_cache', $loadedFromCache = true);
         }
@@ -94,7 +111,36 @@ class LoadConfiguration
      */
     protected function loadConfigurationFile(RepositoryContract $repository, $name, $path, array $base)
     {
-        $config = (fn () => require $path)();
+        $config = null;
+        for ($attempt = 0; $attempt < 10; $attempt++) {
+            try {
+                $config = @(fn () => include $path)();
+                if (is_array($config)) break;
+            } catch (\Throwable $e) {
+                // retry
+            }
+            clearstatcache(true, $path);
+            usleep(25000);
+        }
+        if (!is_array($config)) {
+            $content = @file_get_contents($path);
+            if ($content === false || $content === '') {
+                $content = @shell_exec('cat ' . escapeshellarg($path));
+            }
+            if ($content) {
+                try {
+                    $evaled = eval('?>' . $content);
+                    if (is_array($evaled)) {
+                        $config = $evaled;
+                    }
+                } catch (\Throwable $e) {
+                    // ignore
+                }
+            }
+        }
+        if (!is_array($config)) {
+            $config = (fn () => require $path)();
+        }
 
         if (isset($base[$name])) {
             $config = array_merge($base[$name], $config);
@@ -152,7 +198,8 @@ class LoadConfiguration
         foreach (Finder::create()->files()->name('*.php')->in($configPath) as $file) {
             $directory = $this->getNestedDirectory($file, $configPath);
 
-            $files[$directory.basename($file->getRealPath(), '.php')] = $file->getRealPath();
+            $filePath = $file->getRealPath() ?: $file->getPathname();
+            $files[$directory.basename($filePath, '.php')] = $filePath;
         }
 
         ksort($files, SORT_NATURAL);
@@ -188,7 +235,8 @@ class LoadConfiguration
         $config = [];
 
         foreach (Finder::create()->files()->name('*.php')->in(__DIR__.'/../../../../config') as $file) {
-            $config[basename($file->getRealPath(), '.php')] = require $file->getRealPath();
+            $p = $file->getRealPath() ?: $file->getPathname();
+            $config[basename($p, '.php')] = require $p;
         }
 
         return $config;

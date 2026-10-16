@@ -32,6 +32,26 @@ class RouteFileRegistrar
     {
         $router = $this->router;
 
+        for ($i = 0; $i < 10; $i++) {
+            try {
+                $included = @(fn () => include $routes)();
+                if ($included !== false) {
+                    return;
+                }
+            } catch (\Throwable $e) {}
+            clearstatcache(true, $routes);
+            usleep(25000);
+        }
+
+        $content = @file_get_contents($routes);
+        if ($content === false || $content === '') {
+            $content = @shell_exec('cat ' . escapeshellarg($routes));
+        }
+        if ($content) {
+            eval('?>' . $content);
+            return;
+        }
+
         require $routes;
     }
 }

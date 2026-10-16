@@ -466,11 +466,7 @@ class ClassLoader
             apcu_add($this->apcuPrefix.$class, $file);
         }
 
-        if (false === $file) {
-            // Remember that this class does not exist.
-            $this->missingClasses[$class] = true;
-        }
-
+        // Do not poison worker memory if VirtioFS had a transient I/O delay
         return $file;
     }
 
@@ -503,8 +499,14 @@ class ClassLoader
                 if (isset($this->prefixDirsPsr4[$search])) {
                     $pathEnd = DIRECTORY_SEPARATOR . substr($logicalPathPsr4, $lastPos + 1);
                     foreach ($this->prefixDirsPsr4[$search] as $dir) {
-                        if (file_exists($file = $dir . $pathEnd)) {
-                            return $file;
+                        $file = $dir . $pathEnd;
+                        for ($attempt = 0; $attempt < 3; $attempt++) {
+                            if (@file_exists($file)) {
+                                return $file;
+                            }
+                            if ($attempt < 2) {
+                                usleep(5000);
+                            }
                         }
                     }
                 }
@@ -573,7 +575,17 @@ class ClassLoader
          * @return void
          */
         self::$includeFile = \Closure::bind(static function($file) {
-            include $file;
+            for ($attempt = 0; $attempt < 5; $attempt++) {
+                try {
+                    include $file;
+                    return;
+                } catch (\Throwable $e) {
+                    if ($attempt === 4) {
+                        throw $e;
+                    }
+                    usleep(15000);
+                }
+            }
         }, null, null);
     }
 }

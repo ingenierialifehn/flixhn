@@ -643,6 +643,11 @@ class Finder implements \IteratorAggregate, \Countable
         $resolvedDirs = [];
 
         foreach ((array) $dirs as $dir) {
+            for ($attempt = 0; $attempt < 5; $attempt++) {
+                if (is_dir($dir)) break;
+                clearstatcache(true, $dir);
+                usleep(15000);
+            }
             if (is_dir($dir)) {
                 $resolvedDirs[] = [$this->normalizeDir($dir)];
             } elseif ($glob = glob($dir, (\defined('GLOB_BRACE') ? \GLOB_BRACE : 0) | \GLOB_ONLYDIR | \GLOB_NOSORT)) {
