@@ -8,7 +8,10 @@ import PlaceholderView from './PlaceholderView';
 import NetworkSettings from './NetworkSettings';
 import LiveTvManagement from './LiveTvManagement';
 import TranscodingSettings from './TranscodingSettings';
+<<<<<<< HEAD
 import DatabaseManagement from './DatabaseManagement';
+=======
+>>>>>>> 4c883d5923002b38dcf186387f9e978e185cc9ca
 import api from '../../services/api';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
@@ -390,6 +393,7 @@ const AdminLayout = ({ onBackToBrowse }) => {
                 <TranscodingSettings />
               )}
 
+<<<<<<< HEAD
               {activeTab === 'database' && (
                 <DatabaseManagement initialTab="performance" />
               )}
@@ -399,6 +403,9 @@ const AdminLayout = ({ onBackToBrowse }) => {
               )}
 
               {activeTab !== 'dashboard' && activeTab !== 'library' && activeTab !== 'catalog' && activeTab !== 'users' && activeTab !== 'network' && activeTab !== 'livetv' && activeTab !== 'transcoding' && activeTab !== 'database' && activeTab !== 'backup' && activeTab !== 'backups' && (
+=======
+              {activeTab !== 'dashboard' && activeTab !== 'library' && activeTab !== 'catalog' && activeTab !== 'users' && activeTab !== 'network' && activeTab !== 'livetv' && activeTab !== 'transcoding' && (
+>>>>>>> 4c883d5923002b38dcf186387f9e978e185cc9ca
                 <PlaceholderView
                   title={currentTabInfo.title}
                   description={currentTabInfo.description}

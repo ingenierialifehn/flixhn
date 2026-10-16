@@ -14,7 +14,10 @@ use App\Http\Controllers\TvSourceController;
 use App\Http\Controllers\TvGuideSourceController;
 use App\Http\Controllers\LiveTvController;
 use App\Http\Controllers\TranscodingSettingController;
+<<<<<<< HEAD
 use App\Http\Controllers\DatabaseAdminController;
+=======
+>>>>>>> 4c883d5923002b38dcf186387f9e978e185cc9ca
 use App\Http\Middleware\EnsureAdmin;
 
 /*
@@ -119,6 +122,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/transcoding', [TranscodingSettingController::class, 'update']);
         Route::post('/transcoding/validate-path', [TranscodingSettingController::class, 'validatePath']);
 
+<<<<<<< HEAD
         // Administración y Mantenimiento de Base de Datos
         Route::get('/database/settings', [DatabaseAdminController::class, 'settings']);
         Route::post('/database/settings', [DatabaseAdminController::class, 'updateSettings']);
@@ -129,6 +133,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::delete('/database/backups/{filename}', [DatabaseAdminController::class, 'deleteBackup']);
         Route::post('/database/optimize', [DatabaseAdminController::class, 'optimize']);
 
+=======
+>>>>>>> 4c883d5923002b38dcf186387f9e978e185cc9ca
         // Control de Servidor (Reiniciar, Detener, Iniciar y Cambio de Nombre)
         Route::post('/server/{action}', [ServerControlController::class, 'control']);
         Route::patch('/server/name', [ServerControlController::class, 'updateName']);
