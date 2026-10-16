@@ -7,6 +7,7 @@ import UsersManagement from './UsersManagement';
 import PlaceholderView from './PlaceholderView';
 import NetworkSettings from './NetworkSettings';
 import LiveTvManagement from './LiveTvManagement';
+import TranscodingSettings from './TranscodingSettings';
 import api from '../../services/api';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
@@ -384,7 +385,11 @@ const AdminLayout = ({ onBackToBrowse }) => {
                 <LiveTvManagement />
               )}
 
-              {activeTab !== 'dashboard' && activeTab !== 'library' && activeTab !== 'catalog' && activeTab !== 'users' && activeTab !== 'network' && activeTab !== 'livetv' && (
+              {activeTab === 'transcoding' && (
+                <TranscodingSettings />
+              )}
+
+              {activeTab !== 'dashboard' && activeTab !== 'library' && activeTab !== 'catalog' && activeTab !== 'users' && activeTab !== 'network' && activeTab !== 'livetv' && activeTab !== 'transcoding' && (
                 <PlaceholderView
                   title={currentTabInfo.title}
                   description={currentTabInfo.description}

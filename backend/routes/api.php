@@ -13,6 +13,7 @@ use App\Http\Controllers\AlertController;
 use App\Http\Controllers\TvSourceController;
 use App\Http\Controllers\TvGuideSourceController;
 use App\Http\Controllers\LiveTvController;
+use App\Http\Controllers\TranscodingSettingController;
 use App\Http\Middleware\EnsureAdmin;
 
 /*
@@ -111,6 +112,11 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/network', [NetworkSettingController::class, 'updateSettings']);
         Route::get('/network-settings', [NetworkSettingController::class, 'index']);
         Route::post('/network-settings', [NetworkSettingController::class, 'updateSettings']);
+
+        // Parámetros y Motor de Transcodificación / Mapeo de Tonos
+        Route::get('/transcoding', [TranscodingSettingController::class, 'index']);
+        Route::post('/transcoding', [TranscodingSettingController::class, 'update']);
+        Route::post('/transcoding/validate-path', [TranscodingSettingController::class, 'validatePath']);
 
         // Control de Servidor (Reiniciar, Detener, Iniciar y Cambio de Nombre)
         Route::post('/server/{action}', [ServerControlController::class, 'control']);
