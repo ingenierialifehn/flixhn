@@ -16,6 +16,7 @@ use App\Http\Controllers\LiveTvController;
 use App\Http\Controllers\TranscodingSettingController;
 use App\Http\Controllers\DatabaseAdminController;
 use App\Http\Controllers\ScheduledTaskController;
+use App\Http\Controllers\LogAdminController;
 use App\Http\Middleware\EnsureAdmin;
 
 /*
@@ -168,5 +169,13 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/tasks', [ScheduledTaskController::class, 'index']);
         Route::post('/tasks/{key}/run', [ScheduledTaskController::class, 'run']);
         Route::get('/tasks/{key}/status', [ScheduledTaskController::class, 'status']);
+
+        // Gestión y Visualización de Logs del Servidor
+        Route::get('/logs/settings', [LogAdminController::class, 'settings']);
+        Route::post('/logs/settings', [LogAdminController::class, 'updateSettings']);
+        Route::get('/logs/files', [LogAdminController::class, 'files']);
+        Route::get('/logs/content', [LogAdminController::class, 'content']);
+        Route::get('/logs/download/{filename}', [LogAdminController::class, 'download']);
+        Route::post('/logs/clear', [LogAdminController::class, 'clear']);
     });
 });

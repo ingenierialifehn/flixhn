@@ -132,6 +132,12 @@ class ScheduledTaskRunnerService
             File::copy($mainLog, $archivedPath);
             File::put($mainLog, ''); // Vaciar log principal para seguir recibiendo eventos
             $rotatedCount++;
+
+            // Restablecer modo de depuración si estaba configurado hasta la siguiente rotación
+            if (\App\Models\ServerSetting::get('debug_logging_mode') === 'until_rotation') {
+                \App\Models\ServerSetting::set('debug_logging_mode', 'no', 'logging');
+                \Illuminate\Support\Facades\Log::info('Nivel de registro de depuración restablecido a [No] tras la rotación programada de logs.');
+            }
         }
 
         // Purgar archivos de log que superen los 14 días
