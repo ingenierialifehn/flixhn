@@ -61,7 +61,7 @@ class DeviceSession extends Model
     }
 
     /**
-     * Determina si el dispositivo está actualmente en línea (heartbeat en los últimos 15 min y no parado)
+     * Determina si el dispositivo está actualmente en línea (heartbeat en los últimos 35 segundos y no parado)
      */
     public function getIsOnlineAttribute(): bool
     {
@@ -69,7 +69,7 @@ class DeviceSession extends Model
             return false;
         }
 
-        return $this->last_heartbeat_at->diffInMinutes(now()) <= 15 && $this->playback_state !== 'stopped';
+        return $this->last_heartbeat_at->diffInSeconds(now()) <= 35 && $this->playback_state !== 'stopped';
     }
 
     /**

@@ -186,9 +186,13 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/devices/{id}/playback-control', [DeviceSessionController::class, 'playbackControl']);
         Route::post('/devices/{id}/toggle-block', [DeviceSessionController::class, 'toggleBlock']);
         Route::delete('/devices/{id}/session', [DeviceSessionController::class, 'terminateSession']);
-        Route::post('/devices/seed-demo', [DeviceSessionController::class, 'seedDemo']);
     });
 
-    // Latido y reporte de telemetría de dispositivo cliente
+    // Telemetría y Latido de Reproducción Real en Vivo
+    Route::post('/telemetry/heartbeat', [DeviceSessionController::class, 'heartbeat']);
+    Route::post('/telemetry/stop', [DeviceSessionController::class, 'stopPlayback']);
     Route::post('/devices/heartbeat', [DeviceSessionController::class, 'heartbeat']);
 });
+
+// Detención de telemetría de dispositivo (Compatible con sendBeacon y keepalive al cerrar pestaña)
+Route::post('/telemetry/stop', [DeviceSessionController::class, 'stopPlayback']);

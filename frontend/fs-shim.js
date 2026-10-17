@@ -95,7 +95,29 @@ if (!globalThis.__fs_shim_applied) {
   if (fs.readdirSync) {
     const origReaddirSync = fs.readdirSync;
     fs.readdirSync = function (...args) {
-      return retrySync(() => origReaddirSync.apply(fs, args));
+      return retrySync(() => origReaddirSync.apply(fs, args), []);
+    };
+  }
+
+  if (fs.readdir) {
+    const origReaddir = fs.readdir;
+    fs.readdir = function (...args) {
+      const cb = args[args.length - 1];
+      if (typeof cb === 'function') {
+        const wrappedCb = (err, files) => {
+          if (err && (err.code === 'EIO' || err.code === 'EBUSY')) {
+            try {
+              const res = fs.readdirSync(...args.slice(0, -1));
+              return cb(null, res);
+            } catch {
+              return cb(null, []);
+            }
+          }
+          return cb(err, files);
+        };
+        args[args.length - 1] = wrappedCb;
+      }
+      return origReaddir.apply(fs, args);
     };
   }
 
@@ -114,10 +136,11 @@ if (!globalThis.__fs_shim_applied) {
     }
   };
 
-  // Patch fs.promises methods (open, readFile, stat, lstat, realpath)
+  // Patch fs.promises methods (open, readFile, stat, lstat, realpath, readdir)
   safePatchAsync(fs.promises, 'open');
   safePatchAsync(fs.promises, 'readFile');
   safePatchAsync(fs.promises, 'stat');
   safePatchAsync(fs.promises, 'lstat');
   safePatchAsync(fs.promises, 'realpath', true);
+  safePatchAsync(fs.promises, 'readdir', []);
 }

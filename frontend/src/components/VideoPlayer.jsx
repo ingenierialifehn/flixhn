@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import api from '../api/axios';
 import { useAuth } from '../context/AuthContext';
+import useTelemetryHeartbeat from '../hooks/useTelemetryHeartbeat';
 
 // Loader personalizado de HLS para inyectar obligatoriamente la api_key en los fragmentos .ts y listas m3u8
 class EmbyHlsLoader extends (Hls.DefaultConfig?.loader || class {}) {
@@ -88,6 +89,41 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
   const [currentAudioTrack, setCurrentAudioTrack] = useState(0);
   const [subtitleTracks, setSubtitleTracks] = useState([]);
   const [currentSubtitleTrack, setCurrentSubtitleTrack] = useState(-1); // -1 = Desactivado
+
+  // Telemetría en tiempo real: Heartbeat cada 15 segundos y stop al desmontar
+  const mediaTitle = currentEpisode
+    ? `${title?.name || 'Serie'} - T${currentEpisode.season_number || 1}:E${currentEpisode.episode_number || 1} ${currentEpisode.name || ''}`
+    : (title?.name || 'Película');
+
+  const mediaPoster = title?.poster_url || title?.backdrop_url || '';
+
+  useTelemetryHeartbeat({
+    mediaType: 'vod',
+    mediaId: currentEpisode?.id || title?.id,
+    title: mediaTitle,
+    poster: mediaPoster,
+    currentTime: () => videoRef.current?.currentTime || currentTime || 0,
+    duration: () => videoRef.current?.duration || duration || 0,
+    playbackState: isPlaying ? 'playing' : 'paused',
+    onRemoteCommand: (command) => {
+      if (command === 'pause') {
+        videoRef.current?.pause();
+        setIsPlaying(false);
+      } else if (command === 'resume') {
+        videoRef.current?.play().catch(() => {});
+        setIsPlaying(true);
+      } else if (command === 'stop' || command === 'kick') {
+        if (typeof onClose === 'function') onClose();
+        else if (typeof onBack === 'function') onBack();
+      }
+    },
+    onBlocked: () => {
+      alert('El acceso a la transmisión ha sido suspendido para este dispositivo por el administrador.');
+      if (typeof onClose === 'function') onClose();
+      else if (typeof onBack === 'function') onBack();
+    },
+    enabled: !!title,
+  });
 
   // Cargar información completa de temporadas y episodios si es una serie
   useEffect(() => {

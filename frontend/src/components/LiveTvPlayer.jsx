@@ -18,6 +18,7 @@ import {
   Loader2,
   RefreshCw,
 } from 'lucide-react';
+import useTelemetryHeartbeat from '../hooks/useTelemetryHeartbeat';
 
 export default function LiveTvPlayer({
   channel: initialChannel,
@@ -48,6 +49,56 @@ export default function LiveTvPlayer({
       setCurrentChannel(initialChannel);
     }
   }, [initialChannel]);
+
+  // Sincronizar estado isPlaying con eventos nativos del elemento de video
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const handlePlay = () => setIsPlaying(true);
+    const handlePause = () => setIsPlaying(false);
+
+    video.addEventListener('play', handlePlay);
+    video.addEventListener('pause', handlePause);
+
+    return () => {
+      video.removeEventListener('play', handlePlay);
+      video.removeEventListener('pause', handlePause);
+    };
+  }, []);
+
+  // Telemetría en tiempo real: Heartbeat cada 15 segundos y stop al desmontar
+  const channelTitle = currentChannel
+    ? `${currentChannel.channel_number ? `CH ${currentChannel.channel_number} - ` : ''}${currentChannel.name || 'Canal en Vivo'}`
+    : 'Canal en Vivo';
+
+  const channelPoster = currentChannel?.logo_url || '';
+
+  useTelemetryHeartbeat({
+    mediaType: 'livetv',
+    mediaId: currentChannel?.id,
+    title: channelTitle,
+    poster: channelPoster,
+    currentTime: () => videoRef.current?.currentTime || 0,
+    duration: 0,
+    playbackState: isPlaying ? 'playing' : 'paused',
+    onRemoteCommand: (command) => {
+      if (command === 'pause') {
+        videoRef.current?.pause();
+        setIsPlaying(false);
+      } else if (command === 'resume') {
+        videoRef.current?.play().catch(() => {});
+        setIsPlaying(true);
+      } else if (command === 'stop' || command === 'kick') {
+        if (typeof onClose === 'function') onClose();
+      }
+    },
+    onBlocked: () => {
+      alert('El acceso a la transmisión en directo ha sido suspendido para este dispositivo por el administrador.');
+      if (typeof onClose === 'function') onClose();
+    },
+    enabled: !!currentChannel,
+  });
 
   // Manejo de Inactividad de Ratón para Ocultar Controles
   const handleMouseMove = useCallback(() => {

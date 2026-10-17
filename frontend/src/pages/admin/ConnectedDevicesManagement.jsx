@@ -215,12 +215,12 @@ export default function ConnectedDevicesManagement({ onDevicesChange }) {
     fetchDevices();
   }, [fetchDevices]);
 
-  // Polling automático cada 4 segundos
+  // Polling automático cada 5 segundos
   useEffect(() => {
     if (!autoPolling) return;
     const interval = setInterval(() => {
       fetchDevices(true);
-    }, 4000);
+    }, 5000);
     return () => clearInterval(interval);
   }, [autoPolling, fetchDevices]);
 
@@ -319,29 +319,6 @@ export default function ConnectedDevicesManagement({ onDevicesChange }) {
     }
   };
 
-  // 5. Restablecer Dispositivos Demo
-  const handleResetDemo = async () => {
-    setConfirmModal({
-      open: true,
-      title: '¿Restablecer Dispositivos de Demostración?',
-      message: 'Esto regenerará un inventario de Smart TVs, dispositivos móviles, consolas y PCs reproduciendo contenido del catálogo local de FlixHN.',
-      confirmText: 'Restablecer Datos',
-      cancelText: 'Cancelar',
-      isDanger: false,
-      action: async () => {
-        try {
-          const res = await api.post('/admin/devices/seed-demo');
-          if (res.data?.status === 'success') {
-            showToast('success', 'Dispositivos de demostración restaurados.', 'Telemetría Lista');
-            fetchDevices(true);
-          }
-        } catch (err) {
-          showToast('error', 'Error al restablecer demo.', 'Error');
-        }
-      },
-    });
-  };
-
   // Cálculo en vivo de duración de sesión de un dispositivo
   const getLiveDurationFormatted = (device) => {
     if (!device?.session_started_at) return '00:00:00';
@@ -425,7 +402,7 @@ export default function ConnectedDevicesManagement({ onDevicesChange }) {
               }`}
             >
               <span className={`w-2 h-2 rounded-full ${autoPolling ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-600'}`} />
-              <span>{autoPolling ? 'En Vivo (4s)' : 'En Pausa'}</span>
+              <span>{autoPolling ? 'En Vivo (5s)' : 'En Pausa'}</span>
             </button>
 
             <button
@@ -436,15 +413,6 @@ export default function ConnectedDevicesManagement({ onDevicesChange }) {
             >
               <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin text-[#E50914]' : ''}`} />
               <span className="hidden sm:inline">Refrescar</span>
-            </button>
-
-            <button
-              onClick={handleResetDemo}
-              title="Restablecer datos simulados para pruebas"
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100 border border-zinc-800 transition-all cursor-pointer"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-              <span className="hidden md:inline">Restablecer Demo</span>
             </button>
           </div>
         </div>
@@ -584,20 +552,31 @@ export default function ConnectedDevicesManagement({ onDevicesChange }) {
         </div>
       ) : filteredDevices.length === 0 ? (
         <div className="bg-[#181818] border border-zinc-800 rounded-2xl p-12 text-center shadow-lg">
-          <Tv className="w-12 h-12 text-zinc-600 mx-auto mb-3" />
-          <h3 className="text-base font-bold text-zinc-200">No se encontraron dispositivos conectados</h3>
-          <p className="text-xs text-zinc-400 max-w-md mx-auto mt-1 mb-5">
-            {searchQuery
-              ? `No hay ningún dispositivo que coincida con "${searchQuery}".`
-              : 'Actualmente no hay sesiones activas con el filtro seleccionado.'}
+          <div className="w-16 h-16 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-600 mx-auto mb-4">
+            <Radio className="w-8 h-8 opacity-40 text-zinc-400" />
+          </div>
+          <h3 className="text-base font-bold text-zinc-200">
+            {searchQuery || statusFilter !== 'all'
+              ? 'No se encontraron dispositivos conectados'
+              : 'No hay dispositivos reproduciendo en este momento'}
+          </h3>
+          <p className="text-xs text-zinc-400 max-w-md mx-auto mt-2 leading-relaxed">
+            {searchQuery || statusFilter !== 'all'
+              ? `No hay ningún equipo que coincida con "${searchQuery || statusFilter}".`
+              : 'Los equipos aparecerán aquí automáticamente cuando los usuarios inicien sesión y reproduzcan contenido.'}
           </p>
-          <button
-            onClick={handleResetDemo}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold text-white bg-[#E50914] hover:bg-[#b80710] shadow-md transition-all cursor-pointer"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>Cargar Dispositivos de Demostración</span>
-          </button>
+          {(searchQuery || statusFilter !== 'all') && (
+            <button
+              onClick={() => {
+                setSearchQuery('');
+                setStatusFilter('all');
+              }}
+              className="mt-5 inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold text-zinc-300 hover:text-white bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 transition-all cursor-pointer"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Limpiar Filtros</span>
+            </button>
+          )}
         </div>
       ) : viewMode === 'grid' ? (
         /* ================= VISTA DE CUADRÍCULA / TARJETAS GRANDES ================= */
