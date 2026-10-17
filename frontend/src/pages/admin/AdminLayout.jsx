@@ -9,6 +9,7 @@ import NetworkSettings from './NetworkSettings';
 import LiveTvManagement from './LiveTvManagement';
 import TranscodingSettings from './TranscodingSettings';
 import DatabaseManagement from './DatabaseManagement';
+import ScheduledTasksManagement from './ScheduledTasksManagement';
 import api from '../../services/api';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
@@ -398,7 +399,11 @@ const AdminLayout = ({ onBackToBrowse }) => {
                 <DatabaseManagement initialTab="backups" />
               )}
 
-              {activeTab !== 'dashboard' && activeTab !== 'library' && activeTab !== 'catalog' && activeTab !== 'users' && activeTab !== 'network' && activeTab !== 'livetv' && activeTab !== 'transcoding' && activeTab !== 'database' && activeTab !== 'backup' && activeTab !== 'backups' && (
+              {(activeTab === 'tasks' || activeTab === 'scheduled_tasks') && (
+                <ScheduledTasksManagement />
+              )}
+
+              {activeTab !== 'dashboard' && activeTab !== 'library' && activeTab !== 'catalog' && activeTab !== 'users' && activeTab !== 'network' && activeTab !== 'livetv' && activeTab !== 'transcoding' && activeTab !== 'database' && activeTab !== 'backup' && activeTab !== 'backups' && activeTab !== 'tasks' && activeTab !== 'scheduled_tasks' && (
                 <PlaceholderView
                   title={currentTabInfo.title}
                   description={currentTabInfo.description}

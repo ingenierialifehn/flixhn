@@ -15,6 +15,7 @@ use App\Http\Controllers\TvGuideSourceController;
 use App\Http\Controllers\LiveTvController;
 use App\Http\Controllers\TranscodingSettingController;
 use App\Http\Controllers\DatabaseAdminController;
+use App\Http\Controllers\ScheduledTaskController;
 use App\Http\Middleware\EnsureAdmin;
 
 /*
@@ -162,5 +163,10 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/tv-guide-sources', [TvGuideSourceController::class, 'store']);
         Route::post('/tv-guide-sources/{id}/refresh', [TvGuideSourceController::class, 'refresh']);
         Route::delete('/tv-guide-sources/{id}', [TvGuideSourceController::class, 'destroy']);
+
+        // Gestión de Tareas Programadas del Servidor (Scheduled Tasks)
+        Route::get('/tasks', [ScheduledTaskController::class, 'index']);
+        Route::post('/tasks/{key}/run', [ScheduledTaskController::class, 'run']);
+        Route::get('/tasks/{key}/status', [ScheduledTaskController::class, 'status']);
     });
 });

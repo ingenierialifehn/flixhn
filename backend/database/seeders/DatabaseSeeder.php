@@ -72,5 +72,8 @@ class DatabaseSeeder extends Seeder
 
         // 4. Parámetros Base de Red / Conexiones
         $this->call(NetworkSettingSeeder::class);
+
+        // 5. Tareas Programadas Oficiales
+        $this->call(ScheduledTaskSeeder::class);
     }
 }
