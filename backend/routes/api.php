@@ -17,6 +17,7 @@ use App\Http\Controllers\TranscodingSettingController;
 use App\Http\Controllers\DatabaseAdminController;
 use App\Http\Controllers\ScheduledTaskController;
 use App\Http\Controllers\LogAdminController;
+use App\Http\Controllers\DeviceSessionController;
 use App\Http\Middleware\EnsureAdmin;
 
 /*
@@ -177,5 +178,17 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/logs/content', [LogAdminController::class, 'content']);
         Route::get('/logs/download/{filename}', [LogAdminController::class, 'download']);
         Route::post('/logs/clear', [LogAdminController::class, 'clear']);
+
+        // Gestión y Monitoreo de Dispositivos Conectados en Tiempo Real
+        Route::get('/devices', [DeviceSessionController::class, 'index']);
+        Route::get('/devices/{id}', [DeviceSessionController::class, 'show']);
+        Route::put('/devices/{id}/name', [DeviceSessionController::class, 'updateName']);
+        Route::post('/devices/{id}/playback-control', [DeviceSessionController::class, 'playbackControl']);
+        Route::post('/devices/{id}/toggle-block', [DeviceSessionController::class, 'toggleBlock']);
+        Route::delete('/devices/{id}/session', [DeviceSessionController::class, 'terminateSession']);
+        Route::post('/devices/seed-demo', [DeviceSessionController::class, 'seedDemo']);
     });
+
+    // Latido y reporte de telemetría de dispositivo cliente
+    Route::post('/devices/heartbeat', [DeviceSessionController::class, 'heartbeat']);
 });

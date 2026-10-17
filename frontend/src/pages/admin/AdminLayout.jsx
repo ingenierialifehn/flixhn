@@ -11,6 +11,7 @@ import TranscodingSettings from './TranscodingSettings';
 import DatabaseManagement from './DatabaseManagement';
 import ScheduledTasksManagement from './ScheduledTasksManagement';
 import LogsManagement from './LogsManagement';
+import ConnectedDevicesManagement from './ConnectedDevicesManagement';
 import api from '../../services/api';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
@@ -201,13 +202,15 @@ const AdminLayout = ({ onBackToBrowse }) => {
   const [activity, setActivity] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [activeDevicesCount, setActiveDevicesCount] = useState(0);
 
   const loadData = useCallback(async () => {
     try {
-      const [resStatsSettled, resTitlesSettled, resSubsSettled] = await Promise.allSettled([
+      const [resStatsSettled, resTitlesSettled, resSubsSettled, resDevicesSettled] = await Promise.allSettled([
         api.get('/admin/dashboard-stats'),
         api.get('/admin/titles'),
         api.get('/admin/users'),
+        api.get('/admin/devices'),
       ]);
 
       if (resStatsSettled.status === 'fulfilled') {
@@ -226,6 +229,13 @@ const AdminLayout = ({ onBackToBrowse }) => {
       if (resSubsSettled.status === 'fulfilled') {
         const sData = resSubsSettled.value?.data;
         setSubscribers(sData?.users || sData?.data || []);
+      }
+
+      if (resDevicesSettled.status === 'fulfilled') {
+        const dData = resDevicesSettled.value?.data;
+        if (dData?.summary?.online !== undefined) {
+          setActiveDevicesCount(dData.summary.online);
+        }
       }
     } catch (err) {
       console.error('Error cargando datos de administración FlixHN:', err);
@@ -280,6 +290,7 @@ const AdminLayout = ({ onBackToBrowse }) => {
               onCloseMobile={() => setMobileOpen(false)}
               isCollapsed={false}
               onToggleCollapse={toggleSidebar}
+              activeDevicesCount={activeDevicesCount}
             />
           </aside>
         </div>
@@ -297,6 +308,7 @@ const AdminLayout = ({ onBackToBrowse }) => {
           onBackToBrowse={onBackToBrowse}
           isCollapsed={isSidebarCollapsed}
           onToggleCollapse={toggleSidebar}
+          activeDevicesCount={activeDevicesCount}
         />
       </aside>
 
@@ -408,7 +420,11 @@ const AdminLayout = ({ onBackToBrowse }) => {
                 <LogsManagement />
               )}
 
-              {activeTab !== 'dashboard' && activeTab !== 'library' && activeTab !== 'catalog' && activeTab !== 'users' && activeTab !== 'network' && activeTab !== 'livetv' && activeTab !== 'transcoding' && activeTab !== 'database' && activeTab !== 'backup' && activeTab !== 'backups' && activeTab !== 'tasks' && activeTab !== 'scheduled_tasks' && activeTab !== 'logs' && (
+              {activeTab === 'devices' && (
+                <ConnectedDevicesManagement onDevicesChange={(count) => setActiveDevicesCount(count)} />
+              )}
+
+              {activeTab !== 'dashboard' && activeTab !== 'library' && activeTab !== 'catalog' && activeTab !== 'users' && activeTab !== 'network' && activeTab !== 'livetv' && activeTab !== 'transcoding' && activeTab !== 'database' && activeTab !== 'backup' && activeTab !== 'backups' && activeTab !== 'tasks' && activeTab !== 'scheduled_tasks' && activeTab !== 'logs' && activeTab !== 'devices' && (
                 <PlaceholderView
                   title={currentTabInfo.title}
                   description={currentTabInfo.description}

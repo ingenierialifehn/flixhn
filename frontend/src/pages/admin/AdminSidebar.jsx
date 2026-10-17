@@ -63,6 +63,7 @@ const AdminSidebar = ({
   isCollapsed = false,
   onToggleCollapse,
   onCloseMobile,
+  activeDevicesCount = 0,
 }) => {
   const isItemActive = (item) => {
     if (activeTab === item.id) return true;
@@ -207,16 +208,31 @@ const AdminSidebar = ({
                         : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/60'
                     }`}
                   >
-                    <Icon
-                      className={`transition-colors flex-shrink-0 ${
-                        isCollapsed ? 'w-5 h-5 mx-auto' : 'w-4 h-4'
-                      } ${
-                        isActive
-                          ? 'text-[#E50914]'
-                          : 'text-zinc-400 group-hover:text-zinc-200'
-                      }`}
-                    />
-                    {!isCollapsed && <span className="truncate">{item.label}</span>}
+                    <div className="relative flex-shrink-0">
+                      <Icon
+                        className={`transition-colors ${
+                          isCollapsed ? 'w-5 h-5 mx-auto' : 'w-4 h-4'
+                        } ${
+                          isActive
+                            ? 'text-[#E50914]'
+                            : 'text-zinc-400 group-hover:text-zinc-200'
+                        }`}
+                      />
+                      {isCollapsed && item.id === 'devices' && activeDevicesCount > 0 && (
+                        <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-500 rounded-full ring-2 ring-[#181818] animate-pulse" />
+                      )}
+                    </div>
+                    {!isCollapsed && (
+                      <>
+                        <span className="truncate flex-1 text-left">{item.label}</span>
+                        {item.id === 'devices' && activeDevicesCount > 0 && (
+                          <span className="ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                            {activeDevicesCount}
+                          </span>
+                        )}
+                      </>
+                    )}
                   </button>
                 );
               })}
