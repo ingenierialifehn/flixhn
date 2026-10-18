@@ -19,7 +19,9 @@ use App\Http\Controllers\ScheduledTaskController;
 use App\Http\Controllers\LogAdminController;
 use App\Http\Controllers\DeviceSessionController;
 use App\Http\Controllers\PluginAdminController;
+use App\Http\Controllers\ApiKeyAdminController;
 use App\Http\Middleware\EnsureAdmin;
+use App\Http\Middleware\AuthenticateApiKey;
 
 /*
 |--------------------------------------------------------------------------
@@ -196,6 +198,13 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/plugins/{slug}/toggle', [PluginAdminController::class, 'toggle']);
         Route::get('/plugins/{slug}/settings', [PluginAdminController::class, 'settings']);
         Route::put('/plugins/{slug}/settings', [PluginAdminController::class, 'updateSettings']);
+
+        // Gestión de Claves API y Tokens de Integración
+        Route::get('/api-keys', [ApiKeyAdminController::class, 'index']);
+        Route::post('/api-keys', [ApiKeyAdminController::class, 'store']);
+        Route::put('/api-keys/{id}', [ApiKeyAdminController::class, 'update']);
+        Route::post('/api-keys/{id}/toggle', [ApiKeyAdminController::class, 'toggle']);
+        Route::delete('/api-keys/{id}', [ApiKeyAdminController::class, 'destroy']);
     });
 
     // Telemetría y Latido de Reproducción Real en Vivo
@@ -206,3 +215,13 @@ Route::middleware('auth:sanctum')->group(function () {
 
 // Detención de telemetría de dispositivo (Compatible con sendBeacon y keepalive al cerrar pestaña)
 Route::post('/telemetry/stop', [DeviceSessionController::class, 'stopPlayback']);
+
+/*
+|--------------------------------------------------------------------------
+| API v1 - Integración de Terceros mediante API Key (Radarr, Sonarr, Home Assistant, etc.)
+|--------------------------------------------------------------------------
+*/
+Route::middleware(AuthenticateApiKey::class)->prefix('v1')->group(function () {
+    Route::get('/ping', [ApiKeyAdminController::class, 'ping']);
+    Route::get('/titles', [TitleController::class, 'index']);
+});
