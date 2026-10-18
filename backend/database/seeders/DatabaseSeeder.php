@@ -75,5 +75,8 @@ class DatabaseSeeder extends Seeder
 
         // 5. Tareas Programadas Oficiales
         $this->call(ScheduledTaskSeeder::class);
+
+        // 6. Ecosistema de Extensiones y Plugins
+        $this->call(PluginSeeder::class);
     }
 }

@@ -18,6 +18,7 @@ use App\Http\Controllers\DatabaseAdminController;
 use App\Http\Controllers\ScheduledTaskController;
 use App\Http\Controllers\LogAdminController;
 use App\Http\Controllers\DeviceSessionController;
+use App\Http\Controllers\PluginAdminController;
 use App\Http\Middleware\EnsureAdmin;
 
 /*
@@ -186,6 +187,15 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/devices/{id}/playback-control', [DeviceSessionController::class, 'playbackControl']);
         Route::post('/devices/{id}/toggle-block', [DeviceSessionController::class, 'toggleBlock']);
         Route::delete('/devices/{id}/session', [DeviceSessionController::class, 'terminateSession']);
+
+        // Gestión de Extensiones y Complementos del Servidor (Plugins)
+        Route::get('/plugins/installed', [PluginAdminController::class, 'installed']);
+        Route::get('/plugins/catalog', [PluginAdminController::class, 'catalog']);
+        Route::post('/plugins/{slug}/install', [PluginAdminController::class, 'install']);
+        Route::post('/plugins/{slug}/uninstall', [PluginAdminController::class, 'uninstall']);
+        Route::post('/plugins/{slug}/toggle', [PluginAdminController::class, 'toggle']);
+        Route::get('/plugins/{slug}/settings', [PluginAdminController::class, 'settings']);
+        Route::put('/plugins/{slug}/settings', [PluginAdminController::class, 'updateSettings']);
     });
 
     // Telemetría y Latido de Reproducción Real en Vivo
