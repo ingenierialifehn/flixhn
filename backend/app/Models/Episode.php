@@ -20,6 +20,15 @@ class Episode extends Model
         'stream_path',
         'duration_seconds',
         'thumbnail_url',
+        'sort_title',
+        'release_date',
+        'community_rating',
+        'parental_rating',
+        'imdb_id',
+        'tmdb_id',
+        'tvdb_id',
+        'is_locked',
+        'locked_fields',
     ];
 
     protected $appends = [
@@ -75,6 +84,9 @@ class Episode extends Model
         return [
             'episode_number' => 'integer',
             'duration_seconds' => 'integer',
+            'community_rating' => 'float',
+            'is_locked' => 'boolean',
+            'locked_fields' => 'array',
         ];
     }
 

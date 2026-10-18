@@ -30,6 +30,22 @@ class Title extends Model
         'overview',
         'stream_url',
         'year',
+        'sort_title',
+        'release_date',
+        'community_rating',
+        'parental_rating',
+        'custom_rating',
+        'video_format_3d',
+        'imdb_id',
+        'tmdb_id',
+        'tvdb_id',
+        'cast',
+        'studios',
+        'tags',
+        'metadata_language',
+        'country',
+        'is_locked',
+        'locked_fields',
     ];
 
     protected $appends = [
@@ -130,6 +146,12 @@ class Title extends Model
             'release_year' => 'integer',
             'duration_seconds' => 'integer',
             'category_id' => 'integer',
+            'community_rating' => 'float',
+            'is_locked' => 'boolean',
+            'cast' => 'array',
+            'studios' => 'array',
+            'tags' => 'array',
+            'locked_fields' => 'array',
         ];
     }
 

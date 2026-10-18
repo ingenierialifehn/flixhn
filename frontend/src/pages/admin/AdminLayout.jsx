@@ -14,6 +14,8 @@ import LogsManagement from './LogsManagement';
 import ConnectedDevicesManagement from './ConnectedDevicesManagement';
 import PluginsManagement from './PluginsManagement';
 import ApiKeysManagement from './ApiKeysManagement';
+import MetadataManager from './MetadataManager';
+import StatsDashboard from './StatsDashboard';
 import api from '../../services/api';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
@@ -434,7 +436,15 @@ const AdminLayout = ({ onBackToBrowse }) => {
                 <ApiKeysManagement />
               )}
 
-              {activeTab !== 'dashboard' && activeTab !== 'library' && activeTab !== 'catalog' && activeTab !== 'users' && activeTab !== 'network' && activeTab !== 'livetv' && activeTab !== 'transcoding' && activeTab !== 'database' && activeTab !== 'backup' && activeTab !== 'backups' && activeTab !== 'tasks' && activeTab !== 'scheduled_tasks' && activeTab !== 'logs' && activeTab !== 'devices' && activeTab !== 'plugins' && activeTab !== 'apikeys' && activeTab !== 'api_keys' && (
+              {activeTab === 'metadata' && (
+                <MetadataManager />
+              )}
+
+              {(activeTab === 'stats' || activeTab === 'statistics') && (
+                <StatsDashboard />
+              )}
+
+              {activeTab !== 'dashboard' && activeTab !== 'library' && activeTab !== 'catalog' && activeTab !== 'users' && activeTab !== 'network' && activeTab !== 'livetv' && activeTab !== 'transcoding' && activeTab !== 'database' && activeTab !== 'backup' && activeTab !== 'backups' && activeTab !== 'tasks' && activeTab !== 'scheduled_tasks' && activeTab !== 'logs' && activeTab !== 'devices' && activeTab !== 'plugins' && activeTab !== 'apikeys' && activeTab !== 'api_keys' && activeTab !== 'metadata' && activeTab !== 'stats' && activeTab !== 'statistics' && (
                 <PlaceholderView
                   title={currentTabInfo.title}
                   description={currentTabInfo.description}

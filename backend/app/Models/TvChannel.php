@@ -24,11 +24,24 @@ class TvChannel extends Model
         'is_active',
         'is_online',
         'status',
+        'sort_title',
+        'overview',
+        'community_rating',
+        'parental_rating',
+        'genres',
+        'tags',
+        'metadata_language',
+        'country',
+        'is_locked',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
         'is_online' => 'boolean',
+        'community_rating' => 'float',
+        'genres' => 'array',
+        'tags' => 'array',
+        'is_locked' => 'boolean',
     ];
 
     protected $appends = [

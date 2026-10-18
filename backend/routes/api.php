@@ -20,6 +20,8 @@ use App\Http\Controllers\LogAdminController;
 use App\Http\Controllers\DeviceSessionController;
 use App\Http\Controllers\PluginAdminController;
 use App\Http\Controllers\ApiKeyAdminController;
+use App\Http\Controllers\MetadataManagerController;
+use App\Http\Controllers\AnalyticsAdminController;
 use App\Http\Middleware\EnsureAdmin;
 use App\Http\Middleware\AuthenticateApiKey;
 
@@ -205,6 +207,26 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::put('/api-keys/{id}', [ApiKeyAdminController::class, 'update']);
         Route::post('/api-keys/{id}/toggle', [ApiKeyAdminController::class, 'toggle']);
         Route::delete('/api-keys/{id}', [ApiKeyAdminController::class, 'destroy']);
+
+        // Gestor de Metadatos de Medios y Árbol Explorer
+        Route::get('/metadata/tree', [MetadataManagerController::class, 'tree']);
+        Route::get('/metadata/item/{type}/{id}', [MetadataManagerController::class, 'showItem']);
+        Route::put('/metadata/item/{type}/{id}', [MetadataManagerController::class, 'updateItem']);
+        Route::post('/metadata/item/{type}/{id}/refresh', [MetadataManagerController::class, 'refresh']);
+        Route::post('/metadata/item/{type}/{id}/toggle-lock', [MetadataManagerController::class, 'toggleLock']);
+        Route::delete('/metadata/item/{type}/{id}', [MetadataManagerController::class, 'destroy']);
+        Route::get('/metadata/search-external', [MetadataManagerController::class, 'searchExternal']);
+
+        // Estadísticas y Analíticas Avanzadas del Servidor (On-Net & Telemetría)
+        Route::prefix('stats')->group(function () {
+            Route::get('/overview', [AnalyticsAdminController::class, 'overview']);
+            Route::get('/playback-chart', [AnalyticsAdminController::class, 'playbackChart']);
+            Route::get('/top-content', [AnalyticsAdminController::class, 'topContent']);
+            Route::get('/top-users', [AnalyticsAdminController::class, 'topUsers']);
+            Route::get('/device-distribution', [AnalyticsAdminController::class, 'deviceDistribution']);
+            Route::get('/live-tv', [AnalyticsAdminController::class, 'liveTvRanking']);
+            Route::get('/export', [AnalyticsAdminController::class, 'export']);
+        });
     });
 
     // Telemetría y Latido de Reproducción Real en Vivo

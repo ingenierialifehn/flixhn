@@ -323,24 +323,29 @@ class MediaSyncService
         $sourcePath = 'local://' . ltrim(str_replace($storagePath, '', $dirPath), '/');
         $slug = Str::slug($titleName) . '-' . substr(md5($sourcePath), 0, 6);
 
-        // Guardar o actualizar registro de título
-        $title = Title::updateOrCreate(
-            ['source_path' => $sourcePath],
-            [
-                'name' => $titleName,
-                'slug' => $slug,
-                'type' => $isSeries ? 'series' : 'movie',
-                'category_id' => $category->id,
-                'description' => "Contenido transmitido localmente desde la biblioteca {$category->name} del servidor.",
-                'poster_url' => $artwork['poster_url'],
-                'backdrop_url' => $artwork['backdrop_url'],
-                'release_year' => $releaseYear ?: (int) date('Y'),
-                'genre' => $category->name,
-                'stream_path' => $relativeStreamPath ?: '',
-                'duration_seconds' => $this->probeDuration($streamFile),
-                'is_featured' => false,
-            ]
-        );
+        $existing = Title::where('source_path', $sourcePath)->first();
+        if ($existing && $existing->is_locked) {
+            $title = $existing;
+        } else {
+            // Guardar o actualizar registro de título
+            $title = Title::updateOrCreate(
+                ['source_path' => $sourcePath],
+                [
+                    'name' => $titleName,
+                    'slug' => $slug,
+                    'type' => $isSeries ? 'series' : 'movie',
+                    'category_id' => $category->id,
+                    'description' => "Contenido transmitido localmente desde la biblioteca {$category->name} del servidor.",
+                    'poster_url' => $artwork['poster_url'],
+                    'backdrop_url' => $artwork['backdrop_url'],
+                    'release_year' => $releaseYear ?: (int) date('Y'),
+                    'genre' => $category->name,
+                    'stream_path' => $relativeStreamPath ?: '',
+                    'duration_seconds' => $this->probeDuration($streamFile),
+                    'is_featured' => false,
+                ]
+            );
+        }
 
         // Si es serie, escanear temporadas y episodios
         if ($isSeries) {
@@ -368,23 +373,28 @@ class MediaSyncService
         $dir = dirname($filePath);
         $artwork = $this->findArtworkInDir($dir, $storagePath, $titleName);
 
-        $title = Title::updateOrCreate(
-            ['source_path' => $sourcePath],
-            [
-                'name' => $titleName,
-                'slug' => $slug,
-                'type' => $category->type === 'series' ? 'series' : 'movie',
-                'category_id' => $category->id,
-                'description' => "Archivo de video {$category->name} disponible en almacenamiento de alta velocidad.",
-                'poster_url' => $artwork['poster_url'],
-                'backdrop_url' => $artwork['backdrop_url'],
-                'release_year' => $releaseYear ?: (int) date('Y'),
-                'genre' => $category->name,
-                'stream_path' => $relativeStreamPath,
-                'duration_seconds' => $this->probeDuration($filePath),
-                'is_featured' => false,
-            ]
-        );
+        $existing = Title::where('source_path', $sourcePath)->first();
+        if ($existing && $existing->is_locked) {
+            $title = $existing;
+        } else {
+            $title = Title::updateOrCreate(
+                ['source_path' => $sourcePath],
+                [
+                    'name' => $titleName,
+                    'slug' => $slug,
+                    'type' => $category->type === 'series' ? 'series' : 'movie',
+                    'category_id' => $category->id,
+                    'description' => "Archivo de video {$category->name} disponible en almacenamiento de alta velocidad.",
+                    'poster_url' => $artwork['poster_url'],
+                    'backdrop_url' => $artwork['backdrop_url'],
+                    'release_year' => $releaseYear ?: (int) date('Y'),
+                    'genre' => $category->name,
+                    'stream_path' => $relativeStreamPath,
+                    'duration_seconds' => $this->probeDuration($filePath),
+                    'is_featured' => false,
+                ]
+            );
+        }
 
         return $sourcePath;
     }
@@ -850,6 +860,11 @@ SVG;
         }
         $dbYear = $year ?: 0;
 
+        $existing = Title::where('source_path', $sourcePath)->first();
+        if ($existing && $existing->is_locked) {
+            return $sourcePath;
+        }
+
         Title::updateOrCreate(
             ['source_path' => $sourcePath],
             [
@@ -876,21 +891,25 @@ SVG;
      */
     protected function cleanupStaleTitles(array $validSourcePaths): int
     {
-        // 1. Eliminar títulos viejos inventados (que no tienen source_path o no están en los archivos reales detectados)
-        $query = Title::query();
-
+        // 1. Eliminar títulos viejos inventados (que no tienen source_path o no están en los archivos reales detectados y no están bloqueados)
         if (empty($validSourcePaths)) {
-            // Si no hay archivos reales en storage, eliminar todos los inventados
-            $count = $query->count();
-            // Eliminar temporadas y episodios huérfanos
-            Episode::query()->delete();
-            Season::query()->delete();
-            $query->delete();
+            // Si no hay archivos reales en storage, eliminar los no bloqueados
+            $staleQuery = Title::where('is_locked', false);
+            $count = $staleQuery->count();
+            foreach ($staleQuery->get() as $t) {
+                $t->seasons()->delete();
+                $t->episodes()->delete();
+                $t->playbackProgresses()->delete();
+                $t->delete();
+            }
             return $count;
         }
 
-        $staleTitles = Title::whereNotIn('source_path', $validSourcePaths)
-            ->orWhereNull('source_path')
+        $staleTitles = Title::where(function ($q) use ($validSourcePaths) {
+                $q->whereNotIn('source_path', $validSourcePaths)
+                  ->orWhereNull('source_path');
+            })
+            ->where('is_locked', false)
             ->get();
 
         $count = $staleTitles->count();
