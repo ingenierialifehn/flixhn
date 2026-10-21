@@ -137,17 +137,6 @@ const Browse = ({ onPlay, onNavigateToAdmin }) => {
     }
   };
 
-  if (authLoading) {
-    return (
-      <div className="min-h-screen bg-[#141414] flex flex-col items-center justify-center space-y-4">
-        <span className="font-display text-5xl md:text-6xl text-[#E50914] font-black tracking-widest animate-pulse">
-          FLIXHN
-        </span>
-        <div className="w-8 h-8 border-3 border-red-600 border-t-transparent rounded-full animate-spin"></div>
-      </div>
-    );
-  }
-
   const handleResetFilters = useCallback(() => {
     setSelectedPlatform('all');
     setSelectedGenre('all');
@@ -282,6 +271,17 @@ const Browse = ({ onPlay, onNavigateToAdmin }) => {
 
   const hasContent = Boolean(billboardTitle) || (rows || []).some((r) => r?.items && r.items.length > 0);
   const isSearchActive = searchQuery.trim().length > 0;
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#141414] flex flex-col items-center justify-center space-y-4">
+        <span className="font-display text-5xl md:text-6xl text-[#E50914] font-black tracking-widest animate-pulse">
+          FLIXHN
+        </span>
+        <div className="w-8 h-8 border-3 border-red-600 border-t-transparent rounded-full animate-spin"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-100 dark:bg-[#141414] text-gray-900 dark:text-white flex flex-col justify-between selection:bg-[#E50914] selection:text-white transition-colors duration-200">

@@ -202,68 +202,6 @@ function App() {
     }
   };
 
-  // 1. Estado de Carga Inicial
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-[#141414] flex flex-col items-center justify-center space-y-4">
-        <span className="font-display text-5xl md:text-6xl text-[#E50914] font-black tracking-widest animate-pulse">
-          FLIXHN
-        </span>
-        <div className="w-8 h-8 border-3 border-red-600 border-t-transparent rounded-full animate-spin"></div>
-      </div>
-    );
-  }
-
-  // 2. Si no hay sesión autenticada -> Vista Login
-  if (!token || !user) {
-    return <Login />;
-  }
-
-  // 3. Si el usuario no ha seleccionado un perfil ("¿Quién está viendo?")
-  if (!activeProfile) {
-    return <ProfileSelector />;
-  }
-
-  // 4. Si el reproductor de video de Películas/Series está activo -> Pantalla Completa HLS
-  if (activeVideo) {
-    return (
-      <VideoPlayer
-        title={activeVideo.title}
-        episode={activeVideo.episode}
-        initialTime={activeVideo.initialTime || 0}
-        onBack={() => {
-          setActiveVideo(null);
-          loadCatalog(); // Refrescar la fila de "Continuar Viendo"
-        }}
-      />
-    );
-  }
-
-  // 4.1 Si el reproductor de TV en Vivo está activo -> Pantalla Completa con Zapping
-  if (activeLiveChannel) {
-    return (
-      <LiveTvPlayer
-        channel={activeLiveChannel}
-        channels={liveChannelsList}
-        onClose={() => setActiveLiveChannel(null)}
-        onSelectChannel={(newCh) => setActiveLiveChannel(newCh)}
-      />
-    );
-  }
-
-  // 5. Si está activa la pestaña de Administración (Consola ISP)
-  if (currentTab === 'admin' && user?.role === 'admin') {
-    return (
-      <AdminLayout
-        onBackToBrowse={() => {
-          setCurrentTab('home');
-          window.history.pushState({}, '', '/browse');
-          loadCatalog();
-        }}
-      />
-    );
-  }
-
   const handleResetFilters = useCallback(() => {
     setSelectedPlatform('all');
     setSelectedGenre('all');
@@ -398,6 +336,68 @@ function App() {
 
   const hasContent = Boolean(billboardTitle) || (rows || []).some((r) => r?.items && r.items.length > 0);
   const isSearchActive = searchQuery.trim().length > 0;
+
+  // 1. Estado de Carga Inicial
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#141414] flex flex-col items-center justify-center space-y-4">
+        <span className="font-display text-5xl md:text-6xl text-[#E50914] font-black tracking-widest animate-pulse">
+          FLIXHN
+        </span>
+        <div className="w-8 h-8 border-3 border-red-600 border-t-transparent rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+
+  // 2. Si no hay sesión autenticada -> Vista Login
+  if (!token || !user) {
+    return <Login />;
+  }
+
+  // 3. Si el usuario no ha seleccionado un perfil ("¿Quién está viendo?")
+  if (!activeProfile) {
+    return <ProfileSelector />;
+  }
+
+  // 4. Si el reproductor de video de Películas/Series está activo -> Pantalla Completa HLS
+  if (activeVideo) {
+    return (
+      <VideoPlayer
+        title={activeVideo.title}
+        episode={activeVideo.episode}
+        initialTime={activeVideo.initialTime || 0}
+        onBack={() => {
+          setActiveVideo(null);
+          loadCatalog(); // Refrescar la fila de "Continuar Viendo"
+        }}
+      />
+    );
+  }
+
+  // 4.1 Si el reproductor de TV en Vivo está activo -> Pantalla Completa con Zapping
+  if (activeLiveChannel) {
+    return (
+      <LiveTvPlayer
+        channel={activeLiveChannel}
+        channels={liveChannelsList}
+        onClose={() => setActiveLiveChannel(null)}
+        onSelectChannel={(newCh) => setActiveLiveChannel(newCh)}
+      />
+    );
+  }
+
+  // 5. Si está activa la pestaña de Administración (Consola ISP)
+  if (currentTab === 'admin' && user?.role === 'admin') {
+    return (
+      <AdminLayout
+        onBackToBrowse={() => {
+          setCurrentTab('home');
+          window.history.pushState({}, '', '/browse');
+          loadCatalog();
+        }}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-100 dark:bg-[#141414] text-gray-900 dark:text-white flex flex-col justify-between selection:bg-[#E50914] selection:text-white transition-colors duration-200">
