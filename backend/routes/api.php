@@ -26,6 +26,7 @@ use App\Http\Controllers\OttProviderController;
 use App\Http\Controllers\FilesystemAdminController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\PasswordResetController;
+use App\Http\Controllers\MediaIngestController;
 use App\Http\Middleware\EnsureAdmin;
 use App\Http\Middleware\EnsureUserIsAdmin;
 use App\Http\Middleware\AuthenticateApiKey;
@@ -268,6 +269,16 @@ Route::middleware('auth:sanctum')->group(function () {
         // Explorador Interactivo de Directorios del Servidor (Server Directory Picker)
         Route::match(['get', 'post'], '/filesystem/browse-directories', [FilesystemAdminController::class, 'browseDirectories']);
         Route::post('/filesystem/make-directory', [FilesystemAdminController::class, 'makeDirectory']);
+
+        // Motor FlixEngine Ingest (Descargas y Procesamiento Automatizado en Segundo Plano)
+        Route::prefix('ingest')->group(function () {
+            Route::get('/tasks', [MediaIngestController::class, 'tasks']);
+            Route::post('/tasks', [MediaIngestController::class, 'store']);
+            Route::post('/tasks/{id}/cancel', [MediaIngestController::class, 'cancel']);
+            Route::delete('/tasks/{id}', [MediaIngestController::class, 'destroy']);
+            Route::post('/tasks/{id}/retry', [MediaIngestController::class, 'retry']);
+            Route::get('/metrics', [MediaIngestController::class, 'metrics']);
+        });
     });
 
     // Telemetría y Latido de Reproducción Real en Vivo

@@ -17,6 +17,7 @@ import ApiKeysManagement from './ApiKeysManagement';
 import MetadataManager from './MetadataManager';
 import StatsDashboard from './StatsDashboard';
 import OttSyncManagement from './OttSyncManagement';
+import IngestManagement from './IngestManagement';
 import api from '../../services/api';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
@@ -86,9 +87,14 @@ const TAB_CONFIG = {
     description: 'Inventario de Smart TVs, dispositivos Android TV, decodificadores IPTV y navegadores que han establecido sesiones activas.',
   },
   downloads: {
-    title: 'Gestor de Descargas y Caché Perimetral',
+    title: 'FlixEngine Ingest — Descargas y Automatización',
     icon: DownloadCloud,
-    description: 'Cola de ingesta de contenido multimedia y almacenamiento en caché para distribución a nodos secundarios del ISP.',
+    description: 'Motor de ingesta y descargas automatizadas en segundo plano, transcodificación On-Net e indexación directa al catálogo.',
+  },
+  ingest: {
+    title: 'FlixEngine Ingest — Descargas y Automatización',
+    icon: DownloadCloud,
+    description: 'Motor de ingesta y descargas automatizadas en segundo plano, transcodificación On-Net e indexación directa al catálogo.',
   },
   ott_sync: {
     title: 'Cuentas y Sincronización OTT',
@@ -153,7 +159,7 @@ const getTabFromPath = (pathname) => {
   if (pathname === '/admin/tasks' || pathname === '/admin/scheduled_tasks') return 'tasks';
   if (pathname === '/admin/logs') return 'logs';
   if (pathname === '/admin/devices') return 'devices';
-  if (pathname === '/admin/downloads') return 'downloads';
+  if (pathname === '/admin/downloads' || pathname === '/admin/ingest') return 'downloads';
   if (pathname === '/admin/ott-sync' || pathname === '/admin/ott_sync') return 'ott-sync';
   if (pathname === '/admin/plugins') return 'plugins';
   if (pathname === '/admin/apikeys' || pathname === '/admin/api_keys') return 'apikeys';
@@ -461,7 +467,11 @@ const AdminLayout = ({ onBackToBrowse }) => {
                 <OttSyncManagement />
               )}
 
-              {activeTab !== 'dashboard' && activeTab !== 'library' && activeTab !== 'catalog' && activeTab !== 'users' && activeTab !== 'network' && activeTab !== 'livetv' && activeTab !== 'transcoding' && activeTab !== 'database' && activeTab !== 'backup' && activeTab !== 'backups' && activeTab !== 'tasks' && activeTab !== 'scheduled_tasks' && activeTab !== 'logs' && activeTab !== 'devices' && activeTab !== 'ott_sync' && activeTab !== 'ott-sync' && activeTab !== 'plugins' && activeTab !== 'apikeys' && activeTab !== 'api_keys' && activeTab !== 'metadata' && activeTab !== 'stats' && activeTab !== 'statistics' && (
+              {(activeTab === 'downloads' || activeTab === 'ingest') && (
+                <IngestManagement />
+              )}
+
+              {activeTab !== 'dashboard' && activeTab !== 'library' && activeTab !== 'catalog' && activeTab !== 'users' && activeTab !== 'network' && activeTab !== 'livetv' && activeTab !== 'transcoding' && activeTab !== 'database' && activeTab !== 'backup' && activeTab !== 'backups' && activeTab !== 'tasks' && activeTab !== 'scheduled_tasks' && activeTab !== 'logs' && activeTab !== 'devices' && activeTab !== 'downloads' && activeTab !== 'ingest' && activeTab !== 'ott_sync' && activeTab !== 'ott-sync' && activeTab !== 'plugins' && activeTab !== 'apikeys' && activeTab !== 'api_keys' && activeTab !== 'metadata' && activeTab !== 'stats' && activeTab !== 'statistics' && (
                 <PlaceholderView
                   title={currentTabInfo.title}
                   description={currentTabInfo.description}
