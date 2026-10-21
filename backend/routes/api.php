@@ -23,6 +23,7 @@ use App\Http\Controllers\ApiKeyAdminController;
 use App\Http\Controllers\MetadataManagerController;
 use App\Http\Controllers\AnalyticsAdminController;
 use App\Http\Controllers\OttProviderController;
+use App\Http\Controllers\FilesystemAdminController;
 use App\Http\Middleware\EnsureAdmin;
 use App\Http\Middleware\AuthenticateApiKey;
 
@@ -248,6 +249,10 @@ Route::middleware('auth:sanctum')->group(function () {
 
         // Endpoint canónico directo para tareas de ingesta OTT
         Route::get('/ott-tasks', [OttProviderController::class, 'tasks']);
+
+        // Explorador Interactivo de Directorios del Servidor (Server Directory Picker)
+        Route::match(['get', 'post'], '/filesystem/browse-directories', [FilesystemAdminController::class, 'browseDirectories']);
+        Route::post('/filesystem/make-directory', [FilesystemAdminController::class, 'makeDirectory']);
     });
 
     // Telemetría y Latido de Reproducción Real en Vivo

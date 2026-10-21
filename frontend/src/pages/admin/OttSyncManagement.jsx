@@ -30,29 +30,23 @@ import {
   Sparkles,
   Info,
   Plus,
+  Folder,
   FolderPlus,
 } from 'lucide-react';
+import FolderPickerModal from './FolderPickerModal';
 
 /* =========================================================================
    LOGOS OFICIALES EN BADGES VECTORIALES NÍTITOS (#141414)
    ========================================================================= */
 
-// Netflix: "NETFLIX" en rojo institucional (#E50914), negrita, tracking uniforme
+// Netflix: Vector SVG oficial de NETFLIX en rojo #E50914 sobre fondo #141414 nítido sin recortes
 const NetflixLogo = () => (
   <div className="flex items-center justify-center px-2 py-0.5 select-none">
-    <svg className="w-24 h-7" viewBox="0 0 100 28" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <text
-        x="50"
-        y="21"
-        textAnchor="middle"
+    <svg className="w-24 h-7" viewBox="0 0 111 30" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path
+        d="M105.062 14.281L111 30c-1.75-.25-3.5-.563-5.281-.844l-3.344-8.688-3.438 7.969c-1.688-.281-3.344-.375-5.031-.594l6.031-13.75L94.469 0h5.062l3.063 7.874L105.875 0H111l-5.938 14.281zM90.469 0h-4.594v27.25c1.5.094 3.063.156 4.594.344V0zM81.906 26.938c-4.188-.281-8.375-.531-12.656-.625V0h4.688v21.875c2.688.063 5.375.281 7.969.406v4.656zM64.406 0v4.75H57.75v6.594h6.094v4.563H57.75v10.156c-1.594-.063-3.188-.063-4.781-.063V0h11.438zM48.219 4.75V0H32.656v4.75h5.344v21.156c1.594 0 3.219.063 4.813.125V4.75h5.406zM28.094 0v4.75H20.75v6.281h6.688v4.594H20.75v11.188c-1.75.063-3.469.156-5.25.313V0h12.594zM10.875 14.656L10.781 0H5.875v27.75c1.781.188 3.563.344 5.344.563l4.75-13.656zM0 27.188V0h5.094l4.906 14.156V0h5.094v28c-1.688-.219-3.375-.375-5.094-.563L5.094 13.5v13.938C3.375 27.344 1.688 27.25 0 27.188z"
         fill="#E50914"
-        fontWeight="900"
-        fontSize="21"
-        letterSpacing="3.5"
-        fontFamily="'Arial Black', 'Impact', sans-serif"
-      >
-        NETFLIX
-      </text>
+      />
     </svg>
   </div>
 );
@@ -334,6 +328,10 @@ export default function OttSyncManagement() {
 
   // Modal de confirmación estilizado (Cero window.confirm)
   const [confirmModal, setConfirmModal] = useState(null);
+
+  // Modal del Explorador Interactivo de Carpetas del Servidor (Server Directory Picker)
+  const [folderPickerOpen, setFolderPickerOpen] = useState(false);
+  const [folderPickerTarget, setFolderPickerTarget] = useState('connect'); // 'connect' | 'add'
 
   /* -------------------------------------------------------------------------
      CARGA DE DATOS REALES (Exclusivamente vía GET /api/admin/ott-providers y GET /api/admin/ott-tasks)
@@ -1373,7 +1371,7 @@ export default function OttSyncManagement() {
             <div className="p-6">
               <div className="flex items-start justify-between gap-4 mb-5">
                 <div className="flex items-center gap-3">
-                  <div className="p-2 bg-[#141414] border border-zinc-800 rounded-xl">
+                  <div className="px-3 py-2 bg-[#141414] border border-zinc-800 rounded-xl flex items-center justify-center min-w-[104px] shadow-inner">
                     {renderProviderLogo(connectModalProvider.provider, connectModalProvider)}
                   </div>
                   <div>
@@ -1538,15 +1536,36 @@ export default function OttSyncManagement() {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-zinc-300 mb-1.5">
-                      Ruta Destino
-                    </label>
-                    <input
-                      type="text"
-                      value={connectForm.storage_path}
-                      onChange={(e) => setConnectForm({ ...connectForm, storage_path: e.target.value })}
-                      className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-300 focus:outline-none focus:border-red-500"
-                    />
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-xs font-semibold text-zinc-300">
+                        Ruta Destino
+                      </label>
+                      <span className="text-[10px] text-zinc-500 font-mono">Servidor FlixHN</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <div className="relative flex-1">
+                        <input
+                          type="text"
+                          readOnly
+                          value={connectForm.storage_path}
+                          className="w-full bg-zinc-900 border border-zinc-800 rounded-xl pl-3 pr-8 py-2 text-xs font-mono text-zinc-200 focus:outline-none cursor-default select-all"
+                          title="Ruta seleccionada en el servidor"
+                        />
+                        <HardDrive className="w-3.5 h-3.5 text-zinc-500 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFolderPickerTarget('connect');
+                          setFolderPickerOpen(true);
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white border border-zinc-700 rounded-xl text-xs font-semibold transition-all cursor-pointer shadow-sm shrink-0 active:scale-95"
+                        title="Explorar y seleccionar carpetas del servidor"
+                      >
+                        <Folder className="w-3.5 h-3.5 text-amber-400 fill-current" />
+                        <span>Examinar...</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -1811,15 +1830,36 @@ export default function OttSyncManagement() {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-zinc-300 mb-1">
-                      Ruta Destino de Almacenamiento
-                    </label>
-                    <input
-                      type="text"
-                      value={addForm.storage_path}
-                      onChange={(e) => setAddForm({ ...addForm, storage_path: e.target.value })}
-                      className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-300 focus:outline-none focus:border-red-500"
-                    />
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-semibold text-zinc-300">
+                        Ruta Destino de Almacenamiento
+                      </label>
+                      <span className="text-[10px] text-zinc-500 font-mono">Servidor FlixHN</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <div className="relative flex-1">
+                        <input
+                          type="text"
+                          readOnly
+                          value={addForm.storage_path}
+                          className="w-full bg-zinc-900 border border-zinc-800 rounded-xl pl-3 pr-8 py-2 text-xs font-mono text-zinc-200 focus:outline-none cursor-default select-all"
+                          title="Ruta seleccionada en el servidor"
+                        />
+                        <HardDrive className="w-3.5 h-3.5 text-zinc-500 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFolderPickerTarget('add');
+                          setFolderPickerOpen(true);
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white border border-zinc-700 rounded-xl text-xs font-semibold transition-all cursor-pointer shadow-sm shrink-0 active:scale-95"
+                        title="Explorar y seleccionar carpetas del servidor"
+                      >
+                        <Folder className="w-3.5 h-3.5 text-amber-400 fill-current" />
+                        <span>Examinar...</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -1912,6 +1952,24 @@ export default function OttSyncManagement() {
           </div>
         </div>
       )}
+      {/* Modal 3: Explorador Interactivo de Carpetas del Servidor (Server Directory Picker) */}
+      <FolderPickerModal
+        isOpen={folderPickerOpen}
+        onClose={() => setFolderPickerOpen(false)}
+        initialPath={
+          folderPickerTarget === 'connect'
+            ? connectForm.storage_path || '/storage/media'
+            : addForm.storage_path || '/storage/media'
+        }
+        onSelect={(chosenPath) => {
+          if (folderPickerTarget === 'connect') {
+            setConnectForm((prev) => ({ ...prev, storage_path: chosenPath }));
+          } else {
+            setAddForm((prev) => ({ ...prev, storage_path: chosenPath }));
+          }
+          showToast('success', `Ruta asignada: ${chosenPath}`, 'Directorio Seleccionado');
+        }}
+      />
     </div>
   );
 }
