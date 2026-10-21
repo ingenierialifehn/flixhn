@@ -1,0 +1,353 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Jobs\SyncOttCatalogJob;
+use App\Models\OttProviderAccount;
+use App\Services\OttSyncService;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+
+class OttProviderController extends Controller
+{
+    protected OttSyncService $ottService;
+
+    public function __construct(OttSyncService $ottService)
+    {
+        $this->ottService = $ottService;
+    }
+
+    /**
+     * GET /api/admin/ott-providers
+     * Lista los proveedores configurados, su estado de sesión y telemetría de medios.
+     * Si no hay cuentas configuradas en ott_accounts / ott_provider_accounts,
+     * devuelve los proveedores con status = 'disconnected'.
+     */
+    public function index(): JsonResponse
+    {
+        try {
+            $providers = $this->ottService->getProvidersOverview();
+
+            return response()->json([
+                'success' => true,
+                'providers' => $providers,
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Error consultando proveedores OTT: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al obtener la lista de proveedores OTT: ' . $e->getMessage(),
+                'providers' => [],
+            ], 500);
+        }
+    }
+
+    /**
+     * POST /api/admin/ott-providers/connect
+     * POST /api/admin/ott-providers/{provider}/connect
+     * Valida, cifra y almacena de forma segura las credenciales/cookies/token de sesión.
+     */
+    public function connect(Request $request, ?string $provider = null): JsonResponse
+    {
+        $targetProvider = $provider ?: $request->input('provider');
+
+        if (empty($targetProvider)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'El identificador de plataforma/proveedor es requerido.',
+            ], 422);
+        }
+
+        // Si se envió un ID numérico
+        if (is_numeric($targetProvider)) {
+            $acc = OttProviderAccount::find((int) $targetProvider);
+            if ($acc) {
+                $targetProvider = $acc->provider;
+            }
+        }
+
+        $request->validate([
+            'auth_method' => 'nullable|string|in:credentials,cookies,token',
+            'account_name' => 'nullable|string|max:150',
+            'display_name' => 'nullable|string|max:150',
+            'email' => 'nullable|string|max:150',
+            'password' => 'nullable|string|max:255',
+            'cookies' => 'nullable',
+            'token' => 'nullable|string',
+            'api_token' => 'nullable|string',
+            'quality_profile' => 'nullable|string|in:720p,1080p,4K HDR',
+            'storage_path' => 'nullable|string|max:255',
+            'auto_download' => 'nullable|boolean',
+        ]);
+
+        try {
+            $account = $this->ottService->connectAccount($targetProvider, $request->all());
+
+            return response()->json([
+                'success' => true,
+                'message' => "Cuenta de {$targetProvider} conectada exitosamente.",
+                'account' => [
+                    'id' => $account->id,
+                    'provider' => $account->provider,
+                    'account_name' => $account->account_name,
+                    'status' => $account->status,
+                    'quality_profile' => $account->quality_profile,
+                    'auto_download' => (bool) $account->auto_download,
+                    'last_sync_at' => $account->last_sync_at ? $account->last_sync_at->toIso8601String() : null,
+                    'has_credentials' => true,
+                ],
+            ]);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 422);
+        } catch (\Throwable $e) {
+            Log::error("Error al conectar proveedor OTT [{$targetProvider}]: " . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'No fue posible conectar la cuenta: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * POST /api/admin/ott-providers/{provider}/disconnect
+     * Desconecta la cuenta y purga credenciales de sesión de forma segura.
+     */
+    public function disconnect(string $provider): JsonResponse
+    {
+        try {
+            $targetProvider = $provider;
+            if (is_numeric($provider)) {
+                $acc = OttProviderAccount::find((int) $provider);
+                if ($acc) {
+                    $targetProvider = $acc->provider;
+                }
+            }
+
+            $account = $this->ottService->disconnectAccount($targetProvider);
+
+            return response()->json([
+                'success' => true,
+                'message' => "La cuenta de {$targetProvider} ha sido desconectada y sus credenciales purgadas.",
+                'provider' => $targetProvider,
+                'status' => $account->status,
+            ]);
+        } catch (\Throwable $e) {
+            Log::error("Error al desconectar proveedor [{$provider}]: " . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al desconectar la cuenta: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * DELETE /api/admin/ott-providers/{provider}
+     * Elimina un proveedor personalizado.
+     */
+    public function destroy(string $provider): JsonResponse
+    {
+        try {
+            $deleted = $this->ottService->deleteAccount($provider);
+
+            if ($deleted) {
+                return response()->json([
+                    'success' => true,
+                    'message' => "Proveedor '{$provider}' eliminado correctamente.",
+                ]);
+            }
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Proveedor no encontrado.',
+            ], 404);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error eliminando el proveedor: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * POST /api/admin/ott-providers/{provider}/toggle-auto-download
+     * Conmuta la bandera de descarga automática de estrenos.
+     */
+    public function toggleAutoDownload(string $provider): JsonResponse
+    {
+        try {
+            $account = $this->ottService->toggleAutoDownload($provider);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Preferencia de descarga automática actualizada.',
+                'auto_download' => (bool) $account->auto_download,
+                'provider' => $account->provider,
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al alternar descargas automáticas: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * POST /api/admin/ott-providers/{provider}/sync
+     * Dispara el escaneo e ingesta real hacia el almacenamiento local.
+     */
+    public function sync(string $provider): JsonResponse
+    {
+        try {
+            $targetProvider = $provider;
+            if (is_numeric($provider)) {
+                $acc = OttProviderAccount::find((int) $provider);
+                if ($acc) {
+                    $targetProvider = $acc->provider;
+                }
+            }
+
+            // Ejecutar sincronización de catálogo
+            SyncOttCatalogJob::dispatch($targetProvider);
+
+            return response()->json([
+                'success' => true,
+                'message' => "Sincronización de catálogo iniciada para {$targetProvider}.",
+                'provider' => $targetProvider,
+                'status' => 'syncing',
+            ]);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 422);
+        } catch (\Throwable $e) {
+            Log::error("Error despachando sincronización OTT para [{$provider}]: " . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'No se pudo iniciar la sincronización: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * GET /api/admin/ott-tasks
+     * GET /api/admin/ott-providers/tasks
+     * Consulta la tabla ott_download_tasks real vinculada con la cola de Laravel (jobs).
+     * Si no hay tareas en BD, retorna [].
+     */
+    public function tasks(Request $request): JsonResponse
+    {
+        try {
+            $filters = [
+                'provider' => $request->query('provider'),
+                'status' => $request->query('status'),
+                'limit' => $request->query('limit', 100),
+            ];
+
+            $tasks = $this->ottService->getDownloadTasksList($filters);
+
+            // Si se solicita formato envuelto explícitamente (o llamada legacy ott-providers/tasks)
+            if ($request->query('format') === 'wrapped' || $request->is('*/ott-providers/tasks')) {
+                $metrics = $this->ottService->calculateMetrics($tasks);
+                return response()->json([
+                    'success' => true,
+                    'tasks' => $tasks,
+                    'metrics' => $metrics,
+                ]);
+            }
+
+            // GET /api/admin/ott-tasks retorna [] cuando no hay tareas o el array real de tareas
+            return response()->json($tasks);
+        } catch (\Throwable $e) {
+            Log::error('Error consultando cola de descargas OTT: ' . $e->getMessage());
+            return response()->json([], 500);
+        }
+    }
+
+    /**
+     * POST /api/admin/ott-providers/tasks/{id}/cancel
+     */
+    public function cancelTask(int $id): JsonResponse
+    {
+        try {
+            $task = $this->ottService->cancelTask($id);
+
+            return response()->json([
+                'success' => true,
+                'message' => "Descarga de '{$task->title}' cancelada.",
+                'task' => $task,
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No se pudo cancelar la tarea: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * POST /api/admin/ott-providers/tasks/{id}/retry
+     */
+    public function retryTask(int $id): JsonResponse
+    {
+        try {
+            $task = $this->ottService->retryTask($id);
+
+            return response()->json([
+                'success' => true,
+                'message' => "Reanudando descarga de '{$task->title}'...",
+                'task' => $task,
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No se pudo reintentar la tarea: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * DELETE /api/admin/ott-providers/tasks/{id}
+     */
+    public function deleteTask(int $id): JsonResponse
+    {
+        try {
+            $this->ottService->deleteTask($id);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Tarea eliminada de la cola.',
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No se pudo eliminar la tarea: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * POST /api/admin/ott-providers/tasks/clear-completed
+     */
+    public function clearCompleted(): JsonResponse
+    {
+        try {
+            $count = $this->ottService->clearCompletedTasks();
+
+            return response()->json([
+                'success' => true,
+                'message' => "Se limpiaron {$count} tareas completadas.",
+                'cleared_count' => $count,
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al limpiar tareas: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+}

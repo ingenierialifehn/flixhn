@@ -11,6 +11,7 @@ import {
   ScrollText,
   MonitorSmartphone,
   DownloadCloud,
+  CloudDownload,
   Puzzle,
   KeyRound,
   Tag,
@@ -42,6 +43,7 @@ const MENU_GROUPS = [
     items: [
       { id: 'devices', path: '/admin/devices', label: 'Dispositivos Conectados', icon: MonitorSmartphone },
       { id: 'downloads', path: '/admin/downloads', label: 'Descargas', icon: DownloadCloud },
+      { id: 'ott-sync', path: '/admin/ott-sync', label: 'Sincronización OTT', icon: CloudDownload },
     ],
   },
   {
@@ -67,6 +69,8 @@ const AdminSidebar = ({
 }) => {
   const isItemActive = (item) => {
     if (activeTab === item.id) return true;
+    if (item.id === 'ott-sync' && (activeTab === 'ott-sync' || activeTab === 'ott_sync')) return true;
+    if (item.id === 'downloads' && activeTab === 'downloads') return true;
     if (item.id === 'library' && (activeTab === 'catalog' || activeTab === 'library')) return true;
     if (item.id === 'tasks' && (activeTab === 'scheduled_tasks' || activeTab === 'tasks')) return true;
     if (item.id === 'apikeys' && (activeTab === 'api_keys' || activeTab === 'apikeys')) return true;

@@ -22,6 +22,7 @@ use App\Http\Controllers\PluginAdminController;
 use App\Http\Controllers\ApiKeyAdminController;
 use App\Http\Controllers\MetadataManagerController;
 use App\Http\Controllers\AnalyticsAdminController;
+use App\Http\Controllers\OttProviderController;
 use App\Http\Middleware\EnsureAdmin;
 use App\Http\Middleware\AuthenticateApiKey;
 
@@ -77,6 +78,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Catálogo de Video y Streaming
     Route::get('/titles', [TitleController::class, 'index']);
     Route::get('/home', [TitleController::class, 'index']);
+    Route::get('/browse', [TitleController::class, 'index']);
     Route::get('/titles/{id}', [TitleController::class, 'show']);
 
     // Sincronización de Reproducción (Continuar Viendo y Sesiones de Streaming)
@@ -227,6 +229,25 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/live-tv', [AnalyticsAdminController::class, 'liveTvRanking']);
             Route::get('/export', [AnalyticsAdminController::class, 'export']);
         });
+
+        // Cuentas y Sincronización OTT (Netflix, Disney+, HBO Max, Prime Video, Apple TV+, Paramount+)
+        Route::prefix('ott-providers')->group(function () {
+            Route::get('/', [OttProviderController::class, 'index']);
+            Route::get('/tasks', [OttProviderController::class, 'tasks']);
+            Route::post('/tasks/clear-completed', [OttProviderController::class, 'clearCompleted']);
+            Route::post('/tasks/{id}/cancel', [OttProviderController::class, 'cancelTask']);
+            Route::post('/tasks/{id}/retry', [OttProviderController::class, 'retryTask']);
+            Route::delete('/tasks/{id}', [OttProviderController::class, 'deleteTask']);
+            Route::post('/connect', [OttProviderController::class, 'connect']);
+            Route::post('/{provider}/connect', [OttProviderController::class, 'connect']);
+            Route::post('/{provider}/disconnect', [OttProviderController::class, 'disconnect']);
+            Route::post('/{provider}/toggle-auto-download', [OttProviderController::class, 'toggleAutoDownload']);
+            Route::post('/{provider}/sync', [OttProviderController::class, 'sync']);
+            Route::delete('/{provider}', [OttProviderController::class, 'destroy']);
+        });
+
+        // Endpoint canónico directo para tareas de ingesta OTT
+        Route::get('/ott-tasks', [OttProviderController::class, 'tasks']);
     });
 
     // Telemetría y Latido de Reproducción Real en Vivo

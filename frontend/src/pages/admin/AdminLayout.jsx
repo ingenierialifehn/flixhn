@@ -16,6 +16,7 @@ import PluginsManagement from './PluginsManagement';
 import ApiKeysManagement from './ApiKeysManagement';
 import MetadataManager from './MetadataManager';
 import StatsDashboard from './StatsDashboard';
+import OttSyncManagement from './OttSyncManagement';
 import api from '../../services/api';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
@@ -31,6 +32,7 @@ import {
   ScrollText,
   MonitorSmartphone,
   DownloadCloud,
+  CloudDownload,
   Puzzle,
   KeyRound,
   Tag,
@@ -88,6 +90,16 @@ const TAB_CONFIG = {
     icon: DownloadCloud,
     description: 'Cola de ingesta de contenido multimedia y almacenamiento en caché para distribución a nodos secundarios del ISP.',
   },
+  ott_sync: {
+    title: 'Cuentas y Sincronización OTT',
+    icon: CloudDownload,
+    description: 'Conexión e indexación automatizada de cuentas OTT (Netflix, Disney+, HBO Max) y almacenamiento perimetral On-Net.',
+  },
+  'ott-sync': {
+    title: 'Cuentas y Sincronización OTT',
+    icon: CloudDownload,
+    description: 'Conexión e indexación automatizada de cuentas OTT (Netflix, Disney+, HBO Max) y almacenamiento perimetral On-Net.',
+  },
   plugins: {
     title: 'Plugins y Extensiones del Servidor',
     icon: Puzzle,
@@ -142,6 +154,7 @@ const getTabFromPath = (pathname) => {
   if (pathname === '/admin/logs') return 'logs';
   if (pathname === '/admin/devices') return 'devices';
   if (pathname === '/admin/downloads') return 'downloads';
+  if (pathname === '/admin/ott-sync' || pathname === '/admin/ott_sync') return 'ott-sync';
   if (pathname === '/admin/plugins') return 'plugins';
   if (pathname === '/admin/apikeys' || pathname === '/admin/api_keys') return 'apikeys';
   if (pathname === '/admin/metadata') return 'metadata';
@@ -444,7 +457,11 @@ const AdminLayout = ({ onBackToBrowse }) => {
                 <StatsDashboard />
               )}
 
-              {activeTab !== 'dashboard' && activeTab !== 'library' && activeTab !== 'catalog' && activeTab !== 'users' && activeTab !== 'network' && activeTab !== 'livetv' && activeTab !== 'transcoding' && activeTab !== 'database' && activeTab !== 'backup' && activeTab !== 'backups' && activeTab !== 'tasks' && activeTab !== 'scheduled_tasks' && activeTab !== 'logs' && activeTab !== 'devices' && activeTab !== 'plugins' && activeTab !== 'apikeys' && activeTab !== 'api_keys' && activeTab !== 'metadata' && activeTab !== 'stats' && activeTab !== 'statistics' && (
+              {(activeTab === 'ott_sync' || activeTab === 'ott-sync') && (
+                <OttSyncManagement />
+              )}
+
+              {activeTab !== 'dashboard' && activeTab !== 'library' && activeTab !== 'catalog' && activeTab !== 'users' && activeTab !== 'network' && activeTab !== 'livetv' && activeTab !== 'transcoding' && activeTab !== 'database' && activeTab !== 'backup' && activeTab !== 'backups' && activeTab !== 'tasks' && activeTab !== 'scheduled_tasks' && activeTab !== 'logs' && activeTab !== 'devices' && activeTab !== 'ott_sync' && activeTab !== 'ott-sync' && activeTab !== 'plugins' && activeTab !== 'apikeys' && activeTab !== 'api_keys' && activeTab !== 'metadata' && activeTab !== 'stats' && activeTab !== 'statistics' && (
                 <PlaceholderView
                   title={currentTabInfo.title}
                   description={currentTabInfo.description}
