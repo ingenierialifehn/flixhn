@@ -1,6 +1,131 @@
 import React from 'react';
 import { Play, X } from 'lucide-react';
 
+/**
+ * Configuración visual y branding de plataformas OTT y catálogo local FlixHN
+ */
+export const getPlatformConfig = (providerRaw) => {
+  const p = String(providerRaw || 'local').toLowerCase().trim();
+
+  if (p === 'netflix') {
+    return {
+      key: 'netflix',
+      name: 'Netflix',
+      shortName: 'Netflix',
+      color: '#E50914',
+      badgeBg: 'bg-[#E50914]',
+      badgeBorder: 'border-red-400/40',
+      badgeShadow: 'shadow-red-950/60',
+      pillBg: 'bg-red-600/20 text-red-300 border-red-500/40 hover:bg-red-600/30',
+      activePill: 'bg-[#E50914] text-white border-red-400 shadow-lg shadow-red-950/60 ring-2 ring-red-400/30',
+      glow: 'from-red-600/20 via-transparent to-transparent',
+      dotColor: '#E50914',
+      isLocal: false,
+    };
+  }
+
+  if (p === 'disney' || p === 'disney_plus' || p === 'disney+') {
+    return {
+      key: 'disney',
+      name: 'Disney+',
+      shortName: 'Disney+',
+      color: '#0063E5',
+      badgeBg: 'bg-[#0063E5]',
+      badgeBorder: 'border-blue-400/40',
+      badgeShadow: 'shadow-blue-950/60',
+      pillBg: 'bg-blue-600/20 text-blue-300 border-blue-500/40 hover:bg-blue-600/30',
+      activePill: 'bg-[#0063E5] text-white border-blue-400 shadow-lg shadow-blue-950/60 ring-2 ring-blue-400/30',
+      glow: 'from-blue-600/20 via-transparent to-transparent',
+      dotColor: '#0063E5',
+      isLocal: false,
+    };
+  }
+
+  if (p === 'hbo_max' || p === 'max' || p === 'hbo') {
+    return {
+      key: 'hbo_max',
+      name: 'HBO Max',
+      shortName: 'HBO Max',
+      color: '#5822b4',
+      badgeBg: 'bg-[#5822b4]',
+      badgeBorder: 'border-purple-400/40',
+      badgeShadow: 'shadow-purple-950/60',
+      pillBg: 'bg-purple-600/20 text-purple-300 border-purple-500/40 hover:bg-purple-600/30',
+      activePill: 'bg-[#5822b4] text-white border-purple-400 shadow-lg shadow-purple-950/60 ring-2 ring-purple-400/30',
+      glow: 'from-purple-600/20 via-transparent to-transparent',
+      dotColor: '#8B5CF6',
+      isLocal: false,
+    };
+  }
+
+  if (p === 'prime' || p === 'amazon_prime' || p === 'amazon') {
+    return {
+      key: 'prime',
+      name: 'Prime Video',
+      shortName: 'Prime',
+      color: '#00A8E1',
+      badgeBg: 'bg-[#00A8E1]',
+      badgeBorder: 'border-sky-400/40',
+      badgeShadow: 'shadow-sky-950/60',
+      pillBg: 'bg-sky-600/20 text-sky-300 border-sky-500/40 hover:bg-sky-600/30',
+      activePill: 'bg-[#00A8E1] text-white border-sky-400 shadow-lg shadow-sky-950/60 ring-2 ring-sky-400/30',
+      glow: 'from-sky-600/20 via-transparent to-transparent',
+      dotColor: '#00A8E1',
+      isLocal: false,
+    };
+  }
+
+  if (p === 'apple_tv' || p === 'apple') {
+    return {
+      key: 'apple_tv',
+      name: 'Apple TV+',
+      shortName: 'Apple TV+',
+      color: '#A1A1AA',
+      badgeBg: 'bg-zinc-800',
+      badgeBorder: 'border-zinc-500/40',
+      badgeShadow: 'shadow-zinc-950/60',
+      pillBg: 'bg-zinc-800/40 text-zinc-300 border-zinc-600/40 hover:bg-zinc-800/60',
+      activePill: 'bg-zinc-700 text-white border-zinc-500 shadow-lg shadow-zinc-950/60 ring-2 ring-zinc-400/30',
+      glow: 'from-zinc-600/20 via-transparent to-transparent',
+      dotColor: '#A1A1AA',
+      isLocal: false,
+    };
+  }
+
+  if (p === 'paramount' || p === 'paramount_plus') {
+    return {
+      key: 'paramount',
+      name: 'Paramount+',
+      shortName: 'Paramount+',
+      color: '#0064FF',
+      badgeBg: 'bg-[#0064FF]',
+      badgeBorder: 'border-blue-400/40',
+      badgeShadow: 'shadow-blue-950/60',
+      pillBg: 'bg-blue-700/20 text-blue-300 border-blue-600/40 hover:bg-blue-700/30',
+      activePill: 'bg-[#0064FF] text-white border-blue-400 shadow-lg shadow-blue-950/60 ring-2 ring-blue-400/30',
+      glow: 'from-blue-700/20 via-transparent to-transparent',
+      dotColor: '#0064FF',
+      isLocal: false,
+    };
+  }
+
+  // Por defecto: Local On-Net FlixHN
+  return {
+    key: 'local',
+    name: 'FlixHN',
+    shortName: 'FlixHN',
+    color: '#E50914',
+    badgeBg: 'bg-black/85',
+    badgeBorder: 'border-red-500/35',
+    badgeShadow: 'shadow-black/70',
+    pillBg: 'bg-zinc-800/60 text-zinc-300 border-zinc-700 hover:bg-zinc-800',
+    activePill: 'bg-[#E50914] text-white border-red-500 shadow-lg shadow-red-950/60 ring-2 ring-red-400/30',
+    glow: 'from-red-600/10 via-transparent to-transparent',
+    dotColor: '#E50914',
+    isLocal: true,
+  };
+};
+
 const MovieCard = ({ item, title: propTitle, isProgress, onPlay, onOpenModal, onRemoveProgress }) => {
   // Manejar si el item viene de prop directa title, PlaybackProgress o Title directo
   const title = propTitle || (isProgress ? item?.title : item);
@@ -11,6 +136,10 @@ const MovieCard = ({ item, title: propTitle, isProgress, onPlay, onOpenModal, on
   const posterUrl = isProgress && episode?.thumbnail_url
     ? episode.thumbnail_url
     : (title?.poster_url || title?.image || title?.poster);
+
+  // Detección de proveedor/plataforma OTT ('netflix', 'disney', 'hbo_max', 'prime', 'local')
+  const providerRaw = title?.provider || title?.source_platform || item?.provider || item?.source_platform || 'local';
+  const platform = getPlatformConfig(providerRaw);
 
   // Cálculo de porcentaje de progreso visto
   const percentWatched = isProgress && item.duration_seconds > 0
@@ -44,9 +173,24 @@ const MovieCard = ({ item, title: propTitle, isProgress, onPlay, onOpenModal, on
           className="w-full h-full object-cover object-center group-hover:brightness-110 transition-all duration-300 rounded"
         />
 
-        {/* Badge de tipo de contenido */}
-        <div className="absolute top-2 left-2 z-10 pointer-events-none">
-          <span className="bg-black/75 backdrop-blur-sm text-[10px] text-white font-bold px-1.5 py-0.5 rounded uppercase border border-white/20 shadow">
+        {/* Badges en la esquina superior izquierda: Plataforma Distintiva + Tipo */}
+        <div className="absolute top-2 left-2 z-10 pointer-events-none flex flex-col items-start gap-1">
+          {/* Badge de Plataforma (Color y estilo distintivo de la plataforma OTT o FlixHN) */}
+          <span
+            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded shadow-lg backdrop-blur-md border text-[9px] sm:text-[10px] font-black uppercase tracking-wider ${platform.badgeBg} ${platform.badgeBorder} ${platform.badgeShadow} text-white`}
+          >
+            {platform.isLocal ? (
+              <>
+                <span className="w-1.5 h-1.5 rounded-full bg-[#E50914] shadow-sm animate-pulse" />
+                <span>FlixHN</span>
+              </>
+            ) : (
+              <span>{platform.shortName}</span>
+            )}
+          </span>
+
+          {/* Badge sutil de tipo (Película / Serie) */}
+          <span className="bg-black/75 backdrop-blur-sm text-[8px] sm:text-[9px] text-zinc-300 font-bold px-1.5 py-0.5 rounded uppercase border border-white/10 shadow">
             {title.type === 'movie' ? 'Película' : 'Serie'}
           </span>
         </div>

@@ -40,6 +40,25 @@ class MediaItem extends Model
         'file_size' => 'integer',
     ];
 
+    protected $appends = [
+        'source_platform',
+    ];
+
+    public function getProviderAttribute(?string $value): string
+    {
+        return !empty($value) ? $value : 'local';
+    }
+
+    public function getSourcePlatformAttribute(): string
+    {
+        return $this->provider;
+    }
+
+    public function setSourcePlatformAttribute(?string $value): void
+    {
+        $this->attributes['provider'] = $value ?: 'local';
+    }
+
     public function title(): BelongsTo
     {
         return $this->belongsTo(Title::class, 'title_id');

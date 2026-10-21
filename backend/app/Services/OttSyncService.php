@@ -10,6 +10,7 @@ use App\Models\OttProviderAccount;
 use App\Models\Season;
 use App\Models\Title;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
@@ -701,6 +702,7 @@ class OttSyncService
             $catalogTitle->duration_seconds = $sample['duration_seconds'] ?? 7200;
             $catalogTitle->stream_path = $localFilePath;
             $catalogTitle->is_featured = true;
+            $catalogTitle->provider = $providerKey;
             $catalogTitle->save();
 
             $mediaItem->title_id = $catalogTitle->id;
@@ -749,6 +751,8 @@ class OttSyncService
         $account->status = 'connected';
         $account->last_sync_at = now();
         $account->save();
+
+        Cache::forget('catalog_home_base');
 
         Log::info("Sincronización OTT completada para [{$providerKey}]: {$indexedItems} indexados, {$createdTasks} tareas en cola.");
 

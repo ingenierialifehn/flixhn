@@ -46,6 +46,7 @@ class Title extends Model
         'country',
         'is_locked',
         'locked_fields',
+        'provider',
     ];
 
     protected $appends = [
@@ -54,7 +55,28 @@ class Title extends Model
         'stream_url',
         'year',
         'is_new',
+        'source_platform',
     ];
+
+    public function getProviderAttribute(?string $value): string
+    {
+        return !empty($value) ? $value : 'local';
+    }
+
+    public function getSourcePlatformAttribute(): string
+    {
+        return $this->provider;
+    }
+
+    public function setSourcePlatformAttribute(?string $value): void
+    {
+        $this->attributes['provider'] = $value ?: 'local';
+    }
+
+    public function mediaItem(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(MediaItem::class, 'title_id');
+    }
 
     public function getIsNewAttribute(): bool
     {

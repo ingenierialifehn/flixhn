@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from './context/AuthContext';
 import { useLanguage } from './context/LanguageContext';
 import Login from './components/Login';
@@ -12,7 +12,8 @@ import VideoPlayer from './components/VideoPlayer';
 import LiveTvPlayer from './components/LiveTvPlayer';
 import LiveTvView from './components/LiveTvView';
 import AdminLayout from './pages/admin/AdminLayout';
-import { HardDrive, RefreshCw, Settings } from 'lucide-react';
+import CatalogFilterBar from './components/CatalogFilterBar';
+import { HardDrive, RefreshCw, Settings, Film } from 'lucide-react';
 import api from './api/axios';
 
 function App() {
@@ -34,6 +35,11 @@ function App() {
   const [rows, setRows] = useState([]);
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+
+  // Estados de filtros rápidos por plataforma OTT y género
+  const [selectedPlatform, setSelectedPlatform] = useState('all');
+  const [selectedGenre, setSelectedGenre] = useState('all');
+  const [viewMode, setViewMode] = useState('rows'); // 'rows' | 'grid'
 
   // Estados de búsqueda reactiva en tiempo real (Estilo Netflix)
   const [searchQuery, setSearchQuery] = useState('');
@@ -258,15 +264,137 @@ function App() {
     );
   }
 
-  // Filtrado de filas según la pestaña seleccionada con protección de datos nulos
-  let filteredRows = rows || [];
-  if (currentTab === 'movies') {
-    filteredRows = (rows || []).filter((r) => r?.id === 'movies_row' || (r?.id !== 'series_row' && (r?.items || []).some((i) => (i?.type === 'movie' || i?.title?.type === 'movie'))));
-  } else if (currentTab === 'series') {
-    filteredRows = (rows || []).filter((r) => r?.id === 'series_row' || (r?.id !== 'movies_row' && (r?.items || []).some((i) => (i?.type === 'series' || i?.title?.type === 'series'))));
-  } else if (currentTab === 'featured') {
-    filteredRows = (rows || []).filter((r) => r?.id === 'featured_row' || r?.id === 'continue_watching');
-  }
+  const handleResetFilters = useCallback(() => {
+    setSelectedPlatform('all');
+    setSelectedGenre('all');
+  }, []);
+
+  // Extraer géneros dinámicos disponibles en el catálogo
+  const availableGenres = useMemo(() => {
+    const genreSet = new Set();
+    (rows || []).forEach((row) => {
+      if (
+        row?.title &&
+        !['Películas', 'Series', 'Aclamados y Destacados FlixHN', 'Continuar Viendo'].includes(row.title)
+      ) {
+        genreSet.add(row.title);
+      }
+      (row.items || []).forEach((item) => {
+        const it = item.title || item;
+        if (it?.genre) {
+          it.genre.split(/[\/,]/).forEach((g) => {
+            const clean = g.trim();
+            if (clean && clean.length > 2) genreSet.add(clean);
+          });
+        }
+      });
+    });
+    return Array.from(genreSet).slice(0, 15);
+  }, [rows]);
+
+  // Filtrado reactivo multidimensional (Tab + Plataforma OTT + Género)
+  const { filteredRows, allFilteredItems } = useMemo(() => {
+    let baseRows = rows || [];
+
+    // 1. Filtrar por Tab Principal (Películas / Series / Destacados)
+    if (currentTab === 'movies') {
+      baseRows = baseRows.filter(
+        (r) =>
+          r?.id === 'movies_row' ||
+          (r?.id !== 'series_row' &&
+            (r?.items || []).some(
+              (i) => (i?.type === 'movie' || i?.title?.type === 'movie')
+            ))
+      );
+    } else if (currentTab === 'series') {
+      baseRows = baseRows.filter(
+        (r) =>
+          r?.id === 'series_row' ||
+          (r?.id !== 'movies_row' &&
+            (r?.items || []).some(
+              (i) => (i?.type === 'series' || i?.title?.type === 'series')
+            ))
+      );
+    } else if (currentTab === 'featured') {
+      baseRows = baseRows.filter(
+        (r) => r?.id === 'featured_row' || r?.id === 'continue_watching'
+      );
+    }
+
+    // Helper para verificar coincidencia con plataforma OTT
+    const matchPlatform = (item) => {
+      if (selectedPlatform === 'all') return true;
+      const t = item.title || item;
+      const prov = String(
+        t?.provider || t?.source_platform || item?.provider || item?.source_platform || 'local'
+      ).toLowerCase().trim();
+
+      if (selectedPlatform === 'prime') {
+        return prov === 'prime' || prov === 'amazon_prime' || prov === 'amazon';
+      }
+      if (selectedPlatform === 'disney') {
+        return prov === 'disney' || prov === 'disney_plus' || prov === 'disney+';
+      }
+      if (selectedPlatform === 'hbo_max') {
+        return prov === 'hbo_max' || prov === 'max' || prov === 'hbo';
+      }
+      return prov === selectedPlatform;
+    };
+
+    // Helper para verificar coincidencia con género
+    const matchGenre = (item, rowTitle) => {
+      if (selectedGenre === 'all') return true;
+      const t = item.title || item;
+      const itemGenre = String(t?.genre || '').toLowerCase();
+      const targetGenre = selectedGenre.toLowerCase();
+
+      if (itemGenre.includes(targetGenre)) return true;
+      if (rowTitle && rowTitle.toLowerCase().includes(targetGenre)) return true;
+      return false;
+    };
+
+    // Helper para verificar concordancia con el tab activo
+    const matchTabType = (item) => {
+      if (currentTab === 'movies') {
+        return (item.type || item.title?.type) === 'movie';
+      }
+      if (currentTab === 'series') {
+        return (item.type || item.title?.type) === 'series';
+      }
+      return true;
+    };
+
+    const outRows = [];
+    const collectedItemsMap = new Map();
+
+    baseRows.forEach((row) => {
+      const items = (row.items || []).filter((item) => {
+        if (!matchTabType(item)) return false;
+        if (!matchPlatform(item)) return false;
+        if (!matchGenre(item, row.title)) return false;
+        return true;
+      });
+
+      if (items.length > 0) {
+        outRows.push({
+          ...row,
+          items,
+        });
+
+        items.forEach((it) => {
+          const id = it.id || it.title?.id;
+          if (id && !collectedItemsMap.has(id)) {
+            collectedItemsMap.set(id, it);
+          }
+        });
+      }
+    });
+
+    return {
+      filteredRows: outRows,
+      allFilteredItems: Array.from(collectedItemsMap.values()),
+    };
+  }, [rows, currentTab, selectedPlatform, selectedGenre]);
 
   const hasContent = Boolean(billboardTitle) || (rows || []).some((r) => r?.items && r.items.length > 0);
   const isSearchActive = searchQuery.trim().length > 0;
@@ -407,14 +535,89 @@ function App() {
               </div>
             )}
 
-            {/* Carruseles Horizontales de Contenido Completo */}
+            {/* Barra de Filtros Rápidos por Plataforma OTT y Género */}
             {hasContent && (
-              <div className={`space-y-4 md:space-y-8 ${currentTab === 'home' ? '-mt-16 md:-mt-24 z-20 relative' : 'pt-24'}`}>
+              <div
+                className={`px-4 md:px-12 z-20 relative ${
+                  currentTab === 'home'
+                    ? '-mt-12 md:-mt-16 mb-4 md:mb-6'
+                    : 'pt-24 mb-6'
+                }`}
+              >
+                {/* Encabezado descriptivo en vistas específicas de Películas y Series */}
+                {currentTab !== 'home' && (
+                  <div className="mb-4">
+                    <h1 className="text-xl md:text-3xl font-black text-gray-900 dark:text-white tracking-wide">
+                      {currentTab === 'movies'
+                        ? 'Catálogo de Películas'
+                        : currentTab === 'series'
+                        ? 'Catálogo de Series'
+                        : 'Aclamados y Destacados'}
+                    </h1>
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                      Filtra por plataforma OTT sincronizada (Netflix, Disney+, HBO Max, Prime Video) o catálogo local FlixHN.
+                    </p>
+                  </div>
+                )}
+
+                <CatalogFilterBar
+                  selectedPlatform={selectedPlatform}
+                  onSelectPlatform={setSelectedPlatform}
+                  selectedGenre={selectedGenre}
+                  onSelectGenre={setSelectedGenre}
+                  availableGenres={availableGenres}
+                  totalCount={allFilteredItems.length}
+                  viewMode={viewMode}
+                  onToggleViewMode={setViewMode}
+                  onResetFilters={handleResetFilters}
+                  currentTab={currentTab}
+                />
+              </div>
+            )}
+
+            {/* Contenedor de Medios: Carruseles Horizontales o Cuadrícula Filtrada */}
+            {hasContent && (
+              <div className="space-y-4 md:space-y-8">
                 {catalogLoading && rows.length === 0 ? (
                   <div className="h-48 flex items-center justify-center">
                     <div className="w-8 h-8 border-3 border-red-600 border-t-transparent rounded-full animate-spin"></div>
                   </div>
+                ) : filteredRows.length === 0 ? (
+                  /* Estado vacío al filtrar sin resultados */
+                  <div className="py-16 px-4 text-center space-y-4 animate-fadeIn">
+                    <div className="w-16 h-16 mx-auto rounded-2xl bg-zinc-200 dark:bg-zinc-800 flex items-center justify-center text-zinc-400">
+                      <Film className="w-8 h-8 stroke-[1.5]" />
+                    </div>
+                    <div className="space-y-1">
+                      <h3 className="text-lg font-bold text-gray-900 dark:text-white">
+                        No se encontraron títulos con los filtros seleccionados
+                      </h3>
+                      <p className="text-xs text-zinc-500 max-w-md mx-auto">
+                        No hay contenido disponible para la combinación de plataforma y género actual.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleResetFilters}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#E50914] hover:bg-[#F40612] text-white text-xs font-bold rounded-lg transition-all shadow-lg active:scale-95 cursor-pointer"
+                    >
+                      Restablecer todos los filtros
+                    </button>
+                  </div>
+                ) : viewMode === 'grid' && (selectedPlatform !== 'all' || selectedGenre !== 'all') ? (
+                  /* Vista en Cuadrícula cuando el usuario prefiere grid o filtra */
+                  <div className="px-4 md:px-12 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 md:gap-5 animate-fadeIn">
+                    {allFilteredItems.map((item) => (
+                      <MovieCard
+                        key={item?.id}
+                        item={item}
+                        onPlay={(t, ep) => handlePlay(t, ep)}
+                        onOpenModal={(t) => handleOpenModal(t)}
+                      />
+                    ))}
+                  </div>
                 ) : (
+                  /* Vista en Carruseles Horizontales */
                   (filteredRows || []).map((row) => (
                     <MovieRow
                       key={row?.id}

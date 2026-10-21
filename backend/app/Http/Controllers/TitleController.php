@@ -27,7 +27,7 @@ class TitleController extends Controller
         // Búsqueda reactiva en tiempo real por término (rápida y ligera)
         if ($searchQuery !== '') {
             $matched = Title::select([
-                'id', 'name', 'slug', 'type', 'description',
+                'id', 'name', 'slug', 'type', 'provider', 'description',
                 'poster_url', 'backdrop_url', 'release_year', 'genre',
                 'duration_seconds', 'stream_path', 'category_id', 'created_at'
             ])
@@ -52,7 +52,7 @@ class TitleController extends Controller
         $baseData = Cache::remember('catalog_home_base', 3600, function () {
             // Cargar títulos ligeros sin relaciones anidadas pesadas para el catálogo principal
             $allTitles = Title::select([
-                'id', 'name', 'slug', 'type', 'description',
+                'id', 'name', 'slug', 'type', 'provider', 'description',
                 'poster_url', 'backdrop_url', 'release_year', 'genre',
                 'is_featured', 'stream_path', 'duration_seconds', 'category_id', 'created_at'
             ])
