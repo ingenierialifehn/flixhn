@@ -24,7 +24,10 @@ use App\Http\Controllers\MetadataManagerController;
 use App\Http\Controllers\AnalyticsAdminController;
 use App\Http\Controllers\OttProviderController;
 use App\Http\Controllers\FilesystemAdminController;
+use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\PasswordResetController;
 use App\Http\Middleware\EnsureAdmin;
+use App\Http\Middleware\EnsureUserIsAdmin;
 use App\Http\Middleware\AuthenticateApiKey;
 
 /*
@@ -61,6 +64,11 @@ Route::get('/media/backdrop', function (\Illuminate\Http\Request $request) {
 Route::post('/auth/login', [AuthController::class, 'login']);
 Route::post('/login', [AuthController::class, 'login'])->name('login');
 
+// Recuperación de Contraseña de Clientes (Email y WhatsApp/Teléfono)
+Route::post('/auth/password/forgot', [PasswordResetController::class, 'forgot']);
+Route::post('/auth/password/verify-code', [PasswordResetController::class, 'verifyCode']);
+Route::post('/auth/password/reset', [PasswordResetController::class, 'resetPassword']);
+
 // Acceso público al portal Live TV y proxy de streaming
 Route::get('/livetv/channels', [LiveTvController::class, 'getChannels']);
 Route::get('/livetv/proxy', [LiveTvController::class, 'proxy']);
@@ -71,10 +79,17 @@ Route::get('/livetv/proxy', [LiveTvController::class, 'proxy']);
 |--------------------------------------------------------------------------
 */
 Route::middleware('auth:sanctum')->group(function () {
-    // Autenticación y Perfiles
+    // Autenticación de Sesión
     Route::get('/auth/me', [AuthController::class, 'me']);
     Route::post('/auth/logout', [AuthController::class, 'logout']);
-    Route::post('/profiles', [AuthController::class, 'createProfile']);
+
+    // Sistema Multiperfil (Estilo Netflix / Streaming Familiar)
+    Route::get('/profiles', [ProfileController::class, 'index']);
+    Route::post('/profiles', [ProfileController::class, 'store']);
+    Route::get('/profiles/{id}', [ProfileController::class, 'show']);
+    Route::put('/profiles/{id}', [ProfileController::class, 'update']);
+    Route::delete('/profiles/{id}', [ProfileController::class, 'destroy']);
+    Route::post('/profiles/{id}/select', [ProfileController::class, 'select']);
 
     // Catálogo de Video y Streaming
     Route::get('/titles', [TitleController::class, 'index']);
@@ -94,7 +109,7 @@ Route::middleware('auth:sanctum')->group(function () {
     | Módulo Administrativo (/admin) - Solo Rol Admin
     |--------------------------------------------------------------------------
     */
-    Route::middleware(EnsureAdmin::class)->prefix('admin')->group(function () {
+    Route::middleware(EnsureUserIsAdmin::class)->prefix('admin')->group(function () {
         // Métricas en tiempo real y monitoreo de telemetría
         Route::get('/dashboard-stats', [AdminTitleController::class, 'dashboardStats']);
         Route::get('/stats', [AdminTitleController::class, 'dashboardStats']);

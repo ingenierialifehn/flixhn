@@ -21,7 +21,13 @@ class TitleController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $profileId = $request->query('profile_id');
+        $profileId = $request->query('profile_id') ?? $request->header('X-Profile-Id');
+        if (!$profileId && $request->user()) {
+            $token = $request->user()->currentAccessToken();
+            $profileId = ($token ? Cache::get("token_{$token->id}_current_profile") : null)
+                ?? Cache::get("user_{$request->user()->id}_current_profile");
+        }
+
         $searchQuery = trim($request->query('q') ?? $request->query('search') ?? '');
 
         // Búsqueda reactiva en tiempo real por término (rápida y ligera)
@@ -265,6 +271,37 @@ class TitleController extends Controller
 
         $finalRows = $baseData['rows'];
 
+        // Si el perfil activo es Kids, restringir el catálogo exclusivamente a contenidos familiares/infantiles
+        if ($profileId) {
+            $activeProfile = \App\Models\UserProfile::find($profileId);
+            if ($activeProfile && $activeProfile->is_kids) {
+                $adultKeywords = ['terror', 'horror', 'crimen', 'erot', 'violenc', 'gore', 'matanza', 'narco'];
+                $filteredRows = [];
+
+                foreach ($finalRows as $row) {
+                    $rowTitle = strtolower($row['title'] ?? '');
+                    if (str_contains($rowTitle, 'terror') || str_contains($rowTitle, 'crimen') || str_contains($rowTitle, 'suspenso')) {
+                        continue;
+                    }
+
+                    $safeItems = collect($row['items'] ?? [])->filter(function ($item) use ($adultKeywords) {
+                        $it = $item->title ?? $item;
+                        $genre = strtolower($it->genre ?? '');
+                        foreach ($adultKeywords as $bad) {
+                            if (str_contains($genre, $bad)) return false;
+                        }
+                        return true;
+                    })->values();
+
+                    if ($safeItems->isNotEmpty()) {
+                        $row['items'] = $safeItems;
+                        $filteredRows[] = $row;
+                    }
+                }
+                $finalRows = $filteredRows;
+            }
+        }
+
         // 3. Fila "Continuar Viendo"
         // REGLA: El título SOLO debe agregarse si el usuario reprodujo al menos 10 minutos (>= 600s)
         // y aún no ha llegado al 95% de la duración total.
@@ -304,7 +341,12 @@ class TitleController extends Controller
      */
     public function show(Request $request, int $id): JsonResponse
     {
-        $profileId = $request->query('profile_id');
+        $profileId = $request->query('profile_id') ?? $request->header('X-Profile-Id');
+        if (!$profileId && $request->user()) {
+            $token = $request->user()->currentAccessToken();
+            $profileId = ($token ? Cache::get("token_{$token->id}_current_profile") : null)
+                ?? Cache::get("user_{$request->user()->id}_current_profile");
+        }
 
         $title = Title::with(['category'])->findOrFail($id);
 

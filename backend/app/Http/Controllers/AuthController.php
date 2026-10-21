@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
-use App\Models\Profile;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -12,7 +11,7 @@ use Illuminate\Validation\ValidationException;
 class AuthController extends Controller
 {
     /**
-     * Autenticación local mediante Username y Contraseña.
+     * Autenticación local mediante Username/Correo y Contraseña.
      */
     public function login(Request $request): JsonResponse
     {
@@ -21,7 +20,9 @@ class AuthController extends Controller
             'password' => 'required|string',
         ]);
 
-        $user = User::where('username', $validated['username'])->first();
+        $user = User::where('username', $validated['username'])
+            ->orWhere('email', $validated['username'])
+            ->first();
 
         if (!$user || !Hash::check($validated['password'], $user->password)) {
             throw ValidationException::withMessages([
@@ -54,8 +55,11 @@ class AuthController extends Controller
             'user' => [
                 'id' => $user->id,
                 'username' => $user->username,
-                'role' => $user->role,
+                'email' => $user->email,
+                'role' => $user->isAdmin() ? 'admin' : 'client',
                 'customer_name' => $user->customer_name,
+                'phone' => $user->phone,
+                'contract_number' => $user->contract_number,
                 'assigned_ip' => $user->assigned_ip,
                 'max_screens' => $user->max_screens,
                 'profiles' => $user->profiles,
@@ -74,8 +78,11 @@ class AuthController extends Controller
             'user' => [
                 'id' => $user->id,
                 'username' => $user->username,
-                'role' => $user->role,
+                'email' => $user->email,
+                'role' => $user->isAdmin() ? 'admin' : 'client',
                 'customer_name' => $user->customer_name,
+                'phone' => $user->phone,
+                'contract_number' => $user->contract_number,
                 'assigned_ip' => $user->assigned_ip,
                 'max_screens' => $user->max_screens,
                 'profiles' => $user->profiles,
@@ -98,36 +105,10 @@ class AuthController extends Controller
     }
 
     /**
-     * Crear un nuevo perfil para el suscriptor.
+     * Crear un nuevo perfil para el suscriptor (delega a ProfileController para validación uniforme).
      */
     public function createProfile(Request $request): JsonResponse
     {
-        $user = $request->user();
-
-        if ($user->profiles()->count() >= 5) {
-            return response()->json([
-                'message' => 'Se ha alcanzado el límite máximo de 5 perfiles.',
-            ], 422);
-        }
-
-        $validated = $request->validate([
-            'name' => 'required|string|max:50',
-            'avatar_color' => 'nullable|string|max:20',
-            'is_kids' => 'boolean',
-        ]);
-
-        $colors = ['#E50914', '#0071EB', '#F5A623', '#2BD465', '#9B51E0'];
-        $chosenColor = $validated['avatar_color'] ?? $colors[array_rand($colors)];
-
-        $profile = $user->profiles()->create([
-            'name' => $validated['name'],
-            'avatar_color' => $chosenColor,
-            'is_kids' => $validated['is_kids'] ?? false,
-        ]);
-
-        return response()->json([
-            'message' => 'Perfil creado con éxito.',
-            'profile' => $profile,
-        ], 201);
+        return app(ProfileController::class)->store($request);
     }
 }

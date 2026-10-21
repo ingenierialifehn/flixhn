@@ -14,9 +14,12 @@ class User extends Authenticatable
 
     protected $fillable = [
         'username',
+        'email',
         'password',
         'role',
         'customer_name',
+        'phone',
+        'contract_number',
         'assigned_ip',
         'max_screens',
         'is_active',
@@ -36,18 +39,37 @@ class User extends Authenticatable
         ];
     }
 
+    /**
+     * Mapeo estricto del rol: 'admin' o 'client'.
+     */
+    public function getRoleAttribute($value): string
+    {
+        return $value === 'admin' ? 'admin' : 'client';
+    }
+
     public function profiles(): HasMany
     {
-        return $this->hasMany(Profile::class);
+        return $this->hasMany(UserProfile::class);
+    }
+
+    public function userProfiles(): HasMany
+    {
+        return $this->hasMany(UserProfile::class);
     }
 
     public function isAdmin(): bool
     {
-        return $this->role === 'admin';
+        $rawRole = $this->attributes['role'] ?? null;
+        return $rawRole === 'admin';
+    }
+
+    public function isClient(): bool
+    {
+        return !$this->isAdmin();
     }
 
     public function isSubscriber(): bool
     {
-        return $this->role === 'subscriber';
+        return $this->isClient();
     }
 }

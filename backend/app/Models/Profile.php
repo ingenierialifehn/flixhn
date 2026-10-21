@@ -2,36 +2,29 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
-
-class Profile extends Model
+/**
+ * Clase Profile para retrocompatibilidad con controladores y servicios existentes.
+ * Extiende de UserProfile apuntando a la tabla 'user_profiles'.
+ */
+class Profile extends UserProfile
 {
-    use HasFactory;
+    protected $table = 'user_profiles';
 
     protected $fillable = [
         'user_id',
         'name',
+        'avatar',
         'avatar_color',
         'is_kids',
+        'pin',
+        'preferences',
     ];
 
-    protected function casts(): array
+    /**
+     * Mutador para permitir guardar avatar_color mapeándolo a avatar
+     */
+    public function setAvatarColorAttribute($value): void
     {
-        return [
-            'is_kids' => 'boolean',
-        ];
-    }
-
-    public function user(): BelongsTo
-    {
-        return $this->belongsTo(User::class);
-    }
-
-    public function playbackProgresses(): HasMany
-    {
-        return $this->hasMany(PlaybackProgress::class);
+        $this->attributes['avatar'] = $value;
     }
 }

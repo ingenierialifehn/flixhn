@@ -198,8 +198,18 @@ class PlaybackController extends Controller
      */
     public function updateProgress(Request $request): JsonResponse
     {
+        $resolvedProfileId = $request->input('profile_id');
+        if (!$resolvedProfileId && $request->user()) {
+            $token = $request->user()->currentAccessToken();
+            $resolvedProfileId = ($token ? \Illuminate\Support\Facades\Cache::get("token_{$token->id}_current_profile") : null)
+                ?? \Illuminate\Support\Facades\Cache::get("user_{$request->user()->id}_current_profile");
+            if ($resolvedProfileId) {
+                $request->merge(['profile_id' => $resolvedProfileId]);
+            }
+        }
+
         $validated = $request->validate([
-            'profile_id' => 'required|exists:profiles,id',
+            'profile_id' => 'required|exists:user_profiles,id',
             'title_id' => 'required|exists:titles,id',
             'episode_id' => 'nullable|exists:episodes,id',
             'current_seconds' => 'required|integer|min:0',
@@ -230,8 +240,18 @@ class PlaybackController extends Controller
      */
     public function getProgress(Request $request): JsonResponse
     {
+        $resolvedProfileId = $request->input('profile_id') ?? $request->query('profile_id');
+        if (!$resolvedProfileId && $request->user()) {
+            $token = $request->user()->currentAccessToken();
+            $resolvedProfileId = ($token ? \Illuminate\Support\Facades\Cache::get("token_{$token->id}_current_profile") : null)
+                ?? \Illuminate\Support\Facades\Cache::get("user_{$request->user()->id}_current_profile");
+            if ($resolvedProfileId) {
+                $request->merge(['profile_id' => $resolvedProfileId]);
+            }
+        }
+
         $validated = $request->validate([
-            'profile_id' => 'required|exists:profiles,id',
+            'profile_id' => 'required|exists:user_profiles,id',
             'title_id' => 'required|exists:titles,id',
             'episode_id' => 'nullable|exists:episodes,id',
         ]);
