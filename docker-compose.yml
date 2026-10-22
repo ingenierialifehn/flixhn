@@ -45,6 +45,7 @@ services:
       APP_KEY: ${APP_KEY:-base64:XG8d2m0qL1zOa8Pq3K9yN5wV8jR4eU1iB6tY7sA2dC0=}
       SANCTUM_STATEFUL_DOMAINS: "localhost,127.0.0.1"
       SESSION_DRIVER: cookie
+      QUEUE_CONNECTION: database
       LOG_CHANNEL: stderr
       APP_CONFIG_CACHE: /tmp/config.php
       APP_PACKAGES_CACHE: /tmp/packages.php

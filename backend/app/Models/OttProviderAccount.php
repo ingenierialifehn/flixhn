@@ -22,6 +22,7 @@ class OttProviderAccount extends Model
         'quality_profile',
         'session_metadata',
         'error_message',
+        'last_error',
     ];
 
     protected $casts = [
@@ -33,6 +34,26 @@ class OttProviderAccount extends Model
     protected $hidden = [
         'credentials',
     ];
+
+    protected $appends = [
+        'last_error',
+    ];
+
+    /**
+     * Mutator para last_error -> almacena en error_message de la base de datos.
+     */
+    public function setLastErrorAttribute($value): void
+    {
+        $this->attributes['error_message'] = $value;
+    }
+
+    /**
+     * Accessor para last_error -> devuelve error_message.
+     */
+    public function getLastErrorAttribute(): ?string
+    {
+        return $this->attributes['error_message'] ?? null;
+    }
 
     /**
      * Encripta y almacena credenciales de acceso de forma segura.
@@ -65,7 +86,16 @@ class OttProviderAccount extends Model
      */
     public function hasCredentials(): bool
     {
-        return !empty($this->credentials);
+        if (empty($this->credentials)) {
+            return false;
+        }
+
+        $decrypted = $this->getDecryptedCredentials();
+        if (empty($decrypted) || !is_array($decrypted)) {
+            return false;
+        }
+
+        return !empty(array_filter($decrypted, fn($val) => !empty($val) && $val !== '{}'));
     }
 
     public function downloadTasks(): HasMany

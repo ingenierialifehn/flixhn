@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Jobs\SyncOttCatalogJob;
+use App\Jobs\SyncOttProviderJob;
 use App\Models\OttProviderAccount;
 use App\Services\OttSyncService;
 use Illuminate\Http\JsonResponse;
@@ -197,28 +198,49 @@ class OttProviderController extends Controller
 
     /**
      * POST /api/admin/ott-providers/{provider}/sync
-     * Dispara el escaneo e ingesta real hacia el almacenamiento local.
+     * Dispara el escaneo e ingesta real hacia el almacenamiento local en segundo plano.
      */
     public function sync(string $provider): JsonResponse
     {
         try {
-            $targetProvider = $provider;
-            if (is_numeric($provider)) {
-                $acc = OttProviderAccount::find((int) $provider);
-                if ($acc) {
-                    $targetProvider = $acc->provider;
-                }
+            $providerAccount = is_numeric($provider)
+                ? OttProviderAccount::find((int) $provider)
+                : OttProviderAccount::where('provider', $provider)->first();
+
+            // 1. Validar la existencia del proveedor
+            if (!$providerAccount) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "El proveedor [{$provider}] no está registrado.",
+                ], 404);
             }
 
-            // Ejecutar sincronización de catálogo
-            SyncOttCatalogJob::dispatch($targetProvider);
+            // 2. Validar credenciales de acceso
+            if (!$providerAccount->hasCredentials()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "El proveedor [{$providerAccount->account_name}] no tiene credenciales configuradas o válidas.",
+                ], 422);
+            }
 
+            // 3. Cambiar el estado de la cuenta en base de datos a 'syncing'
+            $providerAccount->status = 'syncing';
+            $providerAccount->error_message = null;
+            $providerAccount->last_error = null;
+            $providerAccount->save();
+
+            // 4. Despacha inmediatamente un Job a la cola
+            SyncOttProviderJob::dispatch($providerAccount->id);
+
+            // Asegurar que el worker procese la cola desacoplado de PHP-FPM
+            $this->ensureQueueWorkerRunning();
+
+            // 5. Retorna INMEDIATAMENTE una respuesta JSON sin esperar la finalización
             return response()->json([
                 'success' => true,
-                'message' => "Sincronización de catálogo iniciada para {$targetProvider}.",
-                'provider' => $targetProvider,
+                'message' => 'Sincronización iniciada en segundo plano.',
                 'status' => 'syncing',
-            ]);
+            ], 200);
         } catch (\InvalidArgumentException $e) {
             return response()->json([
                 'success' => false,
@@ -348,6 +370,27 @@ class OttProviderController extends Controller
                 'success' => false,
                 'message' => 'Error al limpiar tareas: ' . $e->getMessage(),
             ], 500);
+        }
+    }
+
+    /**
+     * Garantiza la ejecución de un worker en segundo plano desacoplado del hilo HTTP.
+     */
+    protected function ensureQueueWorkerRunning(): void
+    {
+        try {
+            $artisanPath = base_path('artisan');
+            $phpBinary = PHP_BINARY ?: 'php';
+
+            if (PHP_OS_FAMILY === 'Windows') {
+                $command = "start /B {$phpBinary} {$artisanPath} queue:work database --stop-when-empty > NUL 2>&1";
+                pclose(popen($command, 'r'));
+            } else {
+                $command = "{$phpBinary} {$artisanPath} queue:work database --stop-when-empty > /dev/null 2>&1 &";
+                exec($command);
+            }
+        } catch (\Throwable $e) {
+            Log::warning("No se pudo iniciar el worker de cola en segundo plano: " . $e->getMessage());
         }
     }
 }
