@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useCallback } from 'react';
+import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import Hls from 'hls.js';
 import {
   ArrowLeft,
@@ -46,6 +46,7 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
   const controlsTimeoutRef = useRef(null);
   const playSessionIdRef = useRef(null);
   const apiKeyRef = useRef('');
+  const progressBarRef = useRef(null);
 
   const [title, setTitle] = useState(initialTitle);
   const [currentEpisode, setCurrentEpisode] = useState(initialEpisode);
@@ -78,7 +79,6 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
   const [isDragging, setIsDragging] = useState(false);
   const [dragPercent, setDragPercent] = useState(0);
   const [hoverPosition, setHoverPosition] = useState(null); // { percent, time }
-  const progressBarRef = useRef(null);
 
   // Velocidad de reproducción (0.75x, 1x, 1.25x, 1.5x)
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
@@ -90,7 +90,7 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
   const [subtitleTracks, setSubtitleTracks] = useState([]);
   const [currentSubtitleTrack, setCurrentSubtitleTrack] = useState(-1); // -1 = Desactivado
 
-  // Telemetría en tiempo real: Heartbeat cada 15 segundos y stop al desmontar
+  // Telemetría en tiempo real: Invocación en bloque superior sin condiciones ni alerts
   const mediaTitle = currentEpisode
     ? `${title?.name || 'Serie'} - T${currentEpisode.season_number || 1}:E${currentEpisode.episode_number || 1} ${currentEpisode.name || ''}`
     : (title?.name || 'Película');
@@ -118,7 +118,8 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
       }
     },
     onBlocked: () => {
-      alert('El acceso a la transmisión ha sido suspendido para este dispositivo por el administrador.');
+      console.warn('[VideoPlayer] El acceso a la transmisión ha sido suspendido para este dispositivo por el administrador.');
+      setPlaybackError('El acceso a la transmisión ha sido suspendido para este dispositivo por el administrador.');
       if (typeof onClose === 'function') onClose();
       else if (typeof onBack === 'function') onBack();
     },

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import React, { useRef, useEffect, useCallback } from 'react';
 import api from '../api/axios';
 
 const DEVICE_ID_KEY = 'flixhn_device_id';
@@ -32,7 +32,7 @@ export const getPersistentDeviceId = () => {
  * Emite heartbeat POST /api/telemetry/heartbeat cada 15s mientras el video esté activo o pausado.
  * Al desmontar o salir, envía POST /api/telemetry/stop inmediatamente.
  */
-export default function useTelemetryHeartbeat({
+export function useTelemetryHeartbeat({
   mediaType = 'vod', // 'vod' | 'livetv'
   mediaId,
   title,
@@ -43,10 +43,10 @@ export default function useTelemetryHeartbeat({
   onRemoteCommand,
   onBlocked,
   enabled = true,
-}) {
-  const deviceId = getPersistentDeviceId();
-
-  // Mantener los valores más recientes sin reiniciar temporizadores
+} = {}) {
+  // Todos los useRef arriba:
+  const heartbeatRef = useRef(null);
+  const isPlayingRef = useRef(playbackState === 'playing');
   const latestProps = useRef({
     mediaType,
     mediaId,
@@ -60,7 +60,10 @@ export default function useTelemetryHeartbeat({
     enabled,
   });
 
+  const deviceId = getPersistentDeviceId();
+
   useEffect(() => {
+    isPlayingRef.current = playbackState === 'playing';
     latestProps.current = {
       mediaType,
       mediaId,
@@ -163,12 +166,15 @@ export default function useTelemetryHeartbeat({
     // Enviar latido inmediato ante cambios de estado o inicio
     sendHeartbeat();
 
-    const interval = setInterval(() => {
+    heartbeatRef.current = setInterval(() => {
       sendHeartbeat();
     }, 15000);
 
     return () => {
-      clearInterval(interval);
+      if (heartbeatRef.current) {
+        clearInterval(heartbeatRef.current);
+        heartbeatRef.current = null;
+      }
     };
   }, [enabled, title, playbackState, sendHeartbeat]);
 
@@ -190,3 +196,5 @@ export default function useTelemetryHeartbeat({
 
   return { deviceId, sendHeartbeat, sendStop };
 }
+
+export default useTelemetryHeartbeat;
