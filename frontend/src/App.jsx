@@ -7,6 +7,7 @@ import Navbar from './components/Navbar.jsx';
 import Billboard from './components/Billboard';
 import MovieRow from './components/MovieRow';
 import MovieCard from './components/MovieCard';
+import Top10Row from './components/Top10Row';
 import DetailModal from './components/DetailModal';
 import VideoPlayer from './components/VideoPlayer';
 import LiveTvPlayer from './components/LiveTvPlayer';
@@ -334,6 +335,128 @@ function App() {
     };
   }, [rows, currentTab, selectedPlatform, selectedGenre]);
 
+  // Cálculo dinámico de la fila TOP 10 de contenido más popular/valorado
+  const top10Items = useMemo(() => {
+    const candidateMap = new Map();
+
+    if (billboardTitle?.id) {
+      candidateMap.set(billboardTitle.id, billboardTitle);
+    }
+
+    (rows || []).forEach((row) => {
+      if (row?.id === 'continue_watching') return;
+      (row.items || []).forEach((item) => {
+        const t = item?.title || item;
+        if (t?.id && !candidateMap.has(t.id)) {
+          candidateMap.set(t.id, t);
+        }
+      });
+    });
+
+    let allCandidates = Array.from(candidateMap.values());
+
+    if (currentTab === 'movies') {
+      allCandidates = allCandidates.filter((i) => (i.type || i.title?.type) === 'movie');
+    } else if (currentTab === 'series') {
+      allCandidates = allCandidates.filter((i) => (i.type || i.title?.type) === 'series');
+    }
+
+    if (selectedPlatform !== 'all') {
+      allCandidates = allCandidates.filter((i) => {
+        const prov = String(i.provider || i.source_platform || 'local').toLowerCase().trim();
+        if (selectedPlatform === 'prime') return prov === 'prime' || prov === 'amazon_prime' || prov === 'amazon';
+        if (selectedPlatform === 'disney') return prov === 'disney' || prov === 'disney_plus' || prov === 'disney+';
+        if (selectedPlatform === 'hbo_max') return prov === 'hbo_max' || prov === 'max' || prov === 'hbo';
+        return prov === selectedPlatform;
+      });
+    }
+
+    if (selectedGenre !== 'all') {
+      allCandidates = allCandidates.filter((i) => {
+        const g = String(i.genre || '').toLowerCase();
+        return g.includes(selectedGenre.toLowerCase());
+      });
+    }
+
+    allCandidates.sort((a, b) => {
+      if (b.is_featured && !a.is_featured) return 1;
+      if (a.is_featured && !b.is_featured) return -1;
+      const yearDiff = (b.release_year || 0) - (a.release_year || 0);
+      if (yearDiff !== 0) return yearDiff;
+      if (a.created_at && b.created_at) {
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      }
+      return (b.id || 0) - (a.id || 0);
+    });
+
+    return allCandidates.slice(0, 10);
+  }, [billboardTitle, rows, currentTab, selectedPlatform, selectedGenre]);
+
+  // Fila dedicada: "Nuevos Lanzamientos en FlixHN"
+  const newReleasesRow = useMemo(() => {
+    const existingEstrenos = (rows || []).find(
+      (r) => r?.id === 'cat_estrenos' || /estrenos/i.test(r?.title || '')
+    );
+
+    if (existingEstrenos && existingEstrenos.items?.length >= 4) {
+      return {
+        id: 'new_releases_row',
+        title: 'Nuevos Lanzamientos en FlixHN',
+        items: existingEstrenos.items.map((it) => ({
+          ...(it.title || it),
+          is_new: true,
+        })),
+      };
+    }
+
+    const candidateMap = new Map();
+    (rows || []).forEach((row) => {
+      if (row?.id === 'continue_watching') return;
+      (row.items || []).forEach((item) => {
+        const t = item?.title || item;
+        if (t?.id && !candidateMap.has(t.id)) {
+          candidateMap.set(t.id, t);
+        }
+      });
+    });
+
+    let allCandidates = Array.from(candidateMap.values());
+
+    if (currentTab === 'movies') {
+      allCandidates = allCandidates.filter((i) => (i.type || i.title?.type) === 'movie');
+    } else if (currentTab === 'series') {
+      allCandidates = allCandidates.filter((i) => (i.type || i.title?.type) === 'series');
+    }
+
+    allCandidates.sort((a, b) => {
+      if (a.created_at && b.created_at) {
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      }
+      return (b.id || 0) - (a.id || 0);
+    });
+
+    const items = allCandidates.slice(0, 20).map((t) => ({ ...t, is_new: true }));
+    if (items.length === 0) return null;
+
+    return {
+      id: 'new_releases_row',
+      title: 'Nuevos Lanzamientos en FlixHN',
+      items,
+    };
+  }, [rows, currentTab]);
+
+  // Fila de continuar viendo
+  const continueWatchingRow = useMemo(() => {
+    return filteredRows.find((r) => r.id === 'continue_watching');
+  }, [filteredRows]);
+
+  // Filas restantes del catálogo
+  const remainingRows = useMemo(() => {
+    return filteredRows.filter(
+      (r) => r.id !== 'continue_watching' && r.id !== 'cat_estrenos' && !/estrenos/i.test(r.title || '')
+    );
+  }, [filteredRows]);
+
   const hasContent = Boolean(billboardTitle) || (rows || []).some((r) => r?.items && r.items.length > 0);
   const isSearchActive = searchQuery.trim().length > 0;
 
@@ -617,18 +740,55 @@ function App() {
                     ))}
                   </div>
                 ) : (
-                  /* Vista en Carruseles Horizontales */
-                  (filteredRows || []).map((row) => (
-                    <MovieRow
-                      key={row?.id}
-                      title={row?.title}
-                      items={row?.items || []}
-                      isProgressRow={row?.is_progress_row}
-                      onPlay={(t, ep) => handlePlay(t, ep)}
-                      onOpenModal={(t) => handleOpenModal(t)}
-                      onRemoveProgress={handleRemoveFromContinueWatching}
-                    />
-                  ))
+                  /* Vista en Carruseles Horizontales Estilo Netflix */
+                  <>
+                    {/* 1. Fila de Continuar Viendo */}
+                    {continueWatchingRow && (
+                      <MovieRow
+                        key={continueWatchingRow.id}
+                        title={continueWatchingRow.title}
+                        items={continueWatchingRow.items || []}
+                        isProgressRow={true}
+                        onPlay={(t, ep) => handlePlay(t, ep)}
+                        onOpenModal={(t) => handleOpenModal(t)}
+                        onRemoveProgress={handleRemoveFromContinueWatching}
+                      />
+                    )}
+
+                    {/* 2. FILA DESTACADA: "TOP 10 EN FLIXHN HOY" CON NÚMEROS GIGANTES */}
+                    {top10Items.length > 0 && (
+                      <Top10Row
+                        items={top10Items}
+                        currentTab={currentTab}
+                        onPlay={(t, ep) => handlePlay(t, ep)}
+                        onOpenModal={(t) => handleOpenModal(t)}
+                      />
+                    )}
+
+                    {/* 3. FILA DEDICADA: "NUEVOS LANZAMIENTOS EN FLIXHN" */}
+                    {newReleasesRow && newReleasesRow.items.length > 0 && (
+                      <MovieRow
+                        key={newReleasesRow.id}
+                        title={newReleasesRow.title}
+                        items={newReleasesRow.items}
+                        onPlay={(t, ep) => handlePlay(t, ep)}
+                        onOpenModal={(t) => handleOpenModal(t)}
+                      />
+                    )}
+
+                    {/* 4. Resto de Categorías y Géneros */}
+                    {remainingRows.map((row) => (
+                      <MovieRow
+                        key={row?.id}
+                        title={row?.title}
+                        items={row?.items || []}
+                        isProgressRow={row?.is_progress_row}
+                        onPlay={(t, ep) => handlePlay(t, ep)}
+                        onOpenModal={(t) => handleOpenModal(t)}
+                        onRemoveProgress={handleRemoveFromContinueWatching}
+                      />
+                    ))}
+                  </>
                 )}
               </div>
             )}

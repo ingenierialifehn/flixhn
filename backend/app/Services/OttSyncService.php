@@ -350,12 +350,25 @@ class OttSyncService
             /** @var OttProviderAccount|null $acc */
             $acc = $accounts->get($providerId);
 
+            // Si la cuenta lleva más de 5 minutos en estado 'syncing', auto-desbloquear a 'error'
+            if ($acc && $acc->status === 'syncing') {
+                $lastActivity = $acc->updated_at ?? $acc->last_sync_at;
+                if ($lastActivity && $lastActivity->lt(now()->subMinutes(5))) {
+                    $acc->status = 'error';
+                    $acc->error_message = 'Tiempo de espera agotado: la sincronización superó el límite de 5 minutos.';
+                    $acc->last_error = $acc->error_message;
+                    $acc->last_sync_at = now();
+                    $acc->save();
+                }
+            }
+
             $status = $acc ? $acc->status : 'disconnected';
             $qualityProfile = $acc ? $acc->quality_profile : $config['defaultQuality'];
             $autoDownload = $acc ? (bool) $acc->auto_download : false;
             $accountName = $acc ? $acc->account_name : null;
             $lastSyncAt = $acc && $acc->last_sync_at ? $acc->last_sync_at->toIso8601String() : null;
             $errorMessage = $acc ? $acc->error_message : null;
+            $lastError = $acc ? ($acc->last_error ?? $acc->error_message) : null;
             $hasCredentials = $acc ? $acc->hasCredentials() : false;
 
             // Conteos reales vinculados a la base de datos
@@ -383,6 +396,7 @@ class OttSyncService
                 'last_sync_at' => $lastSyncAt,
                 'has_credentials' => $hasCredentials,
                 'error_message' => $errorMessage,
+                'last_error' => $lastError,
                 'is_custom' => false,
                 'stats' => [
                     'imported_items' => $importedCount,
@@ -395,6 +409,18 @@ class OttSyncService
         // 2. Proveedores dinámicos / personalizados registrados por el usuario
         foreach ($accounts as $providerId => $acc) {
             if (!array_key_exists($providerId, $this->supportedProviders)) {
+                // Si la cuenta lleva más de 5 minutos en estado 'syncing', auto-desbloquear a 'error'
+                if ($acc->status === 'syncing') {
+                    $lastActivity = $acc->updated_at ?? $acc->last_sync_at;
+                    if ($lastActivity && $lastActivity->lt(now()->subMinutes(5))) {
+                        $acc->status = 'error';
+                        $acc->error_message = 'Tiempo de espera agotado: la sincronización superó el límite de 5 minutos.';
+                        $acc->last_error = $acc->error_message;
+                        $acc->last_sync_at = now();
+                        $acc->save();
+                    }
+                }
+
                 $meta = $acc->session_metadata ?: [];
                 $displayName = $meta['display_name'] ?? ucfirst(str_replace('_', ' ', $providerId));
                 $color = $meta['color'] ?? '#8B5CF6';
@@ -423,6 +449,7 @@ class OttSyncService
                     'last_sync_at' => $acc->last_sync_at ? $acc->last_sync_at->toIso8601String() : null,
                     'has_credentials' => $acc->hasCredentials(),
                     'error_message' => $acc->error_message,
+                    'last_error' => $acc->last_error ?? $acc->error_message,
                     'is_custom' => true,
                     'storage_path' => $meta['storage_path'] ?? '/storage/media/custom',
                     'auth_method' => $meta['auth_method'] ?? 'credentials',

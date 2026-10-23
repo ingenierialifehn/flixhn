@@ -9,6 +9,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 class SyncOttProviderJob implements ShouldQueue
@@ -23,7 +24,7 @@ class SyncOttProviderJob implements ShouldQueue
     /**
      * Tiempo límite de ejecución del Job (segundos).
      */
-    public int $timeout = 300;
+    public int $timeout = 60;
 
     /**
      * Número máximo de intentos.
@@ -59,6 +60,12 @@ class SyncOttProviderJob implements ShouldQueue
             $account->last_error = null;
             $account->save();
 
+            // Configurar timeout estricto de máximo 15-20 segundos para llamadas HTTP externas
+            Http::globalOptions([
+                'timeout' => 20,
+                'connect_timeout' => 10,
+            ]);
+
             // Ejecución de la lógica de conexión externa y sincronización de catálogo
             $result = $syncService->executeCatalogSync($account->provider);
 
@@ -72,31 +79,29 @@ class SyncOttProviderJob implements ShouldQueue
 
             Log::info("SyncOttProviderJob finalizado con éxito para {$account->provider} (cuenta #{$this->providerAccountId}): " . json_encode($result));
         } catch (\Throwable $e) {
-            $errorMessage = $e->getMessage();
+            $errorMessage = $e->getMessage() ?: 'Error inesperado durante la sincronización del catálogo OTT.';
             Log::error("Error en SyncOttProviderJob para cuenta #{$this->providerAccountId} ({$account->provider}): {$errorMessage}", [
                 'exception' => get_class($e),
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
             ]);
 
-            // Manejo de errores: actualiza el estado de la cuenta a 'error'
-            // y guarda el mensaje detallado en last_error sin tumbar el worker ni la aplicación.
+            // Actualiza el estado de la cuenta a 'error', guarda el mensaje en last_error y registra last_sync_at
             try {
                 $account->refresh();
                 $account->status = 'error';
                 $account->last_error = $errorMessage;
                 $account->error_message = $errorMessage;
+                $account->last_sync_at = now();
                 $account->save();
             } catch (\Throwable $dbError) {
                 Log::error("No se pudo registrar el estado de error en la cuenta OTT #{$this->providerAccountId}: " . $dbError->getMessage());
             }
-
-            // No relanzamos la excepción para no tumbar el worker
         }
     }
 
     /**
-     * Manejar fallo en cola (fallback seguro).
+     * Manejar fallo en cola (fallback seguro para garantizar que nunca quede atrapado en 'syncing').
      */
     public function failed(?\Throwable $exception): void
     {
@@ -109,6 +114,7 @@ class SyncOttProviderJob implements ShouldQueue
                 $account->status = 'error';
                 $account->last_error = $error;
                 $account->error_message = $error;
+                $account->last_sync_at = now();
                 $account->save();
             }
         } catch (\Throwable $t) {
@@ -116,3 +122,4 @@ class SyncOttProviderJob implements ShouldQueue
         }
     }
 }
+

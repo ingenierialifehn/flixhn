@@ -1,8 +1,9 @@
 import React from 'react';
-import MovieCard from './MovieCard';
+import MovieCard, { getPlatformConfig } from './MovieCard';
 
 const MediaCard = (props) => {
   return <MovieCard {...props} />;
 };
 
+export { getPlatformConfig };
 export default MediaCard;

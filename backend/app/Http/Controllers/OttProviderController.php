@@ -443,19 +443,87 @@ class OttProviderController extends Controller
     }
 
     /**
+     * POST /api/admin/ott-providers/{provider}/reset-status
+     * POST /api/admin/ott-providers/{id}/reset-status
+     * Desbloquea manualmente o cancela una sincronización huérfana o atascada.
+     */
+    public function resetStatus(Request $request, string $provider): JsonResponse
+    {
+        try {
+            $account = is_numeric($provider)
+                ? OttProviderAccount::find((int) $provider)
+                : OttProviderAccount::where('provider', $provider)->first();
+
+            if (!$account) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "El proveedor [{$provider}] no fue encontrado.",
+                ], 404);
+            }
+
+            $requestedStatus = $request->input('status', 'connected');
+            if (!in_array($requestedStatus, ['connected', 'error', 'disconnected'])) {
+                $requestedStatus = 'connected';
+            }
+
+            $previousStatus = $account->status;
+            $account->status = $requestedStatus;
+
+            if ($requestedStatus === 'error') {
+                $reason = $request->input('reason', 'Sincronización cancelada manualmente por el administrador.');
+                $account->last_error = $reason;
+                $account->error_message = $reason;
+                $account->last_sync_at = now();
+            } else {
+                // Si vuelve a connected o disconnected, se purga el error
+                $account->error_message = null;
+                $account->last_error = null;
+            }
+
+            $account->save();
+
+            Log::warning("Estado de cuenta OTT [{$account->provider}] reseteado manualmente de [{$previousStatus}] a [{$account->status}] por el administrador.");
+
+            return response()->json([
+                'success' => true,
+                'message' => "El estado de '{$account->provider}' ha sido restablecido a '{$account->status}'.",
+                'provider' => $account->provider,
+                'status' => $account->status,
+                'last_error' => $account->last_error,
+                'last_sync_at' => $account->last_sync_at ? $account->last_sync_at->toIso8601String() : null,
+            ]);
+        } catch (\Throwable $e) {
+            Log::error("Error restableciendo estado de proveedor [{$provider}]: " . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'No se pudo restablecer el estado: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
      * Garantiza la ejecución de un worker en segundo plano desacoplado del hilo HTTP.
      */
     protected function ensureQueueWorkerRunning(): void
     {
         try {
             $artisanPath = base_path('artisan');
-            $phpBinary = PHP_BINARY ?: 'php';
+
+            // Determinar el binario CLI de PHP real (evitar php-fpm que falla al invocar artisan)
+            $phpBinary = 'php';
+            if (file_exists('/usr/local/bin/php')) {
+                $phpBinary = '/usr/local/bin/php';
+            } elseif (file_exists('/usr/bin/php')) {
+                $phpBinary = '/usr/bin/php';
+            } elseif (defined('PHP_BINARY') && !str_contains(PHP_BINARY, 'php-fpm')) {
+                $phpBinary = PHP_BINARY;
+            }
 
             if (PHP_OS_FAMILY === 'Windows') {
-                $command = "start /B {$phpBinary} {$artisanPath} queue:work database --stop-when-empty > NUL 2>&1";
+                $command = "start /B {$phpBinary} \"{$artisanPath}\" queue:work database --stop-when-empty --tries=1 --timeout=60 > NUL 2>&1";
                 pclose(popen($command, 'r'));
             } else {
-                $command = "{$phpBinary} {$artisanPath} queue:work database --stop-when-empty > /dev/null 2>&1 &";
+                $command = "{$phpBinary} \"{$artisanPath}\" queue:work database --stop-when-empty --tries=1 --timeout=60 > /dev/null 2>&1 &";
                 exec($command);
             }
         } catch (\Throwable $e) {

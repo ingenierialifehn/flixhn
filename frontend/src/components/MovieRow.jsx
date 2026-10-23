@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useCallback } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import MovieCard from './MovieCard';
 
@@ -7,9 +7,7 @@ const MovieRow = ({ title, items, isProgressRow = false, onPlay, onOpenModal, on
   const [showLeftArrow, setShowLeftArrow] = useState(false);
   const [showRightArrow, setShowRightArrow] = useState(true);
 
-  if (!items || items.length === 0) return null;
-
-  const handleScroll = (direction) => {
+  const handleScroll = useCallback((direction) => {
     if (rowRef.current) {
       const { scrollLeft, clientWidth, scrollWidth } = rowRef.current;
       const scrollAmount = clientWidth * 0.75;
@@ -30,16 +28,18 @@ const MovieRow = ({ title, items, isProgressRow = false, onPlay, onOpenModal, on
         }
       }, 350);
     }
-  };
+  }, []);
 
-  const onScrollCheck = () => {
+  const onScrollCheck = useCallback(() => {
     if (rowRef.current) {
       setShowLeftArrow(rowRef.current.scrollLeft > 20);
       setShowRightArrow(
         rowRef.current.scrollLeft + rowRef.current.clientWidth < rowRef.current.scrollWidth - 20
       );
     }
-  };
+  }, []);
+
+  if (!items || items.length === 0) return null;
 
   return (
     <div className="space-y-2 md:space-y-3 px-4 md:px-12 my-6 md:my-8 group relative select-none">
@@ -50,11 +50,12 @@ const MovieRow = ({ title, items, isProgressRow = false, onPlay, onOpenModal, on
 
       {/* Contenedor del Carrusel con Controles de Navegación Lateral */}
       <div className="relative">
-        {/* Flecha Izquierda */}
+        {/* Flecha Izquierda con desvanecimiento sutil estilo Netflix */}
         {showLeftArrow && (
           <button
+            type="button"
             onClick={() => handleScroll('left')}
-            className="absolute left-0 top-0 bottom-0 z-40 w-10 md:w-14 bg-transparent hover:bg-black/20 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
+            className="absolute left-0 top-0 bottom-0 z-40 w-10 md:w-14 bg-gradient-to-r from-black/85 via-black/40 to-transparent hover:from-black text-white flex items-center justify-start pl-1 md:pl-2 opacity-0 group-hover:opacity-100 transition-all duration-300 cursor-pointer"
             aria-label="Desplazar a la izquierda"
           >
             <ChevronLeft className="w-8 h-8 stroke-[2.5] text-white/90 hover:text-white drop-shadow-md transition-colors" />
@@ -79,11 +80,12 @@ const MovieRow = ({ title, items, isProgressRow = false, onPlay, onOpenModal, on
           ))}
         </div>
 
-        {/* Flecha Derecha */}
+        {/* Flecha Derecha con desvanecimiento sutil estilo Netflix */}
         {showRightArrow && (
           <button
+            type="button"
             onClick={() => handleScroll('right')}
-            className="absolute right-0 top-0 bottom-0 z-40 w-10 md:w-14 bg-transparent hover:bg-black/20 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
+            className="absolute right-0 top-0 bottom-0 z-40 w-10 md:w-14 bg-gradient-to-l from-black/85 via-black/40 to-transparent hover:from-black text-white flex items-center justify-end pr-1 md:pr-2 opacity-0 group-hover:opacity-100 transition-all duration-300 cursor-pointer"
             aria-label="Desplazar a la derecha"
           >
             <ChevronRight className="w-8 h-8 stroke-[2.5] text-white/90 hover:text-white drop-shadow-md transition-colors" />

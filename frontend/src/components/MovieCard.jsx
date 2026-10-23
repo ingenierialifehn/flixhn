@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Play, X } from 'lucide-react';
+import HoverPreviewCard from './HoverPreviewCard';
 
 /**
  * Configuración visual y branding de plataformas OTT y catálogo local FlixHN
@@ -127,15 +128,56 @@ export const getPlatformConfig = (providerRaw) => {
 };
 
 const MovieCard = ({ item, title: propTitle, isProgress, onPlay, onOpenModal, onRemoveProgress }) => {
+  // 1. Declaración incondicional de hooks al inicio
+  const cardRef = useRef(null);
+  const hoverTimerRef = useRef(null);
+  const [isHovered, setIsHovered] = useState(false);
+  const [cardRect, setCardRect] = useState(null);
+
   // Manejar si el item viene de prop directa title, PlaybackProgress o Title directo
   const title = propTitle || (isProgress ? item?.title : item);
   const episode = isProgress ? item?.episode : null;
+
+  // Manejo de entrada del cursor con retardo sutil de 380ms para evitar aperturas accidentales
+  const handleMouseEnter = useCallback(() => {
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+
+    hoverTimerRef.current = setTimeout(() => {
+      if (cardRef.current) {
+        setCardRect(cardRef.current.getBoundingClientRect());
+        setIsHovered(true);
+      }
+    }, 380);
+  }, []);
+
+  // Manejo de salida del cursor
+  const handleMouseLeave = useCallback(() => {
+    if (hoverTimerRef.current) {
+      clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+    }
+    // Retardo suave para permitir pasar el cursor sobre la tarjeta desplegada
+    setTimeout(() => {
+      setIsHovered(false);
+    }, 150);
+  }, []);
+
+  const handleClosePreview = useCallback(() => {
+    setIsHovered(false);
+  }, []);
+
+  // Limpieza al desmontar
+  useEffect(() => {
+    return () => {
+      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    };
+  }, []);
 
   if (!title) return null;
 
   const posterUrl = isProgress && episode?.thumbnail_url
     ? episode.thumbnail_url
-    : (title?.poster_url || title?.image || title?.poster);
+    : (title?.poster_url || title?.image || title?.poster || '/placeholder-poster.png');
 
   // Detección de proveedor/plataforma OTT ('netflix', 'disney', 'hbo_max', 'prime', 'local')
   const providerRaw = title?.provider || title?.source_platform || item?.provider || item?.source_platform || 'local';
@@ -146,7 +188,7 @@ const MovieCard = ({ item, title: propTitle, isProgress, onPlay, onOpenModal, on
     ? Math.min(100, Math.round((item.current_seconds / item.duration_seconds) * 100))
     : 0;
 
-  // Lógica de expiración dinámica estilo Netflix (≤ 14 días desde su ingreso/sincronización)
+  // Lógica de nuevo lanzamiento (≤ 14 días desde ingreso o prop is_new)
   const isNew = !isProgress && (
     item?.is_new ?? (
       title?.created_at
@@ -156,113 +198,131 @@ const MovieCard = ({ item, title: propTitle, isProgress, onPlay, onOpenModal, on
   );
 
   return (
-    <div
-      onClick={() => onOpenModal(title)}
-      className="group relative flex-shrink-0 w-36 sm:w-44 md:w-56 bg-zinc-100 dark:bg-[#181818] rounded-md overflow-hidden cursor-pointer shadow-sm dark:shadow-lg border border-zinc-300/40 dark:border-zinc-800 transition-all duration-300 ease-out hover:scale-105 hover:z-30 hover:shadow-xl hover:ring-2 hover:ring-[#E50914]/50"
-    >
-      {/* Imagen del Poster */}
-      <div className="relative aspect-[16/9] md:aspect-[2/3] w-full overflow-hidden bg-zinc-200 dark:bg-neutral-900">
-        <img
-          src={posterUrl}
-          alt={title.name || title.title}
-          loading="lazy"
-          onError={(e) => {
-            e.target.onerror = null;
-            e.target.src = '/placeholder-poster.png';
-          }}
-          className="w-full h-full object-cover object-center group-hover:brightness-110 transition-all duration-300 rounded"
-        />
+    <>
+      <div
+        ref={cardRef}
+        onClick={() => onOpenModal && onOpenModal(title)}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+        className="group relative flex-shrink-0 w-36 sm:w-44 md:w-56 bg-zinc-100 dark:bg-[#181818] rounded-md overflow-hidden cursor-pointer shadow-sm dark:shadow-lg border border-zinc-300/40 dark:border-zinc-800 transition-all duration-300 ease-out hover:scale-105 hover:z-20 hover:shadow-2xl hover:ring-2 hover:ring-[#E50914]/50 select-none"
+      >
+        {/* Imagen del Poster */}
+        <div className="relative aspect-[16/9] md:aspect-[2/3] w-full overflow-hidden bg-zinc-200 dark:bg-neutral-900">
+          <img
+            src={posterUrl}
+            alt={title.name || title.title}
+            loading="lazy"
+            onError={(e) => {
+              e.currentTarget.onerror = null;
+              e.currentTarget.src = '/placeholder-poster.png';
+            }}
+            className="w-full h-full object-cover object-center group-hover:brightness-110 transition-all duration-300 rounded"
+          />
 
-        {/* Badges en la esquina superior izquierda: Plataforma Distintiva + Tipo */}
-        <div className="absolute top-2 left-2 z-10 pointer-events-none flex flex-col items-start gap-1">
-          {/* Badge de Plataforma (Color y estilo distintivo de la plataforma OTT o FlixHN) */}
-          <span
-            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded shadow-lg backdrop-blur-md border text-[9px] sm:text-[10px] font-black uppercase tracking-wider ${platform.badgeBg} ${platform.badgeBorder} ${platform.badgeShadow} text-white`}
-          >
-            {platform.isLocal ? (
-              <>
-                <span className="w-1.5 h-1.5 rounded-full bg-[#E50914] shadow-sm animate-pulse" />
-                <span>FlixHN</span>
-              </>
-            ) : (
-              <span>{platform.shortName}</span>
-            )}
-          </span>
+          {/* Badges en la esquina superior izquierda: Plataforma Distintiva + Tipo */}
+          <div className="absolute top-2 left-2 z-10 pointer-events-none flex flex-col items-start gap-1">
+            {/* Badge de Plataforma */}
+            <span
+              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded shadow-lg backdrop-blur-md border text-[9px] sm:text-[10px] font-black uppercase tracking-wider ${platform.badgeBg} ${platform.badgeBorder} ${platform.badgeShadow} text-white`}
+            >
+              {platform.isLocal ? (
+                <>
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#E50914] shadow-sm animate-pulse" />
+                  <span>FlixHN</span>
+                </>
+              ) : (
+                <span>{platform.shortName}</span>
+              )}
+            </span>
 
-          {/* Badge sutil de tipo (Película / Serie) */}
-          <span className="bg-black/75 backdrop-blur-sm text-[8px] sm:text-[9px] text-zinc-300 font-bold px-1.5 py-0.5 rounded uppercase border border-white/10 shadow">
-            {title.type === 'movie' ? 'Película' : 'Serie'}
-          </span>
-        </div>
-
-        {/* Insignia Dinámica Estilo Netflix: Recién Agregado */}
-        {isNew && (
-          <div className="absolute top-2 right-2 z-10 pointer-events-none">
-            <span className="bg-[#E50914] text-white text-[9px] sm:text-[10px] font-black px-1.5 py-0.5 rounded shadow-lg uppercase tracking-wider border border-white/20">
-              Recién Agregado
+            {/* Badge sutil de tipo (Película / Serie) */}
+            <span className="bg-black/75 backdrop-blur-sm text-[8px] sm:text-[9px] text-zinc-300 font-bold px-1.5 py-0.5 rounded uppercase border border-white/10 shadow">
+              {title.type === 'movie' ? 'Película' : 'Serie'}
             </span>
           </div>
-        )}
 
-        {/* Botón flotante para quitar de 'Continuar Viendo' */}
-        {isProgress && onRemoveProgress && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onRemoveProgress(title.id, episode?.id);
-            }}
-            className="absolute top-2 right-2 z-20 w-7 h-7 rounded-full bg-black/70 hover:bg-[#E50914] text-white/80 hover:text-white flex items-center justify-center backdrop-blur-sm border border-white/20 transition-all opacity-0 group-hover:opacity-100 shadow-lg cursor-pointer hover:scale-110 active:scale-95"
-            title="Quitar de Continuar Viendo"
-            type="button"
-          >
-            <X className="w-3.5 h-3.5 stroke-[2.5]" />
-          </button>
-        )}
+          {/* Insignia Dinámica Roja Brillante Estilo Netflix: NUEVO / RECIÉN AGREGADO */}
+          {isNew && (
+            <div className="absolute top-2 right-2 z-10 pointer-events-none">
+              <span className="bg-gradient-to-r from-red-600 to-[#E50914] text-white text-[9px] sm:text-[10px] font-black px-1.5 py-0.5 rounded shadow-lg uppercase tracking-wider border border-red-400/50 ring-1 ring-red-500/50 animate-pulse">
+                NUEVO
+              </span>
+            </div>
+          )}
 
-        {/* Botón flotante de reproducción en hover */}
-        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onPlay(title, episode);
-            }}
-            className="w-12 h-12 rounded-full bg-[#E50914] text-white flex items-center justify-center hover:bg-[#F40612] hover:scale-110 active:scale-95 transition-all shadow-xl pointer-events-auto cursor-pointer"
-            title="Reproducir ahora"
-            type="button"
-          >
-            <Play className="w-6 h-6 fill-white ml-0.5" />
-          </button>
-        </div>
+          {/* Botón flotante para quitar de 'Continuar Viendo' */}
+          {isProgress && onRemoveProgress && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onRemoveProgress(title.id, episode?.id);
+              }}
+              className="absolute top-2 right-2 z-20 w-7 h-7 rounded-full bg-black/70 hover:bg-[#E50914] text-white/80 hover:text-white flex items-center justify-center backdrop-blur-sm border border-white/20 transition-all opacity-0 group-hover:opacity-100 shadow-lg cursor-pointer hover:scale-110 active:scale-95"
+              title="Quitar de Continuar Viendo"
+              type="button"
+            >
+              <X className="w-3.5 h-3.5 stroke-[2.5]" />
+            </button>
+          )}
 
-        {/* Barra Roja de Progreso de Netflix para 'Continuar Viendo' */}
-        {isProgress && percentWatched > 0 && (
-          <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-neutral-800/80 z-10">
-            <div
-              className="h-full bg-[#E50914]"
-              style={{ width: `${percentWatched}%` }}
-            />
+          {/* Botón flotante de reproducción en hover */}
+          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (onPlay) onPlay(title, episode);
+              }}
+              className="w-12 h-12 rounded-full bg-[#E50914] text-white flex items-center justify-center hover:bg-[#F40612] hover:scale-110 active:scale-95 transition-all shadow-xl pointer-events-auto cursor-pointer"
+              title="Reproducir ahora"
+              type="button"
+            >
+              <Play className="w-6 h-6 fill-white ml-0.5" />
+            </button>
           </div>
-        )}
-      </div>
 
-      {/* Información condensada en el pie de la tarjeta (Fondo oscuro integrado #181818 / bg-zinc-900/90) */}
-      <div className="p-2.5 space-y-1 bg-zinc-100 dark:bg-[#181818] border-t border-zinc-200/50 dark:border-zinc-800/80 transition-colors">
-        <h3 className="font-semibold text-xs md:text-sm text-zinc-900 dark:text-zinc-100 truncate group-hover:text-[#E50914] transition-colors">
-          {title.name}
-        </h3>
-        
-        {isProgress && episode && (
-          <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
-            {episode.title}
-          </p>
-        )}
+          {/* Barra Roja de Progreso de Netflix para 'Continuar Viendo' */}
+          {isProgress && percentWatched > 0 && (
+            <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-neutral-800/80 z-10">
+              <div
+                className="h-full bg-[#E50914]"
+                style={{ width: `${percentWatched}%` }}
+              />
+            </div>
+          )}
+        </div>
 
-        <div className="flex items-center justify-between text-[11px] text-zinc-500 dark:text-zinc-400">
-          <span>{title.release_year > 1900 ? title.release_year : ''}</span>
-          <span className="truncate max-w-[95px]">{title.genre}</span>
+        {/* Información condensada en el pie de la tarjeta */}
+        <div className="p-2.5 space-y-1 bg-zinc-100 dark:bg-[#181818] border-t border-zinc-200/50 dark:border-zinc-800/80 transition-colors">
+          <h3 className="font-semibold text-xs md:text-sm text-zinc-900 dark:text-zinc-100 truncate group-hover:text-[#E50914] transition-colors">
+            {title.name}
+          </h3>
+          
+          {isProgress && episode && (
+            <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
+              {episode.title}
+            </p>
+          )}
+
+          <div className="flex items-center justify-between text-[11px] text-zinc-500 dark:text-zinc-400">
+            <span>{title.release_year > 1900 ? title.release_year : ''}</span>
+            <span className="truncate max-w-[95px]">{title.genre}</span>
+          </div>
         </div>
       </div>
-    </div>
+
+      {/* Tarjeta Flotante Expandida con Resumen en Hover */}
+      {isHovered && cardRect && (
+        <HoverPreviewCard
+          item={title}
+          episode={episode}
+          rect={cardRect}
+          onClose={handleClosePreview}
+          onPlay={onPlay}
+          onOpenModal={onOpenModal}
+          isProgress={isProgress}
+        />
+      )}
+    </>
   );
 };
 

@@ -403,13 +403,23 @@ export default function OttSyncManagement() {
     loadOttData();
   }, [loadOttData]);
 
-  // Polling automático ligero cada 5s para actualizar descargas en tiempo real
+  // Comprobar si hay alguna sincronización activa ('syncing')
+  const hasActiveSync = useMemo(() => {
+    return (
+      providers.some((p) => p.status === 'syncing') ||
+      Object.values(syncingProviders).some(Boolean)
+    );
+  }, [providers, syncingProviders]);
+
+  // Sondeo periódico: cada 4 segundos mientras el estado sea 'syncing' para refrescar la vista
+  // automáticamente en cuanto el Job termine o falle; cada 8 segundos en reposo.
   useEffect(() => {
+    const pollInterval = hasActiveSync ? 4000 : 8000;
     const interval = setInterval(() => {
       loadOttData(true);
-    }, 5000);
+    }, pollInterval);
     return () => clearInterval(interval);
-  }, [loadOttData]);
+  }, [hasActiveSync, loadOttData]);
 
   /* -------------------------------------------------------------------------
      ACCIONES: CONEXIÓN, SINCRONIZACIÓN Y DESCONEXIÓN
@@ -525,9 +535,47 @@ export default function OttSyncManagement() {
     }
   };
 
+  // Desbloquear manualmente o cancelar sincronización atascada / huérfana
+  const [resettingProviders, setResettingProviders] = useState({});
+
+  const handleResetStatus = async (providerItem) => {
+    const providerId = providerItem.id || providerItem.provider;
+    setResettingProviders((prev) => ({ ...prev, [providerItem.provider]: true }));
+    try {
+      const targetStatus = providerItem.has_credentials ? 'connected' : 'disconnected';
+      const res = await api.post(`/admin/ott-providers/${providerId}/reset-status`, {
+        status: targetStatus,
+      });
+      if (res.data?.success) {
+        showToast(
+          'info',
+          res.data.message || `Estado de ${providerItem.name} restablecido a ${res.data.status}.`,
+          'Estado Desbloqueado'
+        );
+        setSyncingProviders((prev) => ({ ...prev, [providerItem.provider]: false }));
+        loadOttData();
+      } else {
+        showToast('error', res.data?.message || 'No fue posible restablecer el estado.');
+      }
+    } catch (err) {
+      console.error('Error restableciendo estado OTT:', err);
+      const msg = err.response?.data?.message || 'Error al restablecer el estado del proveedor.';
+      showToast('error', msg);
+    } finally {
+      setResettingProviders((prev) => ({ ...prev, [providerItem.provider]: false }));
+    }
+  };
+
   // Sincronizar catálogo real ahora
   const handleSyncNow = async (providerItem) => {
     setSyncingProviders((prev) => ({ ...prev, [providerItem.provider]: true }));
+    setProviders((prev) =>
+      prev.map((p) =>
+        p.provider === providerItem.provider
+          ? { ...p, status: 'syncing', last_error: null, error_message: null }
+          : p
+      )
+    );
     try {
       const res = await api.post(`/admin/ott-providers/${providerItem.provider}/sync`);
       if (res.data?.success) {
@@ -536,18 +584,20 @@ export default function OttSyncManagement() {
           res.data.message || `Sincronización iniciada para ${providerItem.name}.`,
           'Sync OTT En Proceso'
         );
-        loadOttData();
+        loadOttData(true);
       } else {
         showToast('error', res.data?.message || 'Error iniciando sincronización.');
+        loadOttData();
       }
     } catch (err) {
       console.error('Error sincronizando OTT:', err);
       const msg = err.response?.data?.message || 'Error al despachar el trabajo de sincronización.';
       showToast('error', msg);
+      loadOttData();
     } finally {
       setTimeout(() => {
         setSyncingProviders((prev) => ({ ...prev, [providerItem.provider]: false }));
-      }, 1500);
+      }, 1200);
     }
   };
 
@@ -972,15 +1022,23 @@ export default function OttSyncManagement() {
 
                     {/* Status Badge */}
                     <div className="flex items-center">
-                      {isConnected ? (
+                      {isSyncing ? (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-sky-950/70 border border-sky-500/40 text-sky-400 shadow-sm animate-pulse">
+                          <RefreshCw className="w-3 h-3 animate-spin text-sky-400" />
+                          Sincronizando...
+                        </span>
+                      ) : isConnected ? (
                         <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-950/70 border border-emerald-500/40 text-emerald-400 shadow-sm">
                           <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                           Conectado
                         </span>
-                      ) : isSyncing ? (
-                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-sky-950/70 border border-sky-500/40 text-sky-400">
-                          <RefreshCw className="w-3 h-3 animate-spin" />
-                          Sincronizando...
+                      ) : provider.status === 'error' ? (
+                        <span
+                          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-red-950/70 border border-red-500/40 text-red-400 shadow-sm cursor-help"
+                          title={provider.last_error || provider.error_message || 'Fallo al sincronizar'}
+                        >
+                          <AlertCircle className="w-3.5 h-3.5 text-red-400" />
+                          Error
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-zinc-900 border border-zinc-700 text-zinc-400">
@@ -995,6 +1053,35 @@ export default function OttSyncManagement() {
                   <p className="text-xs text-zinc-400 line-clamp-2 leading-relaxed mb-4">
                     {provider.description}
                   </p>
+
+                  {/* Badge / Tooltip Sutil con Motivo del Fallo */}
+                  {(provider.last_error || provider.error_message) && provider.status !== 'syncing' && (
+                    <div className="relative flex items-start gap-2.5 p-3 rounded-xl bg-red-950/30 border border-red-500/30 text-red-300 text-xs mb-4 shadow-sm">
+                      <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="font-bold text-[11px] text-red-400 uppercase tracking-wider">
+                            Motivo del fallo
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleResetStatus(provider)}
+                            disabled={resettingProviders[provider.provider]}
+                            className="text-[10px] text-red-400 hover:text-red-200 underline cursor-pointer"
+                            title="Restablecer estado y borrar aviso de error"
+                          >
+                            Limpiar
+                          </button>
+                        </div>
+                        <p
+                          className="text-[11px] text-red-200/90 line-clamp-2 mt-0.5 leading-snug break-words"
+                          title={provider.last_error || provider.error_message}
+                        >
+                          {provider.last_error || provider.error_message}
+                        </p>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Detalles de la cuenta */}
                   <div className="space-y-3 bg-zinc-950/60 border border-zinc-800/80 p-3.5 rounded-xl mb-5">
@@ -1081,15 +1168,31 @@ export default function OttSyncManagement() {
                     <button
                       onClick={() => handleSyncNow(provider)}
                       disabled={isSyncing}
-                      className="flex items-center justify-center gap-1.5 px-3 py-2 bg-[#E50914] hover:bg-red-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl shadow-md transition-all active:scale-95 cursor-pointer"
+                      className={`flex items-center justify-center gap-1.5 px-3 py-2 text-white text-xs font-bold rounded-xl shadow-md transition-all active:scale-95 cursor-pointer ${
+                        isSyncing
+                          ? 'bg-zinc-800 text-zinc-400 border border-zinc-700/50 cursor-not-allowed'
+                          : 'bg-[#E50914] hover:bg-red-700'
+                      }`}
                     >
-                      <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                      <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-sky-400' : ''}`} />
                       <span>{isSyncing ? 'Sincronizando...' : 'Sync Ahora'}</span>
                     </button>
                   </div>
 
+                  {/* Acciones secundarias y botón de desbloqueo si está en proceso */}
                   <div className="flex items-center justify-between pt-1">
-                    {isConnected ? (
+                    {isSyncing ? (
+                      <button
+                        type="button"
+                        onClick={() => handleResetStatus(provider)}
+                        disabled={resettingProviders[provider.provider]}
+                        className="inline-flex items-center gap-1.5 text-[11px] text-amber-400 hover:text-amber-300 transition-colors py-0.5 cursor-pointer"
+                        title="Desbloquear interfaz manualmente si la tarea quedó huérfana o tarda demasiado"
+                      >
+                        <RotateCcw className={`w-3 h-3 ${resettingProviders[provider.provider] ? 'animate-spin' : ''}`} />
+                        <span>{resettingProviders[provider.provider] ? 'Desbloqueando...' : '¿Atascado? Forzar desbloqueo'}</span>
+                      </button>
+                    ) : isConnected ? (
                       <button
                         onClick={() => handleDisconnect(provider)}
                         className="text-[11px] text-zinc-400 hover:text-red-400 transition-colors cursor-pointer"

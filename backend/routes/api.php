@@ -260,6 +260,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/{provider}/disconnect', [OttProviderController::class, 'disconnect']);
             Route::post('/{provider}/toggle-auto-download', [OttProviderController::class, 'toggleAutoDownload']);
             Route::post('/{provider}/sync', [OttProviderController::class, 'sync']);
+            Route::post('/{provider}/reset-status', [OttProviderController::class, 'resetStatus']);
             Route::delete('/{provider}', [OttProviderController::class, 'destroy']);
         });
 
