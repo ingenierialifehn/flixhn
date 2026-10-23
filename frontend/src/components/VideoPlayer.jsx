@@ -243,8 +243,8 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
 
   // Resolución de URL de video: valida si el item posee emby_id antes de construir URL de Emby
   const streamUrl = React.useMemo(() => {
-    const activeMedia = currentEpisode || title;
-    if (!activeMedia) return '';
+    const media = currentEpisode || title;
+    if (!media) return '';
 
     // Si posee emby_id válido, construir la URL de Emby
     if (targetItemId) {
@@ -260,22 +260,27 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
     }
 
     // Si NO posee emby_id (ej. título descargado OTT o local):
-    // Usar stream_url (si no contiene /undefined), endpoint nativo (/api/media/${media.id}/stream) o file_path
-    if (activeMedia.stream_url && !activeMedia.stream_url.includes('/undefined')) {
-      if (activeMedia.stream_url.startsWith('http://') || activeMedia.stream_url.startsWith('https://')) {
-        return activeMedia.stream_url;
+    // Utilizar la URL absoluta correcta del endpoint de streaming
+    let mediaUrl = media.stream_url;
+    if (!mediaUrl || mediaUrl.includes('/undefined') || (mediaUrl.startsWith('/media/') && !mediaUrl.startsWith('/api/'))) {
+      if (media.id) {
+        mediaUrl = `/api/media/${media.id}/stream`;
       }
-      if (activeMedia.stream_url.startsWith('/api/') || activeMedia.stream_url.startsWith('/media/')) {
-        return activeMedia.stream_url;
-      }
-      return `${streamBase.replace(/\/$/, '')}/${activeMedia.stream_url.replace(/^\//, '')}`;
     }
 
-    if (activeMedia.id) {
-      return `/api/media/${activeMedia.id}/stream`;
+    if (mediaUrl) {
+      if (mediaUrl.startsWith('http://') || mediaUrl.startsWith('https://')) {
+        return mediaUrl;
+      }
+      const cleanPath = mediaUrl.startsWith('/') ? mediaUrl : `/${mediaUrl}`;
+      return `${window.location.origin}${cleanPath}`;
     }
 
-    return activeMedia.file_path || '';
+    if (media.file_path) {
+      return media.file_path;
+    }
+
+    return '';
   }, [currentEpisode, title, targetItemId, rawStreamPath, streamBase, apiKey]);
 
   // Formateador de tiempo HH:MM:SS
@@ -605,84 +610,94 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
       // 4. Decidir estrategia de reproducción:
       // Si el formato es MP4/WebM nativo sin audio multicanal no soportado -> Reproducción directa
       // En caso contrario (MKV, TS, AC3, etc.) -> Iniciar directamente HLS transcodificado con PlaySessionId oficial
-      if (playInfo.is_direct_playable && playInfo.direct_url) {
-        setPlaybackMode('direct');
-        video.src = playInfo.direct_url;
 
-        const handleReady = () => {
-          if (isCancelled) return;
-          setIsLoading(false);
+      const handleReady = () => {
+        if (isCancelled) return;
+        setIsLoading(false);
 
-          // Detección de resolución nativa para Direct Play MP4 (Punto 4)
-          if (video.videoHeight) {
-            const h = video.videoHeight;
-            let label = `${h}p`;
-            if (h >= 2160) label = '4K';
-            else if (h >= 1080) label = 'Full HD (1080p)';
-            else if (h >= 720) label = 'HD (720p)';
-            else if (h >= 480) label = 'SD (480p)';
-            setActiveResolution(label);
-          }
+        // Detección de resolución nativa para Direct Play MP4 (Punto 4)
+        if (video.videoHeight) {
+          const h = video.videoHeight;
+          let label = `${h}p`;
+          if (h >= 2160) label = '4K';
+          else if (h >= 1080) label = 'Full HD (1080p)';
+          else if (h >= 720) label = 'HD (720p)';
+          else if (h >= 480) label = 'SD (480p)';
+          setActiveResolution(label);
+        }
 
-          if (resumeSeconds > 0) {
-            video.currentTime = resumeSeconds;
-          }
-          video.playbackRate = playbackSpeed;
-          video.play().then(() => {
-            if (!isCancelled) setIsPlaying(true);
-          }).catch(() => {});
-        };
+        if (resumeSeconds > 0) {
+          video.currentTime = resumeSeconds;
+        }
+        video.playbackRate = playbackSpeed;
+        video.play().then(() => {
+          if (!isCancelled) setIsPlaying(true);
+        }).catch(() => {});
+      };
 
-        const handleNativeError = (e) => {
-          if (isCancelled) return;
-          console.warn('Reproducción directa arrojó advertencia/error, evaluando fallback...', e);
+      const handleNativeError = (e) => {
+        if (isCancelled) return;
+        console.warn('Reproducción directa arrojó advertencia/error, evaluando fallback...', e);
 
-          // Si es título local/OTT sin Emby ID, no intentar consultar rutas de Emby (/original o hls_url de emby)
-          if (!targetItemId) {
-            if (playInfo?.hls_url && playInfo.hls_url.includes('.m3u8')) {
-              startHlsPlayback(playInfo.hls_url);
-            } else {
-              setIsLoading(false);
-              setPlaybackError('No se pudo procesar el archivo de video en este navegador.');
-            }
-            return;
-          }
-
-          // Si falló en reproducción directa de Emby, probar ruta /original correctamente construida
-          try {
-            const urlObj = new URL(playInfo.direct_url, window.location.origin);
-            urlObj.pathname = urlObj.pathname.replace(/\/stream(?:\.mp4)?$/i, '/original');
-            urlObj.searchParams.delete('static');
-            urlObj.searchParams.delete('MediaSourceId');
-            urlObj.searchParams.delete('DeviceId');
-            urlObj.searchParams.delete('PlaySessionId');
-            if (activeKey) {
-              urlObj.searchParams.set('api_key', activeKey);
-            }
-            const originalUrl = urlObj.toString();
-
-            cleanupMediaInstance();
-            if (videoRef.current) {
-              videoRef.current.src = originalUrl;
-              videoRef.current.load();
-              videoRef.current.play().then(() => {
-                if (!isCancelled) setIsPlaying(true);
-              }).catch(() => {
-                if (playInfo.hls_url && !playInfo.hls_url.includes('/Videos/undefined')) {
-                  startHlsPlayback(playInfo.hls_url);
-                }
-              });
-              return;
-            }
-          } catch (err) {}
-
-          if (playInfo.hls_url && !playInfo.hls_url.includes('/Videos/undefined')) {
+        // Si es título local/OTT sin Emby ID, no intentar consultar rutas de Emby (/original o hls_url de emby)
+        if (!targetItemId) {
+          if (playInfo?.hls_url && playInfo.hls_url.includes('.m3u8')) {
             startHlsPlayback(playInfo.hls_url);
           } else {
             setIsLoading(false);
-            setPlaybackError('No se pudo procesar la transmisión.');
+            const errCode = video.error?.code;
+            let msg = 'No se pudo reproducir el archivo de video en este navegador.';
+            if (errCode === 4) {
+              msg = 'El formato de video no es compatible con el navegador o el archivo físico no fue encontrado en el servidor.';
+            } else if (errCode === 2) {
+              msg = 'Error de conexión de red al recibir los paquetes de video desde el servidor.';
+            } else if (errCode === 3) {
+              msg = 'Error de decodificación: el códec de video/audio no es soportado.';
+            }
+            setPlaybackError(msg);
           }
-        };
+          return;
+        }
+
+        // Si falló en reproducción directa de Emby, probar ruta /original correctamente construida
+        try {
+          const urlObj = new URL(playInfo.direct_url, window.location.origin);
+          urlObj.pathname = urlObj.pathname.replace(/\/stream(?:\.mp4)?$/i, '/original');
+          urlObj.searchParams.delete('static');
+          urlObj.searchParams.delete('MediaSourceId');
+          urlObj.searchParams.delete('DeviceId');
+          urlObj.searchParams.delete('PlaySessionId');
+          if (activeKey) {
+            urlObj.searchParams.set('api_key', activeKey);
+          }
+          const originalUrl = urlObj.toString();
+
+          cleanupMediaInstance();
+          if (videoRef.current) {
+            videoRef.current.src = originalUrl;
+            videoRef.current.load();
+            videoRef.current.play().then(() => {
+              if (!isCancelled) setIsPlaying(true);
+            }).catch(() => {
+              if (playInfo.hls_url && !playInfo.hls_url.includes('/Videos/undefined')) {
+                startHlsPlayback(playInfo.hls_url);
+              }
+            });
+            return;
+          }
+        } catch (err) {}
+
+        if (playInfo.hls_url && !playInfo.hls_url.includes('/Videos/undefined')) {
+          startHlsPlayback(playInfo.hls_url);
+        } else {
+          setIsLoading(false);
+          setPlaybackError('No se pudo procesar la transmisión.');
+        }
+      };
+
+      if (playInfo.is_direct_playable && playInfo.direct_url) {
+        setPlaybackMode('direct');
+        video.src = playInfo.direct_url;
 
         video.addEventListener('loadedmetadata', handleReady, { once: true });
         video.addEventListener('error', handleNativeError, { once: true });
@@ -705,6 +720,8 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
         } else if (playInfo.direct_url) {
           setPlaybackMode('direct');
           video.src = playInfo.direct_url;
+          video.addEventListener('loadedmetadata', handleReady, { once: true });
+          video.addEventListener('error', handleNativeError, { once: true });
           video.play().then(() => {
             if (!isCancelled) setIsPlaying(true);
           }).catch(() => {});
@@ -1005,6 +1022,21 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
         ref={videoRef}
         onClick={togglePlay}
         onTimeUpdate={handleTimeUpdate}
+        onError={() => {
+          if (!playbackError) {
+            const errCode = videoRef.current?.error?.code;
+            let msg = 'Error al reproducir el flujo de video.';
+            if (errCode === 4) {
+              msg = 'El formato de video no es compatible con el navegador o el archivo físico no fue encontrado (404).';
+            } else if (errCode === 2) {
+              msg = 'Error de conexión de red al recibir el archivo de video.';
+            } else if (errCode === 3) {
+              msg = 'Error de decodificación en el reproductor de video.';
+            }
+            setIsLoading(false);
+            setPlaybackError(msg);
+          }
+        }}
         className="w-full h-full object-contain cursor-pointer"
         playsInline
       />

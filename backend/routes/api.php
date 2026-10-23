@@ -76,9 +76,9 @@ Route::get('/livetv/channels', [LiveTvController::class, 'getChannels']);
 Route::get('/livetv/proxy', [LiveTvController::class, 'proxy']);
 
 // Streaming directo para archivos locales OTT y catálogo On-Net (Soporta Range: bytes para MP4/MKV)
-Route::match(['get', 'head'], '/media/{id}/stream', [MediaStreamController::class, 'stream']);
-Route::match(['get', 'head'], '/stream/{id}', [MediaStreamController::class, 'stream']);
-Route::match(['get', 'head'], '/media/stream', [MediaStreamController::class, 'stream']);
+Route::get('/media/{id}/stream', [App\Http\Controllers\MediaStreamController::class, 'stream'])->name('media.stream');
+Route::match(['get', 'head'], '/stream/{id}', [App\Http\Controllers\MediaStreamController::class, 'stream'])->name('stream.direct');
+Route::match(['get', 'head'], '/media/stream', [App\Http\Controllers\MediaStreamController::class, 'stream']);
 
 /*
 |--------------------------------------------------------------------------

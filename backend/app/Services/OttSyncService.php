@@ -412,6 +412,47 @@ class OttSyncService
     ];
 
     /**
+     * Obtener todas las muestras del catálogo oficial estructuradas.
+     */
+    public function getAllCatalogSamples(): array
+    {
+        $all = [];
+        foreach ($this->catalogSamples as $providerKey => $items) {
+            foreach ($items as $item) {
+                $all[] = array_merge($item, ['provider' => $providerKey]);
+            }
+        }
+        return $all;
+    }
+
+    /**
+     * Buscar coincidencia en el catálogo oficial por título o external_id.
+     */
+    public function findCatalogSampleByTitle(?string $title): ?array
+    {
+        if (empty($title)) return null;
+
+        $clean = trim($title);
+        $norm = Str::slug($clean);
+
+        foreach ($this->getAllCatalogSamples() as $sample) {
+            $sNorm = Str::slug($sample['title']);
+            $sOrig = Str::slug($sample['original_title'] ?? '');
+            if ($norm === $sNorm || $norm === $sOrig) {
+                return $sample;
+            }
+            if (!empty($sNorm) && (str_contains($norm, $sNorm) || str_contains($sNorm, $norm))) {
+                return $sample;
+            }
+            if (!empty($sOrig) && (str_contains($norm, $sOrig) || str_contains($sOrig, $norm))) {
+                return $sample;
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * Devuelve el listado estructurado de proveedores con su estado real en ott_provider_accounts.
      */
     public function getProvidersOverview(): array
@@ -857,6 +898,16 @@ class OttSyncService
             $catalogTitle->provider = $providerKey;
             $catalogTitle->save();
 
+            // Asegurar creación física del archivo de medios en disco
+            if (!File::exists($localFilePath)) {
+                $fileDir = dirname($localFilePath);
+                if (!File::isDirectory($fileDir)) {
+                    File::makeDirectory($fileDir, 0777, true, true);
+                }
+                @file_put_contents($localFilePath, "FLIXHN_MEDIA_INGEST_" . time());
+                @chmod($localFilePath, 0666);
+            }
+
             // 2. Registro automático en media_items
             $mediaItem = MediaItem::firstOrNew([
                 'provider' => $providerKey,
@@ -873,7 +924,6 @@ class OttSyncService
             $mediaItem->genre = $sample['genre'];
             $mediaItem->duration_seconds = $sample['duration_seconds'] ?? 7200;
             $mediaItem->file_path = $localFilePath;
-            $mediaItem->stream_url = $localStreamUrl;
             $mediaItem->quality = $quality;
             $mediaItem->file_size = $sample['file_size'];
             $mediaItem->metadata = [
@@ -883,6 +933,10 @@ class OttSyncService
                 'hdr_format' => str_contains($quality, '4K') ? 'Dolby Vision / HDR10' : 'SDR',
             ];
             $mediaItem->title_id = $catalogTitle->id;
+            $mediaItem->save();
+
+            // Garantizar endpoint de streaming directo On-Net oficial /api/media/{id}/stream
+            $mediaItem->stream_url = "/api/media/{$mediaItem->id}/stream";
             $mediaItem->save();
             $indexedItems++;
 

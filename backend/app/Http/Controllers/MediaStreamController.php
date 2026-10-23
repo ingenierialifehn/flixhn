@@ -46,71 +46,110 @@ class MediaStreamController extends Controller
         $targetId = $id ?: $request->query('id') ?: $request->query('title_id');
         $rawPath = $request->query('path') ?: $request->query('file');
 
-        $resolvedPath = null;
-        $title = null;
-        $episode = null;
+        $mediaItem = null;
 
-        // 1. Localizar el modelo en base de datos si se proporcionó un ID
+        // 1. Obtener el modelo MediaItem
         if ($targetId) {
-            $title = Title::find($targetId);
-            if ($title) {
-                $rawPath = $rawPath ?: $title->stream_path ?: ($title->source_path ?? null);
-                if (!$rawPath && $title->mediaItem) {
-                    $rawPath = $title->mediaItem->file_path;
+            $mediaItem = MediaItem::find($targetId);
+
+            // Si se suministró un ID de Title, buscar el mediaItem vinculado
+            if (!$mediaItem) {
+                $mediaItem = MediaItem::where('title_id', $targetId)->first();
+            }
+
+            // Si aún no se encuentra, verificar en Title o Episode
+            if (!$mediaItem) {
+                $title = Title::find($targetId);
+                if ($title) {
+                    if ($title->mediaItem) {
+                        $mediaItem = $title->mediaItem;
+                    } elseif (!empty($title->stream_path) || !empty($title->source_path)) {
+                        $mediaItem = new MediaItem([
+                            'id' => $title->id,
+                            'title' => $title->name,
+                            'file_path' => $title->stream_path ?: $title->source_path,
+                            'stream_url' => $title->stream_url,
+                        ]);
+                    }
                 }
             }
 
-            if (!$rawPath) {
+            if (!$mediaItem) {
                 $episode = Episode::find($targetId);
-                if ($episode) {
-                    $rawPath = $episode->stream_path ?: ($episode->source_path ?? null);
+                if ($episode && (!empty($episode->stream_path) || !empty($episode->source_path))) {
+                    $mediaItem = new MediaItem([
+                        'id' => $episode->id,
+                        'title' => $episode->title,
+                        'file_path' => $episode->stream_path ?: $episode->source_path,
+                    ]);
                 }
             }
 
-            if (!$rawPath) {
-                $mediaItem = MediaItem::find($targetId);
-                if ($mediaItem) {
-                    $rawPath = $mediaItem->file_path ?: $mediaItem->stream_url;
-                }
-            }
-
-            if (!$rawPath) {
-                $ingestTask = MediaIngestTask::where('id', $targetId)
-                    ->orWhere('title_id', $targetId)
-                    ->first();
-                if ($ingestTask) {
-                    $rawPath = $ingestTask->output_file;
-                }
-            }
-
-            if (!$rawPath) {
-                $ottTask = OttDownloadTask::where('id', $targetId)
-                    ->orWhere('external_id', $targetId)
-                    ->first();
-                if ($ottTask) {
-                    $rawPath = $ottTask->file_path;
-                }
+            // Si no se encontró por ningún modelo y no hay ruta manual
+            if (!$mediaItem && !$rawPath) {
+                return response()->json([
+                    'error' => 'Archivo físico no encontrado en el servidor',
+                    'id' => $targetId,
+                    'path' => null,
+                ], 404);
             }
         }
 
-        // 2. Resolver la ruta física en disco
-        $resolvedPath = $this->resolvePhysicalFilePath($rawPath);
+        if ($mediaItem && empty($rawPath)) {
+            $rawPath = $mediaItem->file_path ?: $mediaItem->stream_url;
+        }
 
-        if (!$resolvedPath || !File::exists($resolvedPath)) {
-            Log::warning("MediaStreamController@stream: Archivo físico no encontrado para targetId [{$targetId}], rawPath [{$rawPath}]");
+        if (empty($rawPath)) {
             return response()->json([
-                'status' => 'error',
-                'message' => 'El archivo de video local no se encuentra en el almacenamiento del servidor.',
-                'id' => $targetId,
-                'path' => $rawPath,
+                'error' => 'Archivo físico no encontrado en el servidor',
+                'path' => $mediaItem?->file_path ?? '',
             ], 404);
         }
 
-        return $this->serveStreamWithByteRange($request, $resolvedPath);
+        // 2. Verifica la existencia real del archivo:
+        $path = $rawPath;
+
+        // Si es ruta relativa dentro de storage:
+        if (!file_exists($path) || is_dir($path)) {
+            $checkApp = storage_path('app/' . ltrim($path, '/'));
+            if (file_exists($checkApp) && !is_dir($checkApp)) {
+                $path = $checkApp;
+            }
+        }
+        if (!file_exists($path) || is_dir($path)) {
+            $checkPublic = public_path(ltrim($mediaItem?->file_path ?? $rawPath, '/'));
+            if (file_exists($checkPublic) && !is_dir($checkPublic)) {
+                $path = $checkPublic;
+            }
+        }
+        if (!file_exists($path) || is_dir($path)) {
+            // Verificar dentro de storage_path si contiene prefijo /storage/ o storage/
+            $relStorage = preg_replace('#^/?storage/#', '', $rawPath);
+            $checkStorage = storage_path($relStorage);
+            if (file_exists($checkStorage) && !is_dir($checkStorage)) {
+                $path = $checkStorage;
+            }
+        }
+        if (!file_exists($path) || is_dir($path)) {
+            $resolved = $this->resolvePhysicalFilePath($rawPath);
+            if ($resolved && file_exists($resolved) && !is_dir($resolved)) {
+                $path = $resolved;
+            }
+        }
+
+        if (empty($path) || !file_exists($path) || is_dir($path)) {
+            Log::warning("MediaStreamController@stream: Archivo físico no encontrado para targetId [{$targetId}], path [{$rawPath}]");
+            return response()->json([
+                'error' => 'Archivo físico no encontrado en el servidor',
+                'path' => $mediaItem?->file_path ?? $rawPath,
+            ], 404);
+        }
+
+        return $this->serveStreamWithByteRange($request, $path);
     }
 
     /**
-     * Resolver la ruta absoluta del archivo en disco probando rutas estándar.
+     * Resolver la ruta absoluta del archivo en disco probando rutas estándar y slug aproximado.
      */
     protected function resolvePhysicalFilePath(?string $rawPath): ?string
     {
@@ -175,6 +214,26 @@ class MediaStreamController extends Controller
             }
         }
 
+        // Búsqueda aproximada por slug base eliminando etiquetas de resolución/calidad
+        // ej: stranger-things.4khdr.mkv -> busca en storage/media/*/*stranger-things*
+        $cleanSlug = preg_replace('/(\.(1080p|720p|4k|4khdr|hdr|sd|uhd|bluray))+\.[a-z0-9]+$/i', '', $fileName);
+        if (!empty($cleanSlug) && $cleanSlug !== $fileName) {
+            $patterns = [
+                storage_path("media/*/*{$cleanSlug}*"),
+                storage_path("media/*{$cleanSlug}*"),
+                "/var/www/html/storage/media/*/*{$cleanSlug}*",
+                "/var/media/*{$cleanSlug}*",
+            ];
+            foreach ($patterns as $pattern) {
+                $matches = glob($pattern) ?: [];
+                foreach ($matches as $match) {
+                    if (File::exists($match) && !File::isDirectory($match)) {
+                        return $match;
+                    }
+                }
+            }
+        }
+
         return null;
     }
 
@@ -185,7 +244,9 @@ class MediaStreamController extends Controller
     {
         $fileSize = (int) @filesize($filePath);
         $extension = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
-        $mimeType = $this->mimeTypes[$extension] ?? 'video/mp4';
+        $mimeType = in_array($extension, ['mp4', 'm4v', 'mkv'])
+            ? 'video/mp4'
+            : ($this->mimeTypes[$extension] ?? 'video/mp4');
 
         // Manejo de preflight OPTIONS
         if ($request->isMethod('OPTIONS')) {

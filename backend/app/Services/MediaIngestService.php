@@ -441,11 +441,11 @@ class MediaIngestService
     }
 
     /**
-     * Post-Procesamiento e Indexación Automática en TMDb/OMDb y catálogo FlixHN.
+     * Post-Procesamiento e Indexación Automática en TMDb/Catálogo Oficial y catálogo FlixHN.
      */
     public function indexMediaContent(MediaIngestTask $task): void
     {
-        $cleanTitle = $task->title ?: 'Video Ingestado';
+        $cleanTitle = trim($task->title ?: 'Video Ingestado');
         $meta = $this->fetchMetadataForTitle($cleanTitle);
 
         $categorySlug = $task->provider === 'series' || str_contains(strtolower($task->target_folder), 'series')
@@ -460,37 +460,56 @@ class MediaIngestService
             );
         }
 
-        $streamUrl = $this->buildStreamUrl($task->output_file);
+        $finalTitle = !empty($meta['title']) ? $meta['title'] : $cleanTitle;
+        $finalOverview = !empty($meta['overview']) ? $meta['overview'] : "Contenido multimedia '{$finalTitle}' disponible en alta definición a través de FlixHN On-Net.";
+        $finalYear = !empty($meta['release_year']) ? (int) $meta['release_year'] : (int) date('Y');
+        $finalGenre = !empty($meta['genre']) ? $meta['genre'] : 'Acción / Streaming';
+        $finalDuration = !empty($meta['duration_seconds']) ? (int) $meta['duration_seconds'] : 5400;
+
+        // Descargar físicamente la carátula a storage/app/public/posters/{slug}.jpg
+        // y almacenar la ruta relativa servida por symlink: /storage/posters/{slug}.jpg
+        $posterSlug = Str::slug($finalTitle . '-' . ($task->provider ?: 'ott'));
+        $localPosterUrl = '/img/placeholder-poster.png';
+
+        if (!empty($meta['poster_url'])) {
+            if (str_starts_with($meta['poster_url'], 'http://') || str_starts_with($meta['poster_url'], 'https://')) {
+                $downloaded = app(PosterDownloadService::class)->downloadAndStorePoster(
+                    slug: $posterSlug,
+                    candidateUrl: $meta['poster_url'],
+                    title: $finalTitle,
+                    tmdbId: $meta['tmdb_id'] ?? null
+                );
+                // Si la descarga tuvo éxito, usar /storage/posters/{slug}.jpg; si falló, usar la URL HTTPS directa como fallback
+                $localPosterUrl = !empty($downloaded) ? $downloaded : $meta['poster_url'];
+            } else {
+                $localPosterUrl = $meta['poster_url'];
+            }
+        }
+        if (empty($localPosterUrl)) {
+            $localPosterUrl = '/img/placeholder-poster.png';
+        }
+
+        $backdropUrl = !empty($meta['backdrop_url']) ? $meta['backdrop_url'] : $localPosterUrl;
 
         // 1. Crear o actualizar registro en titles (/browse)
-        $titleSlug = Str::slug($cleanTitle . '-ingest-' . $task->id);
+        $titleSlug = Str::slug($finalTitle . '-ingest-' . $task->id);
         $titleModel = Title::firstOrNew(['slug' => $titleSlug]);
         if (!$titleModel->exists) {
-            $titleModel = Title::firstOrNew(['name' => $cleanTitle]);
+            $titleModel = Title::firstOrNew(['name' => $finalTitle]);
             if (!$titleModel->exists) {
                 $titleModel->slug = $titleSlug;
             }
         }
 
-        // Descargar físicamente el póster a storage/app/public/posters/{slug}.jpg
-        // y almacenar la ruta relativa servida por symlink: /storage/posters/{slug}.jpg
-        $posterSlug = Str::slug($titleModel->slug ?: $cleanTitle);
-        $localPosterUrl = app(PosterDownloadService::class)->downloadAndStorePoster(
-            slug: $posterSlug,
-            candidateUrl: $meta['poster_url'] ?? null,
-            title: $cleanTitle,
-            tmdbId: $meta['tmdb_id'] ?? null
-        );
-
-        $titleModel->name = $cleanTitle;
+        $titleModel->name = $finalTitle;
         $titleModel->type = $category->type === 'series' ? 'series' : 'movie';
         $titleModel->category_id = $category->id;
-        $titleModel->description = $meta['overview'] ?? "Contenido multimedia ingestado a la red On-Net de FlixHN.";
+        $titleModel->description = $finalOverview;
         $titleModel->poster_url = $localPosterUrl;
-        $titleModel->backdrop_url = $meta['backdrop_url'];
-        $titleModel->release_year = $meta['release_year'] ?? (int) date('Y');
-        $titleModel->genre = $meta['genre'] ?? 'Acción / Streaming';
-        $titleModel->duration_seconds = $meta['duration_seconds'] ?? 5400;
+        $titleModel->backdrop_url = $backdropUrl;
+        $titleModel->release_year = $finalYear;
+        $titleModel->genre = $finalGenre;
+        $titleModel->duration_seconds = $finalDuration;
         $titleModel->stream_path = $task->output_file;
         $titleModel->is_featured = true;
         $titleModel->provider = $task->provider ?: 'external';
@@ -501,18 +520,17 @@ class MediaIngestService
             'file_path' => $task->output_file,
         ]);
 
-        $mediaItem->title = $cleanTitle;
-        $mediaItem->original_title = $meta['original_title'] ?? $cleanTitle;
+        $mediaItem->title = $finalTitle;
+        $mediaItem->original_title = $meta['original_title'] ?? $finalTitle;
         $mediaItem->type = $titleModel->type;
         $mediaItem->provider = $task->provider ?: 'external';
         $mediaItem->external_id = 'ingest-' . $task->id;
-        $mediaItem->overview = $titleModel->description;
+        $mediaItem->overview = $finalOverview;
         $mediaItem->poster_url = $localPosterUrl;
-        $mediaItem->backdrop_url = $meta['backdrop_url'];
-        $mediaItem->release_year = $titleModel->release_year;
-        $mediaItem->genre = $titleModel->genre;
-        $mediaItem->duration_seconds = $titleModel->duration_seconds;
-        $mediaItem->stream_url = $streamUrl;
+        $mediaItem->backdrop_url = $backdropUrl;
+        $mediaItem->release_year = $finalYear;
+        $mediaItem->genre = $finalGenre;
+        $mediaItem->duration_seconds = $finalDuration;
         $mediaItem->quality = $task->quality ?: '1080p';
         $mediaItem->file_size = File::exists($task->output_file) ? File::size($task->output_file) : 0;
         $mediaItem->title_id = $titleModel->id;
@@ -522,6 +540,10 @@ class MediaIngestService
             'ingested_at' => now()->toIso8601String(),
             'storage_folder' => $task->target_folder,
         ];
+        $mediaItem->save();
+
+        // Asignar el endpoint de streaming directo oficial /api/media/{id}/stream
+        $mediaItem->stream_url = "/api/media/{$mediaItem->id}/stream";
         $mediaItem->save();
 
         // Vincular referencias cruzadas en la tarea
@@ -534,10 +556,13 @@ class MediaIngestService
     }
 
     /**
-     * Búsqueda en TMDb / OMDb o fallback enriquecido.
+     * Búsqueda en TMDb, catálogo oficial curado o fallback digno.
      */
     protected function fetchMetadataForTitle(string $title): array
     {
+        $cleanTitle = trim($title);
+
+        // 1. Intentar consulta a la API de TMDb si hay plugin configurado
         $tmdbPlugin = Plugin::where('slug', 'themoviedb')->first();
         $apiKey = $tmdbPlugin?->settings['api_key'] ?? $tmdbPlugin?->default_settings['api_key'] ?? '';
         $language = $tmdbPlugin?->settings['language'] ?? 'es-ES';
@@ -546,14 +571,15 @@ class MediaIngestService
             try {
                 $resp = Http::timeout(6)->get('https://api.themoviedb.org/3/search/multi', [
                     'api_key' => $apiKey,
-                    'query' => $title,
+                    'query' => $cleanTitle,
                     'language' => $language,
+                    'include_adult' => false,
                 ]);
 
                 if ($resp->successful() && !empty($resp['results'][0])) {
                     $item = $resp['results'][0];
                     $poster = !empty($item['poster_path']) ? "https://image.tmdb.org/t/p/w500{$item['poster_path']}" : null;
-                    $backdrop = !empty($item['backdrop_path']) ? "https://image.tmdb.org/t/p/w1280{$item['backdrop_path']}" : null;
+                    $backdrop = !empty($item['backdrop_path']) ? "https://image.tmdb.org/t/p/original{$item['backdrop_path']}" : null;
                     $year = null;
                     if (!empty($item['release_date'])) {
                         $year = (int) substr($item['release_date'], 0, 4);
@@ -561,15 +587,36 @@ class MediaIngestService
                         $year = (int) substr($item['first_air_date'], 0, 4);
                     }
 
+                    $genres = [];
+                    if (!empty($item['genre_ids']) && is_array($item['genre_ids'])) {
+                        $genreMap = [
+                            28 => 'Acción', 12 => 'Aventura', 16 => 'Animación', 35 => 'Comedia',
+                            80 => 'Crimen', 99 => 'Documental', 18 => 'Drama', 10751 => 'Familia',
+                            14 => 'Fantasía', 36 => 'Historia', 27 => 'Terror', 10402 => 'Música',
+                            9648 => 'Misterio', 10749 => 'Romance', 878 => 'Ciencia Ficción',
+                            10770 => 'Película de TV', 53 => 'Suspense', 10752 => 'Bélica', 37 => 'Western',
+                            10759 => 'Acción & Aventura', 10762 => 'Infantil', 10763 => 'Noticias',
+                            10764 => 'Reality', 10765 => 'Sci-Fi & Fantasy', 10766 => 'Telenovela',
+                            10767 => 'Talk', 10768 => 'Guerra & Política',
+                        ];
+                        foreach ($item['genre_ids'] as $gid) {
+                            if (isset($genreMap[$gid])) {
+                                $genres[] = $genreMap[$gid];
+                            }
+                        }
+                    }
+                    $genreStr = !empty($genres) ? implode(' / ', array_slice($genres, 0, 2)) : 'Acción / Streaming';
+
                     return [
-                        'title' => $item['title'] ?? ($item['name'] ?? $title),
-                        'original_title' => $item['original_title'] ?? ($item['original_name'] ?? $title),
+                        'title' => $item['title'] ?? ($item['name'] ?? $cleanTitle),
+                        'original_title' => $item['original_title'] ?? ($item['original_name'] ?? $cleanTitle),
                         'overview' => $item['overview'] ?? '',
-                        'poster_url' => $poster ?: $this->getFallbackPoster($title),
-                        'backdrop_url' => $backdrop ?: $this->getFallbackBackdrop($title),
+                        'poster_url' => $poster,
+                        'backdrop_url' => $backdrop,
                         'release_year' => $year ?: (int) date('Y'),
-                        'genre' => 'Acción / Aventura',
+                        'genre' => $genreStr,
                         'duration_seconds' => 6600,
+                        'tmdb_id' => $item['id'] ?? null,
                     ];
                 }
             } catch (\Throwable $e) {
@@ -577,16 +624,38 @@ class MediaIngestService
             }
         }
 
-        // Fallback inteligente para entornos locales u offline
+        // 2. Consultar el Catálogo Oficial Curado OTT (Netflix, Disney, HBO Max, etc.)
+        try {
+            $curatedSample = app(OttSyncService::class)->findCatalogSampleByTitle($cleanTitle);
+            if ($curatedSample) {
+                return [
+                    'title' => $curatedSample['title'],
+                    'original_title' => $curatedSample['original_title'] ?? $curatedSample['title'],
+                    'overview' => $curatedSample['overview'] ?? '',
+                    'poster_url' => $curatedSample['poster_url'] ?? null,
+                    'backdrop_url' => $curatedSample['backdrop_url'] ?? null,
+                    'release_year' => $curatedSample['release_year'] ?? (int) date('Y'),
+                    'genre' => $curatedSample['genre'] ?? 'Acción / Streaming',
+                    'duration_seconds' => $curatedSample['duration_seconds'] ?? 5400,
+                    'tmdb_id' => $curatedSample['external_id'] ?? null,
+                ];
+            }
+        } catch (\Throwable $e) {
+            Log::warning("Error consultando catálogo oficial en MediaIngestService: " . $e->getMessage());
+        }
+
+        // 3. Fallback digno con título legible, sinopsis completa y póster por defecto
+        $readableTitle = ucwords(trim(preg_replace('/\s+/', ' ', str_replace(['_', '-'], ' ', $cleanTitle))));
         return [
-            'title' => $title,
-            'original_title' => $title,
-            'overview' => "Contenido multimedia '{$title}' ingestado en alta definición a la red On-Net de FlixHN.",
-            'poster_url' => $this->getFallbackPoster($title),
-            'backdrop_url' => $this->getFallbackBackdrop($title),
+            'title' => $readableTitle,
+            'original_title' => $readableTitle,
+            'overview' => "Contenido multimedia '{$readableTitle}' disponible en alta definición a través de FlixHN On-Net.",
+            'poster_url' => '/img/placeholder-poster.png',
+            'backdrop_url' => '/img/placeholder-poster.png',
             'release_year' => (int) date('Y'),
             'genre' => 'Película On-Net',
-            'duration_seconds' => 7200,
+            'duration_seconds' => 5400,
+            'tmdb_id' => null,
         ];
     }
 
