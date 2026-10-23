@@ -8,6 +8,7 @@ use App\Models\MediaIngestTask;
 use App\Models\MediaItem;
 use App\Models\Plugin;
 use App\Models\Title;
+use App\Services\PosterDownloadService;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
@@ -366,11 +367,21 @@ class MediaIngestService
             }
         }
 
+        // Descargar físicamente el póster a storage/app/public/posters/{slug}.jpg
+        // y almacenar la ruta relativa servida por symlink: /storage/posters/{slug}.jpg
+        $posterSlug = Str::slug($titleModel->slug ?: $cleanTitle);
+        $localPosterUrl = app(PosterDownloadService::class)->downloadAndStorePoster(
+            slug: $posterSlug,
+            candidateUrl: $meta['poster_url'] ?? null,
+            title: $cleanTitle,
+            tmdbId: $meta['tmdb_id'] ?? null
+        );
+
         $titleModel->name = $cleanTitle;
         $titleModel->type = $category->type === 'series' ? 'series' : 'movie';
         $titleModel->category_id = $category->id;
         $titleModel->description = $meta['overview'] ?? "Contenido multimedia ingestado a la red On-Net de FlixHN.";
-        $titleModel->poster_url = $meta['poster_url'];
+        $titleModel->poster_url = $localPosterUrl;
         $titleModel->backdrop_url = $meta['backdrop_url'];
         $titleModel->release_year = $meta['release_year'] ?? (int) date('Y');
         $titleModel->genre = $meta['genre'] ?? 'Acción / Streaming';
@@ -391,7 +402,7 @@ class MediaIngestService
         $mediaItem->provider = $task->provider ?: 'external';
         $mediaItem->external_id = 'ingest-' . $task->id;
         $mediaItem->overview = $titleModel->description;
-        $mediaItem->poster_url = $meta['poster_url'];
+        $mediaItem->poster_url = $localPosterUrl;
         $mediaItem->backdrop_url = $meta['backdrop_url'];
         $mediaItem->release_year = $titleModel->release_year;
         $mediaItem->genre = $titleModel->genre;

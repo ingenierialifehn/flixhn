@@ -1326,10 +1326,14 @@ export default function OttSyncManagement() {
                       {/* Título y Carátula */}
                       <td className="py-3 px-4">
                         <div className="flex items-center gap-3">
-                          {task.metadata?.poster_url ? (
+                          {task.metadata?.poster_url || task.title_model?.poster_url ? (
                             <img
-                              src={task.metadata.poster_url}
+                              src={task.metadata?.poster_url || task.title_model?.poster_url || '/img/placeholder-poster.png'}
                               alt={task.title}
+                              onError={(e) => {
+                                e.target.onerror = null;
+                                e.target.src = '/img/placeholder-poster.png';
+                              }}
                               className="w-9 h-13 object-cover rounded shadow border border-zinc-800"
                             />
                           ) : (

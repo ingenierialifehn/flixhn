@@ -179,8 +179,12 @@ const DetailModal = ({ titleId, onClose, onPlay }) => {
                 />
               ) : (
                 <img
-                  src={titleData.backdrop_url || titleData.poster_url}
+                  src={titleData.backdrop_url || titleData.poster_url || '/img/placeholder-poster.png'}
                   alt={titleData.name}
+                  onError={(e) => {
+                    e.target.onerror = null;
+                    e.target.src = '/img/placeholder-poster.png';
+                  }}
                   className="w-full h-full object-cover object-center filter brightness-90"
                 />
               )}

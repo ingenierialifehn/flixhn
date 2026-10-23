@@ -127,7 +127,7 @@ export const getPlatformConfig = (providerRaw) => {
   };
 };
 
-const MovieCard = ({ item, title: propTitle, isProgress, onPlay, onOpenModal, onRemoveProgress }) => {
+const MovieCard = ({ item, title: propTitle, isProgress, onPlay, onOpenModal, onRemoveProgress, onError, ...restProps }) => {
   // 1. Declaración incondicional de hooks al inicio
   const cardRef = useRef(null);
   const hoverTimerRef = useRef(null);
@@ -177,7 +177,7 @@ const MovieCard = ({ item, title: propTitle, isProgress, onPlay, onOpenModal, on
 
   const posterUrl = isProgress && episode?.thumbnail_url
     ? episode.thumbnail_url
-    : (title?.poster_url || title?.image || title?.poster || '/placeholder-poster.png');
+    : (title?.poster_url || title?.image || title?.poster || '/img/placeholder-poster.png');
 
   // Detección de proveedor/plataforma OTT ('netflix', 'disney', 'hbo_max', 'prime', 'local')
   const providerRaw = title?.provider || title?.source_platform || item?.provider || item?.source_platform || 'local';
@@ -213,8 +213,11 @@ const MovieCard = ({ item, title: propTitle, isProgress, onPlay, onOpenModal, on
             alt={title.name || title.title}
             loading="lazy"
             onError={(e) => {
-              e.currentTarget.onerror = null;
-              e.currentTarget.src = '/placeholder-poster.png';
+              e.target.onerror = null;
+              e.target.src = '/img/placeholder-poster.png';
+              if (typeof onError === 'function') {
+                onError(e);
+              }
             }}
             className="w-full h-full object-cover object-center group-hover:brightness-110 transition-all duration-300 rounded"
           />

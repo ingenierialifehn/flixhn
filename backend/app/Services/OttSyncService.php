@@ -9,6 +9,7 @@ use App\Models\OttDownloadTask;
 use App\Models\OttProviderAccount;
 use App\Models\Season;
 use App\Models\Title;
+use App\Services\PosterDownloadService;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Crypt;
@@ -111,7 +112,7 @@ class OttSyncService
                 'release_year' => 2023,
                 'genre' => 'Fantasía / Comedia Negra',
                 'overview' => 'Inteligente, sarcástica y un poco muerta por dentro, Merlina Addams investiga una ola de asesinatos mientras hace nuevos amigos —y enemigos— en la Academia Nunca Más.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/9PFonB99teqAyM07z7b699xDhaL.jpg',
+                'poster_url' => 'https://media.themoviedb.org/t/p/w500/9PFonBhy4cQy7Jz20NpMygczOkv.jpg',
                 'backdrop_url' => 'https://image.tmdb.org/t/p/original/iHSwvRVsRyxpX7FE7GbviaDvgGZ.jpg',
                 'duration_seconds' => 2940,
                 'file_size' => 3984588800,
@@ -124,7 +125,7 @@ class OttSyncService
                 'release_year' => 2024,
                 'genre' => 'Suspense / Drama',
                 'overview' => 'Cientos de personas con dificultades económicas aceptan una extraña invitación para competir en juegos infantiles. Adentro les esperan un tentador premio y desafíos letales.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/dDlG1TkhnL2sF5b3v2XkC1nL7jL.jpg',
+                'poster_url' => 'https://media.themoviedb.org/t/p/w500/1QdXdRYfktUSONkl1oD5gc6Be0s.jpg',
                 'backdrop_url' => 'https://image.tmdb.org/t/p/original/qw3J9cNeLioOL0Ukb6UT7QiMeGO.jpg',
                 'duration_seconds' => 3600,
                 'file_size' => 4509715200,
@@ -137,7 +138,7 @@ class OttSyncService
                 'release_year' => 2023,
                 'genre' => 'Acción / Suspense',
                 'overview' => 'Después de sobrevivir milagrosamente a sus graves heridas en Bangladesh, el mercenario de operaciones encubiertas Tyler Rake vuelve con otra misión mortal.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/7gKI9hpEMcZUwYeCuVmACArrURM.jpg',
+                'poster_url' => 'https://media.themoviedb.org/t/p/w500/7gKI9hpEMcZUQpNgKrkDzJpbnNS.jpg',
                 'backdrop_url' => 'https://image.tmdb.org/t/p/original/fkGIb573Zg75t0n40E4H718L.jpg',
                 'duration_seconds' => 7380,
                 'file_size' => 8589934592,
@@ -747,7 +748,43 @@ class OttSyncService
             $localFilePath = rtrim($targetDir, '/\\') . "/{$fileName}";
             $localStreamUrl = "/media/{$folderSubdir}/{$fileName}";
 
-            // 1. Registro automático en media_items
+            // 1. Registro en catálogo general (titles)
+            $titleSlug = Str::slug($titleName . '-' . $providerKey);
+            $catalogTitle = Title::firstOrNew(['slug' => $titleSlug]);
+            if (!$catalogTitle->exists) {
+                $catalogTitle = Title::firstOrNew(['name' => $titleName]);
+                if (!$catalogTitle->exists) {
+                    $catalogTitle->slug = $titleSlug;
+                }
+            }
+
+            // Descargar físicamente el póster a storage/app/public/posters/{slug}.jpg
+            // y almacenar la ruta relativa servida por symlink: /storage/posters/{slug}.jpg
+            $posterSlug = Str::slug($catalogTitle->slug ?: $titleName);
+            $localPosterUrl = app(PosterDownloadService::class)->downloadAndStorePoster(
+                slug: $posterSlug,
+                candidateUrl: $sample['poster_url'] ?? null,
+                title: $titleName,
+                tmdbId: $sample['tmdb_id'] ?? null
+            );
+
+            $catalogTitle->name = $titleName;
+            $catalogTitle->type = $mediaType;
+            $catalogTitle->category_id = $mediaType === 'series'
+                ? ($categorySeries ? $categorySeries->id : 2)
+                : ($categoryMovie ? $categoryMovie->id : 1);
+            $catalogTitle->description = $sample['overview'];
+            $catalogTitle->poster_url = $localPosterUrl;
+            $catalogTitle->backdrop_url = $sample['backdrop_url'];
+            $catalogTitle->release_year = $sample['release_year'];
+            $catalogTitle->genre = $sample['genre'];
+            $catalogTitle->duration_seconds = $sample['duration_seconds'] ?? 7200;
+            $catalogTitle->stream_path = $localFilePath;
+            $catalogTitle->is_featured = true;
+            $catalogTitle->provider = $providerKey;
+            $catalogTitle->save();
+
+            // 2. Registro automático en media_items
             $mediaItem = MediaItem::firstOrNew([
                 'provider' => $providerKey,
                 'external_id' => $externalId,
@@ -757,7 +794,7 @@ class OttSyncService
             $mediaItem->original_title = $sample['original_title'] ?? $titleName;
             $mediaItem->type = $mediaType;
             $mediaItem->overview = $sample['overview'];
-            $mediaItem->poster_url = $sample['poster_url'];
+            $mediaItem->poster_url = $localPosterUrl;
             $mediaItem->backdrop_url = $sample['backdrop_url'];
             $mediaItem->release_year = $sample['release_year'];
             $mediaItem->genre = $sample['genre'];
@@ -772,33 +809,6 @@ class OttSyncService
                 'audio_channels' => '5.1 Dolby Digital Plus',
                 'hdr_format' => str_contains($quality, '4K') ? 'Dolby Vision / HDR10' : 'SDR',
             ];
-
-            // 2. Registro en catálogo general (titles)
-            $titleSlug = Str::slug($titleName . '-' . $providerKey);
-            $catalogTitle = Title::firstOrNew(['slug' => $titleSlug]);
-            if (!$catalogTitle->exists) {
-                $catalogTitle = Title::firstOrNew(['name' => $titleName]);
-                if (!$catalogTitle->exists) {
-                    $catalogTitle->slug = $titleSlug;
-                }
-            }
-
-            $catalogTitle->name = $titleName;
-            $catalogTitle->type = $mediaType;
-            $catalogTitle->category_id = $mediaType === 'series'
-                ? ($categorySeries ? $categorySeries->id : 2)
-                : ($categoryMovie ? $categoryMovie->id : 1);
-            $catalogTitle->description = $sample['overview'];
-            $catalogTitle->poster_url = $sample['poster_url'];
-            $catalogTitle->backdrop_url = $sample['backdrop_url'];
-            $catalogTitle->release_year = $sample['release_year'];
-            $catalogTitle->genre = $sample['genre'];
-            $catalogTitle->duration_seconds = $sample['duration_seconds'] ?? 7200;
-            $catalogTitle->stream_path = $localFilePath;
-            $catalogTitle->is_featured = true;
-            $catalogTitle->provider = $providerKey;
-            $catalogTitle->save();
-
             $mediaItem->title_id = $catalogTitle->id;
             $mediaItem->save();
             $indexedItems++;
@@ -827,7 +837,7 @@ class OttSyncService
                     'downloaded_bytes' => (int) ($sample['file_size'] * ($initialProgress / 100)),
                     'file_path' => $localFilePath,
                     'metadata' => [
-                        'poster_url' => $sample['poster_url'],
+                        'poster_url' => $localPosterUrl,
                         'backdrop_url' => $sample['backdrop_url'],
                         'overview' => $sample['overview'],
                         'release_year' => $sample['release_year'],
@@ -839,6 +849,13 @@ class OttSyncService
                 ]);
 
                 $createdTasks++;
+            } else {
+                $taskMeta = $existingTask->metadata ?: [];
+                $taskMeta['poster_url'] = $localPosterUrl;
+                $existingTask->metadata = $taskMeta;
+                $existingTask->title_id = $catalogTitle->id;
+                $existingTask->media_item_id = $mediaItem->id;
+                $existingTask->save();
             }
         }
 

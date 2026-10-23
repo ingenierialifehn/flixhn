@@ -239,8 +239,8 @@ const HoverPreviewCard = ({
             src={bannerUrl}
             alt={title.name || title.title}
             onError={(e) => {
-              e.currentTarget.onerror = null;
-              e.currentTarget.src = title.poster_url || '/placeholder-poster.png';
+              e.target.onerror = null;
+              e.target.src = '/img/placeholder-poster.png';
             }}
             className="w-full h-full object-cover object-center filter brightness-95 hover:brightness-105 transition-all duration-300"
           />

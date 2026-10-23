@@ -53,7 +53,7 @@ const Top10Card = ({ item, rank, onPlay, onOpenModal }) => {
 
   if (!title) return null;
 
-  const posterUrl = title.poster_url || title.image || title.poster || '/placeholder-poster.png';
+  const posterUrl = title.poster_url || title.image || title.poster || '/img/placeholder-poster.png';
   const providerRaw = title.provider || title.source_platform || item?.provider || item?.source_platform || 'local';
   const platform = getPlatformConfig(providerRaw);
 
@@ -76,8 +76,8 @@ const Top10Card = ({ item, rank, onPlay, onOpenModal }) => {
             alt={title.name || title.title}
             loading="lazy"
             onError={(e) => {
-              e.currentTarget.onerror = null;
-              e.currentTarget.src = '/placeholder-poster.png';
+              e.target.onerror = null;
+              e.target.src = '/img/placeholder-poster.png';
             }}
             className="w-full h-full object-cover object-center group-hover:brightness-110 transition-all duration-300"
           />

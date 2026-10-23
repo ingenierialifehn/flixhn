@@ -580,7 +580,7 @@ const CatalogManagement = ({ titles = [], onRefresh }) => {
                       className="w-9 h-12 object-cover rounded bg-gray-100 dark:bg-zinc-800"
                       onError={(e) => {
                         e.target.onerror = null;
-                        e.target.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="36" height="48" viewBox="0 0 36 48"><rect width="100%" height="100%" fill="%23222"/></svg>';
+                        e.target.src = '/img/placeholder-poster.png';
                       }}
                     />
                     <div className="min-w-0">
