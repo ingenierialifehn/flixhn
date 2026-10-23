@@ -325,6 +325,66 @@ class OttProviderController extends Controller
     }
 
     /**
+     * GET /api/admin/ott-providers/search
+     * Búsqueda en el catálogo remoto de plataformas conectadas o TMDb.
+     */
+    public function search(Request $request): JsonResponse
+    {
+        try {
+            $query = trim($request->query('query', $request->query('q', '')));
+            $provider = $request->query('provider');
+
+            $results = $this->ottService->searchRemoteCatalog($query, $provider);
+
+            return response()->json($results);
+        } catch (\Throwable $e) {
+            Log::error('Error en búsqueda de catálogo OTT remoto: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al buscar en catálogo remoto: ' . $e->getMessage(),
+                'results' => [],
+            ], 500);
+        }
+    }
+
+    /**
+     * POST /api/admin/ott-providers/download
+     * Crea tarea de descarga e ingesta física hacia el servidor desde la búsqueda remota.
+     */
+    public function download(Request $request): JsonResponse
+    {
+        $request->validate([
+            'title' => 'required|string|max:255',
+            'provider' => 'nullable|string|max:100',
+            'media_type' => 'nullable|string|in:series,movie,tv',
+            'poster_url' => 'nullable|string|max:1000',
+            'quality' => 'nullable|string|max:30',
+            'target_folder' => 'nullable|string|max:500',
+        ]);
+
+        try {
+            $task = $this->ottService->createDownloadTaskFromSearch($request->all());
+
+            return response()->json([
+                'success' => true,
+                'message' => "Descarga de '{$task->title}' iniciada en el servidor.",
+                'task' => $task,
+            ], 201);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 422);
+        } catch (\Throwable $e) {
+            Log::error('Error creando tarea de descarga OTT remota: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'No se pudo iniciar la descarga: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
      * GET /api/admin/ott-tasks
      * GET /api/admin/ott-providers/tasks
      * Consulta la tabla ott_download_tasks real vinculada con la cola de Laravel (jobs).

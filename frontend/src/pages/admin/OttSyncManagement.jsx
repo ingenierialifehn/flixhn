@@ -34,6 +34,7 @@ import {
   FolderPlus,
 } from 'lucide-react';
 import FolderPickerModal from './FolderPickerModal';
+import OttRemoteCatalogExplorer from './OttRemoteCatalogExplorer';
 
 /* =========================================================================
    LOGOS OFICIALES EN BADGES VECTORIALES NÍTITOS (#141414)
@@ -1232,6 +1233,18 @@ export default function OttSyncManagement() {
           })}
         </div>
       </div>
+
+      {/* Sección: Explorador y Búsqueda On-Demand (Entre Plataformas y Cola de Descargas) */}
+      <OttRemoteCatalogExplorer
+        onTaskCreated={(newTask) => {
+          if (newTask) {
+            setTasks((prev) => [newTask, ...prev.filter((t) => t.id !== newTask.id)]);
+          }
+          loadOttData(true);
+        }}
+        showToast={showToast}
+        connectedProviders={providers}
+      />
 
       {/* Sección 2: Cola de Descargas e Ingesta On-Net */}
       <div className="bg-[#181818] border border-zinc-800 rounded-2xl p-6 shadow-xl space-y-5">

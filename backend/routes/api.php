@@ -250,6 +250,8 @@ Route::middleware('auth:sanctum')->group(function () {
         // Cuentas y Sincronización OTT (Netflix, Disney+, HBO Max, Prime Video, Apple TV+, Paramount+)
         Route::prefix('ott-providers')->group(function () {
             Route::get('/', [OttProviderController::class, 'index']);
+            Route::get('/search', [OttProviderController::class, 'search']);
+            Route::post('/download', [OttProviderController::class, 'download']);
             Route::get('/tasks', [OttProviderController::class, 'tasks']);
             Route::post('/tasks/clear-completed', [OttProviderController::class, 'clearCompleted']);
             Route::post('/tasks/{id}/cancel', [OttProviderController::class, 'cancelTask']);
