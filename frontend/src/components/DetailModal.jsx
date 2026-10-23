@@ -2,6 +2,7 @@ import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react'
 import { X, Play, Clock, Tv, Volume2, VolumeX } from 'lucide-react';
 import api from '../api/axios';
 import { useAuth } from '../context/AuthContext';
+import { resolvePosterUrl, handlePosterError } from '../utils/media';
 
 const DetailModal = ({ titleId, onClose, onPlay }) => {
   const { activeProfile } = useAuth();
@@ -179,12 +180,9 @@ const DetailModal = ({ titleId, onClose, onPlay }) => {
                 />
               ) : (
                 <img
-                  src={titleData.backdrop_url || titleData.poster_url || '/img/placeholder-poster.png'}
+                  src={resolvePosterUrl(titleData.backdrop_url || titleData.poster_url)}
                   alt={titleData.name}
-                  onError={(e) => {
-                    e.target.onerror = null;
-                    e.target.src = '/img/placeholder-poster.png';
-                  }}
+                  onError={handlePosterError}
                   className="w-full h-full object-cover object-center filter brightness-90"
                 />
               )}
@@ -354,13 +352,10 @@ const DetailModal = ({ titleId, onClose, onPlay }) => {
                             {/* Miniatura del episodio con barra de progreso individual */}
                             <div className="relative w-32 sm:w-40 aspect-video bg-zinc-300 dark:bg-neutral-800 rounded-lg overflow-hidden flex-shrink-0 shadow">
                               <img
-                                src={ep.thumbnail_url || titleData.backdrop_url}
+                                src={resolvePosterUrl(ep.thumbnail_url || titleData.backdrop_url || titleData.poster_url)}
                                 alt={ep.title}
                                 className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                                onError={(e) => {
-                                  e.currentTarget.onerror = null;
-                                  e.currentTarget.src = titleData.backdrop_url || '/api/media/poster?title=' + encodeURIComponent(titleData.name);
-                                }}
+                                onError={handlePosterError}
                               />
                               <div className="absolute inset-0 bg-black/30 group-hover:bg-black/10 flex items-center justify-center transition-colors">
                                 <div className="w-9 h-9 rounded-full bg-black/60 group-hover:bg-[#E50914] text-white flex items-center justify-center transition-all shadow-md group-hover:scale-110">

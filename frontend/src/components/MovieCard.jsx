@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Play, X } from 'lucide-react';
 import HoverPreviewCard from './HoverPreviewCard';
+import { resolvePosterUrl, handlePosterError } from '../utils/media';
 
 /**
  * Configuración visual y branding de plataformas OTT y catálogo local FlixHN
@@ -174,9 +175,10 @@ const MovieCard = ({ item, title: propTitle, isProgress, onPlay, onOpenModal, on
 
   if (!title) return null;
 
-  const posterUrl = isProgress && episode?.thumbnail_url
+  const rawPoster = isProgress && episode?.thumbnail_url
     ? episode.thumbnail_url
-    : (title?.poster_url || title?.image || title?.poster || '/img/placeholder-poster.png');
+    : (title?.poster_url || title?.image || title?.poster);
+  const posterUrl = resolvePosterUrl(rawPoster);
 
   // Detección de proveedor/plataforma OTT ('netflix', 'disney', 'hbo_max', 'prime', 'local')
   const providerRaw = title?.provider || title?.source_platform || item?.provider || item?.source_platform || 'local';
@@ -212,8 +214,7 @@ const MovieCard = ({ item, title: propTitle, isProgress, onPlay, onOpenModal, on
             alt={title.name || title.title}
             loading="lazy"
             onError={(e) => {
-              e.target.onerror = null;
-              e.target.src = '/img/placeholder-poster.png';
+              handlePosterError(e);
               if (typeof onError === 'function') {
                 onError(e);
               }

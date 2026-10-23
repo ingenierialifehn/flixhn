@@ -53,6 +53,37 @@ class PlaybackController extends Controller
         }
 
         if (!$targetItemId) {
+            $activeModel = $episode ?: $title;
+            if ($activeModel) {
+                $mediaId = $activeModel->id;
+                $directUrl = url("/api/media/{$mediaId}/stream");
+                $filePath = $activeModel->stream_path ?: ($activeModel->file_path ?? '');
+                if (!$filePath && $title && $title->mediaItem) {
+                    $filePath = $title->mediaItem->file_path;
+                }
+                $ext = strtolower(pathinfo($filePath, PATHINFO_EXTENSION) ?: 'mp4');
+                $isHls = ($ext === 'm3u8');
+                $isDirect = in_array($ext, ['mp4', 'm4v', 'webm', 'mkv']) || !$isHls;
+
+                return response()->json([
+                    'status' => 'success',
+                    'is_local' => true,
+                    'is_ott' => true,
+                    'item_id' => null,
+                    'title_id' => $title ? $title->id : null,
+                    'episode_id' => $episode ? $episode->id : null,
+                    'media_source_id' => null,
+                    'play_session_id' => null,
+                    'container' => $ext,
+                    'is_available' => true,
+                    'is_direct_playable' => $isDirect,
+                    'hls_url' => $directUrl,
+                    'direct_url' => $directUrl,
+                    'stream_url' => $directUrl,
+                    'file_path' => $filePath,
+                ]);
+            }
+
             return response()->json([
                 'status' => 'error',
                 'message' => 'No se pudo identificar el ítem de video para reproducir.'

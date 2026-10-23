@@ -75,6 +75,59 @@ class RemoteMediaConnectorService
     }
 
     /**
+     * Notificar al servidor Emby remoto para escanear y refrescar la biblioteca multimedia.
+     * Invocado automáticamente al finalizar una descarga e ingesta física.
+     */
+    public function refreshLibrary(): bool
+    {
+        $settings = $this->getConnectionSettings();
+        if (empty($settings['server_url'])) {
+            return false;
+        }
+
+        $serverUrl = rtrim($settings['server_url'], '/');
+        $cleanBaseUrl = preg_replace('#/emby/?$#i', '', $serverUrl);
+        $apiKey = $settings['api_key'] ?? '';
+
+        $headers = [
+            'Accept' => 'application/json',
+        ];
+        if (!empty($apiKey)) {
+            $headers['X-Emby-Token'] = $apiKey;
+            $headers['X-MediaBrowser-Token'] = $apiKey;
+        }
+
+        try {
+            $response = Http::timeout(6)
+                ->connectTimeout(2)
+                ->withHeaders($headers)
+                ->post("{$cleanBaseUrl}/emby/Library/Refresh", [
+                    'api_key' => $apiKey,
+                ]);
+
+            if ($response->status() === 404) {
+                $response = Http::timeout(6)
+                    ->connectTimeout(2)
+                    ->withHeaders($headers)
+                    ->post("{$cleanBaseUrl}/Library/Refresh", [
+                        'api_key' => $apiKey,
+                    ]);
+            }
+
+            if ($response->successful()) {
+                Log::info("RemoteMediaConnectorService: Biblioteca de Emby refrescada exitosamente.");
+                return true;
+            }
+
+            Log::warning("RemoteMediaConnectorService: Emby respondió código {$response->status()} al solicitar Library/Refresh.");
+            return false;
+        } catch (\Throwable $e) {
+            Log::warning("RemoteMediaConnectorService: No se pudo conectar a Emby para Library/Refresh: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
      * Sincronizar catálogo completo desde el servidor de medios remoto.
      * Endpoint: POST /api/admin/media/sync
      *

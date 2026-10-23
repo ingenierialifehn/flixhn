@@ -22,6 +22,7 @@ import {
 import api from '../api/axios';
 import { useAuth } from '../context/AuthContext';
 import useTelemetryHeartbeat from '../hooks/useTelemetryHeartbeat';
+import { resolvePosterUrl, handlePosterError } from '../utils/media';
 
 // Loader personalizado de HLS para inyectar obligatoriamente la api_key en los fragmentos .ts y listas m3u8
 class EmbyHlsLoader extends (Hls.DefaultConfig?.loader || class {}) {
@@ -95,7 +96,7 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
     ? `${title?.name || 'Serie'} - T${currentEpisode.season_number || 1}:E${currentEpisode.episode_number || 1} ${currentEpisode.name || ''}`
     : (title?.name || 'Película');
 
-  const mediaPoster = title?.poster_url || title?.backdrop_url || '';
+  const mediaPoster = resolvePosterUrl(title?.poster_url || title?.backdrop_url || '');
 
   useTelemetryHeartbeat({
     mediaType: 'vod',
@@ -208,19 +209,24 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
   // Extraer el ID de ítem del servidor de medios (Emby Item ID)
   const targetItemId = React.useMemo(() => {
     if (currentEpisode) {
+      if (currentEpisode.emby_id && currentEpisode.emby_id !== 'undefined' && currentEpisode.emby_id !== 'null') {
+        return currentEpisode.emby_id;
+      }
       const epPath = currentEpisode.stream_path || currentEpisode.stream_url || '';
       const m = epPath.match(/\/Videos\/([a-zA-Z0-9_-]+)/i) || epPath.match(/\/Items\/([a-zA-Z0-9_-]+)/i);
-      if (m) return m[1];
-      if (currentEpisode.emby_id) return currentEpisode.emby_id;
+      if (m && m[1] !== 'undefined' && m[1] !== 'null') return m[1];
     }
     if (title) {
+      if (title.emby_id && title.emby_id !== 'undefined' && title.emby_id !== 'null') {
+        return title.emby_id;
+      }
       if (title.source_path) {
         const m = title.source_path.match(/remote:\/\/([a-zA-Z0-9_-]+)/i);
-        if (m) return m[1];
+        if (m && m[1] !== 'undefined' && m[1] !== 'null') return m[1];
       }
       const tPath = title.stream_path || title.stream_url || '';
       const m = tPath.match(/\/Videos\/([a-zA-Z0-9_-]+)/i) || tPath.match(/\/Items\/([a-zA-Z0-9_-]+)/i);
-      if (m) return m[1];
+      if (m && m[1] !== 'undefined' && m[1] !== 'null') return m[1];
     }
     return null;
   }, [title, currentEpisode]);
@@ -235,19 +241,42 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
     return 'http://45.4.87.126:6789';
   }, [rawStreamPath]);
 
+  // Resolución de URL de video: valida si el item posee emby_id antes de construir URL de Emby
   const streamUrl = React.useMemo(() => {
-    if (!rawStreamPath) return '';
-    let url = rawStreamPath.startsWith('http')
-      ? rawStreamPath
-      : `${streamBase.replace(/\/$/, '')}/${rawStreamPath.replace(/^\//, '')}`;
+    const activeMedia = currentEpisode || title;
+    if (!activeMedia) return '';
 
-    if (apiKey && !url.includes('api_key=')) {
-      const sep = url.includes('?') ? '&' : '?';
-      url = `${url}${sep}api_key=${encodeURIComponent(apiKey)}`;
+    // Si posee emby_id válido, construir la URL de Emby
+    if (targetItemId) {
+      let url = rawStreamPath && rawStreamPath.startsWith('http')
+        ? rawStreamPath
+        : `${streamBase.replace(/\/$/, '')}/${(rawStreamPath || '').replace(/^\//, '')}`;
+
+      if (apiKey && !url.includes('api_key=')) {
+        const sep = url.includes('?') ? '&' : '?';
+        url = `${url}${sep}api_key=${encodeURIComponent(apiKey)}`;
+      }
+      return url;
     }
 
-    return url;
-  }, [rawStreamPath, streamBase, apiKey]);
+    // Si NO posee emby_id (ej. título descargado OTT o local):
+    // Usar stream_url (si no contiene /undefined), endpoint nativo (/api/media/${media.id}/stream) o file_path
+    if (activeMedia.stream_url && !activeMedia.stream_url.includes('/undefined')) {
+      if (activeMedia.stream_url.startsWith('http://') || activeMedia.stream_url.startsWith('https://')) {
+        return activeMedia.stream_url;
+      }
+      if (activeMedia.stream_url.startsWith('/api/') || activeMedia.stream_url.startsWith('/media/')) {
+        return activeMedia.stream_url;
+      }
+      return `${streamBase.replace(/\/$/, '')}/${activeMedia.stream_url.replace(/^\//, '')}`;
+    }
+
+    if (activeMedia.id) {
+      return `/api/media/${activeMedia.id}/stream`;
+    }
+
+    return activeMedia.file_path || '';
+  }, [currentEpisode, title, targetItemId, rawStreamPath, streamBase, apiKey]);
 
   // Formateador de tiempo HH:MM:SS
   const formatTime = (timeInSeconds) => {
@@ -460,21 +489,21 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
           params: {
             title_id: title?.id,
             episode_id: currentEpisode?.id,
-            item_id: targetItemId,
+            item_id: (targetItemId && targetItemId !== 'undefined' && targetItemId !== 'null') ? targetItemId : undefined,
           },
         });
         if (res.data && (res.data.status === 'success' || res.data.status === 'fallback')) {
           playInfo = res.data;
         }
       } catch (err) {
-        console.warn('No se pudo obtener PlaybackInfo del backend, intentando directo con servidor...', err);
+        console.warn('No se pudo obtener PlaybackInfo del backend, evaluando fuente directa...', err);
       }
 
       const activeKey = playInfo?.api_key || apiKey;
       window.__FLIXHN_ACTIVE_API_KEY__ = activeKey;
       apiKeyRef.current = activeKey;
 
-      if (!playInfo && targetItemId) {
+      if (!playInfo && targetItemId && targetItemId !== 'undefined' && targetItemId !== 'null') {
         const cleanBaseUrl = serverHost.replace(/\/emby\/?$/i, '');
         try {
           const embyRes = await fetch(`${cleanBaseUrl}/emby/Items/${targetItemId}/PlaybackInfo?api_key=${activeKey}`, {
@@ -508,19 +537,36 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
 
       if (isCancelled || !videoRef.current) return;
 
-      // 3. Fallback de emergencia si no se pudo consultar PlaybackInfo
+      // 3. Fallback: Manejar contenido Emby vs contenido Local / OTT
       if (!playInfo) {
-        const cleanBase = serverHost.replace(/\/emby\/?$/i, '');
-        const itmId = targetItemId || (streamUrl.match(/\/Videos\/([a-zA-Z0-9_-]+)/i)?.[1]);
-        const fallbackSession = 'flixhn_' + Math.random().toString(36).substring(2, 10);
-        playInfo = {
-          play_session_id: fallbackSession,
-          media_source_id: itmId,
-          container: 'unknown',
-          is_direct_playable: false,
-          hls_url: `${cleanBase}/emby/Videos/${itmId}/master.m3u8?MediaSourceId=${itmId}&DeviceId=flixhn-web-client&VideoCodec=h264&AudioCodec=aac&TranscodingMaxAudioChannels=2&SegmentContainer=ts&api_key=${activeKey}`,
-          direct_url: `${cleanBase}/emby/Videos/${itmId}/stream?static=true&MediaSourceId=${itmId}&DeviceId=flixhn-web-client&api_key=${activeKey}`,
-        };
+        if (targetItemId && targetItemId !== 'undefined' && targetItemId !== 'null') {
+          const cleanBase = serverHost.replace(/\/emby\/?$/i, '');
+          const fallbackSession = 'flixhn_' + Math.random().toString(36).substring(2, 10);
+          playInfo = {
+            play_session_id: fallbackSession,
+            media_source_id: targetItemId,
+            container: 'unknown',
+            is_direct_playable: false,
+            hls_url: `${cleanBase}/emby/Videos/${targetItemId}/master.m3u8?MediaSourceId=${targetItemId}&DeviceId=flixhn-web-client&VideoCodec=h264&AudioCodec=aac&TranscodingMaxAudioChannels=2&SegmentContainer=ts&api_key=${activeKey}`,
+            direct_url: `${cleanBase}/emby/Videos/${targetItemId}/stream?static=true&MediaSourceId=${targetItemId}&DeviceId=flixhn-web-client&api_key=${activeKey}`,
+          };
+        } else {
+          // Título descargado de OTT o contenido local sin Emby ID:
+          // NUNCA hacer la petición a Emby con /Videos/undefined/...
+          const activeMedia = currentEpisode || title;
+          const fallbackDirectUrl = streamUrl || (activeMedia?.id ? `/api/media/${activeMedia.id}/stream` : '');
+          const isHls = fallbackDirectUrl.includes('.m3u8');
+          playInfo = {
+            is_local: true,
+            is_ott: true,
+            play_session_id: null,
+            media_source_id: null,
+            container: isHls ? 'm3u8' : 'mp4',
+            is_direct_playable: !isHls,
+            hls_url: fallbackDirectUrl,
+            direct_url: fallbackDirectUrl,
+          };
+        }
       }
 
       if (playInfo.play_session_id) {
@@ -589,9 +635,20 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
 
         const handleNativeError = (e) => {
           if (isCancelled) return;
-          console.warn('Reproducción directa arrojó error, probando fallback /original o HLS...', e);
+          console.warn('Reproducción directa arrojó advertencia/error, evaluando fallback...', e);
 
-          // Si falló en reproducción directa, probar ruta /original correctamente construida
+          // Si es título local/OTT sin Emby ID, no intentar consultar rutas de Emby (/original o hls_url de emby)
+          if (!targetItemId) {
+            if (playInfo?.hls_url && playInfo.hls_url.includes('.m3u8')) {
+              startHlsPlayback(playInfo.hls_url);
+            } else {
+              setIsLoading(false);
+              setPlaybackError('No se pudo procesar el archivo de video en este navegador.');
+            }
+            return;
+          }
+
+          // Si falló en reproducción directa de Emby, probar ruta /original correctamente construida
           try {
             const urlObj = new URL(playInfo.direct_url, window.location.origin);
             urlObj.pathname = urlObj.pathname.replace(/\/stream(?:\.mp4)?$/i, '/original');
@@ -611,13 +668,20 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
               videoRef.current.play().then(() => {
                 if (!isCancelled) setIsPlaying(true);
               }).catch(() => {
-                startHlsPlayback(playInfo.hls_url);
+                if (playInfo.hls_url && !playInfo.hls_url.includes('/Videos/undefined')) {
+                  startHlsPlayback(playInfo.hls_url);
+                }
               });
               return;
             }
           } catch (err) {}
 
-          startHlsPlayback(playInfo.hls_url);
+          if (playInfo.hls_url && !playInfo.hls_url.includes('/Videos/undefined')) {
+            startHlsPlayback(playInfo.hls_url);
+          } else {
+            setIsLoading(false);
+            setPlaybackError('No se pudo procesar la transmisión.');
+          }
         };
 
         video.addEventListener('loadedmetadata', handleReady, { once: true });
@@ -636,7 +700,18 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
         });
       } else {
         // MKV, TS o formatos que el navegador no soporta de forma nativa: HLS inmediato
-        startHlsPlayback(playInfo.hls_url);
+        if (playInfo.hls_url && !playInfo.hls_url.includes('/Videos/undefined')) {
+          startHlsPlayback(playInfo.hls_url);
+        } else if (playInfo.direct_url) {
+          setPlaybackMode('direct');
+          video.src = playInfo.direct_url;
+          video.play().then(() => {
+            if (!isCancelled) setIsPlaying(true);
+          }).catch(() => {});
+        } else {
+          setIsLoading(false);
+          setPlaybackError('No se pudo procesar la transmisión para este título.');
+        }
       }
     };
 
@@ -999,8 +1074,9 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
                   {(currentEpisode?.thumbnail_url || title?.backdrop_url || title?.poster_url) ? (
                     <div className="w-36 h-20 bg-zinc-900 rounded overflow-hidden relative shadow-inner">
                       <img
-                        src={currentEpisode?.thumbnail_url || title?.backdrop_url || title?.poster_url}
+                        src={resolvePosterUrl(currentEpisode?.thumbnail_url || title?.backdrop_url || title?.poster_url)}
                         alt="Preview"
+                        onError={handlePosterError}
                         className="w-full h-full object-cover"
                       />
                       <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent flex items-end justify-center pb-1">

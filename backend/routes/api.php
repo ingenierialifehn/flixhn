@@ -27,6 +27,7 @@ use App\Http\Controllers\FilesystemAdminController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\PasswordResetController;
 use App\Http\Controllers\MediaIngestController;
+use App\Http\Controllers\MediaStreamController;
 use App\Http\Middleware\EnsureAdmin;
 use App\Http\Middleware\EnsureUserIsAdmin;
 use App\Http\Middleware\AuthenticateApiKey;
@@ -73,6 +74,11 @@ Route::post('/auth/password/reset', [PasswordResetController::class, 'resetPassw
 // Acceso público al portal Live TV y proxy de streaming
 Route::get('/livetv/channels', [LiveTvController::class, 'getChannels']);
 Route::get('/livetv/proxy', [LiveTvController::class, 'proxy']);
+
+// Streaming directo para archivos locales OTT y catálogo On-Net (Soporta Range: bytes para MP4/MKV)
+Route::match(['get', 'head'], '/media/{id}/stream', [MediaStreamController::class, 'stream']);
+Route::match(['get', 'head'], '/stream/{id}', [MediaStreamController::class, 'stream']);
+Route::match(['get', 'head'], '/media/stream', [MediaStreamController::class, 'stream']);
 
 /*
 |--------------------------------------------------------------------------

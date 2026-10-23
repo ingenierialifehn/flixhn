@@ -56,6 +56,7 @@ class Title extends Model
         'year',
         'is_new',
         'source_platform',
+        'emby_id',
     ];
 
     public function getProviderAttribute(?string $value): string
@@ -140,9 +141,35 @@ class Title extends Model
                     $glue = '&';
                 }
             }
+            return $path;
+        }
+
+        // Si es una ruta física local de archivo (descarga OTT o ingesta On-Net), devolver el endpoint nativo de streaming
+        if ($this->id && (str_starts_with($path, '/') || str_starts_with($path, 'storage/') || preg_match('/^[a-zA-Z]:/', $path))) {
+            return "/api/media/{$this->id}/stream";
         }
 
         return $path;
+    }
+
+    public function getPosterUrlAttribute(?string $value): ?string
+    {
+        if (empty($value)) {
+            return '/img/placeholder-poster.png';
+        }
+        return $value;
+    }
+
+    public function getEmbyIdAttribute(): ?string
+    {
+        if (!empty($this->source_path) && preg_match('/remote:\/\/([a-zA-Z0-9_-]+)/i', $this->source_path, $m)) {
+            return $m[1];
+        }
+        $stream = $this->attributes['stream_path'] ?? null;
+        if (!empty($stream) && preg_match('#/(?:Videos|Items)/([a-zA-Z0-9_-]+)#i', $stream, $m)) {
+            return $m[1];
+        }
+        return null;
     }
 
     public function setStreamUrlAttribute(?string $value): void

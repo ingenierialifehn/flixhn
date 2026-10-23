@@ -3,6 +3,7 @@ import { Play } from 'lucide-react';
 import Top10Number from './Top10Number';
 import HoverPreviewCard from './HoverPreviewCard';
 import { getPlatformConfig } from './MovieCard';
+import { resolvePosterUrl, handlePosterError } from '../utils/media';
 
 /**
  * Tarjeta individual para la fila de Top 10 con Número Gigante y vista previa en hover
@@ -53,7 +54,7 @@ const Top10Card = ({ item, rank, onPlay, onOpenModal }) => {
 
   if (!title) return null;
 
-  const posterUrl = title.poster_url || title.image || title.poster || '/img/placeholder-poster.png';
+  const posterUrl = resolvePosterUrl(title.poster_url || title.image || title.poster);
   const providerRaw = title.provider || title.source_platform || item?.provider || item?.source_platform || 'local';
   const platform = getPlatformConfig(providerRaw);
 
@@ -75,10 +76,7 @@ const Top10Card = ({ item, rank, onPlay, onOpenModal }) => {
             src={posterUrl}
             alt={title.name || title.title}
             loading="lazy"
-            onError={(e) => {
-              e.target.onerror = null;
-              e.target.src = '/img/placeholder-poster.png';
-            }}
+            onError={handlePosterError}
             className="w-full h-full object-cover object-center group-hover:brightness-110 transition-all duration-300"
           />
 

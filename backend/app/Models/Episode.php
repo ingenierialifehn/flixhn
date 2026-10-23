@@ -33,6 +33,7 @@ class Episode extends Model
 
     protected $appends = [
         'stream_url',
+        'emby_id',
     ];
 
     public function getStreamUrlAttribute(): ?string
@@ -69,6 +70,12 @@ class Episode extends Model
                     $glue = '&';
                 }
             }
+            return $path;
+        }
+
+        // Si es una ruta física local de archivo, devolver el endpoint nativo de streaming
+        if ($this->id && (str_starts_with($path, '/') || str_starts_with($path, 'storage/') || preg_match('/^[a-zA-Z]:/', $path))) {
+            return "/api/media/{$this->id}/stream";
         }
 
         return $path;
@@ -77,6 +84,15 @@ class Episode extends Model
     public function setStreamUrlAttribute(?string $value): void
     {
         $this->attributes['stream_path'] = $value;
+    }
+
+    public function getEmbyIdAttribute(): ?string
+    {
+        $stream = $this->attributes['stream_path'] ?? null;
+        if (!empty($stream) && preg_match('#/(?:Videos|Items)/([a-zA-Z0-9_-]+)#i', $stream, $m)) {
+            return $m[1];
+        }
+        return null;
     }
 
     protected function casts(): array

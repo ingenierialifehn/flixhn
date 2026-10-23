@@ -1,5 +1,6 @@
 import React from 'react';
 import { Play, Info } from 'lucide-react';
+import { resolvePosterUrl, handlePosterError } from '../utils/media';
 
 const Billboard = ({ title, onPlay, onOpenModal }) => {
   if (!title) return null;
@@ -9,12 +10,9 @@ const Billboard = ({ title, onPlay, onOpenModal }) => {
       {/* Imagen de Fondo (Backdrop) */}
       <div className="absolute inset-0">
         <img
-          src={title.backdrop_url || title.poster_url}
+          src={resolvePosterUrl(title.backdrop_url || title.poster_url)}
           alt={title.name}
-          onError={(e) => {
-            e.currentTarget.onerror = null;
-            e.currentTarget.src = `/api/media/backdrop?title=${encodeURIComponent(title.name || 'FlixHN')}`;
-          }}
+          onError={handlePosterError}
           className="w-full h-full object-cover object-center filter brightness-90"
         />
         {/* Degradado lateral izquierdo cinematográfico */}

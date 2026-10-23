@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom';
 import { Play, Plus, Check, ThumbsUp, ChevronDown, Volume2, VolumeX, Sparkles } from 'lucide-react';
 import { getPlatformConfig } from './MovieCard';
+import { resolvePosterUrl, handlePosterError } from '../utils/media';
 
 /**
  * Tarjeta Flotante de Vista Previa en Hover estilo Netflix (Hover Card Preview).
@@ -184,9 +185,10 @@ const HoverPreviewCard = ({
   const platform = useMemo(() => getPlatformConfig(providerRaw), [providerRaw]);
 
   // Imagen del Banner panorámico (Backdrop preferido, poster como fallback)
-  const bannerUrl = isProgress && episode?.thumbnail_url
+  const rawBanner = isProgress && episode?.thumbnail_url
     ? episode.thumbnail_url
-    : title?.backdrop_url || title?.poster_url || title?.image || '/placeholder-poster.png';
+    : (title?.backdrop_url || title?.poster_url || title?.image);
+  const bannerUrl = resolvePosterUrl(rawBanner);
 
   // Si no hay coordenadas o título, no renderizar
   if (!rect || !title) return null;
@@ -238,10 +240,7 @@ const HoverPreviewCard = ({
           <img
             src={bannerUrl}
             alt={title.name || title.title}
-            onError={(e) => {
-              e.target.onerror = null;
-              e.target.src = '/img/placeholder-poster.png';
-            }}
+            onError={handlePosterError}
             className="w-full h-full object-cover object-center filter brightness-95 hover:brightness-105 transition-all duration-300"
           />
 

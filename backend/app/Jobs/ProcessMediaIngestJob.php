@@ -93,6 +93,14 @@ class ProcessMediaIngestJob implements ShouldQueue
                     // Registra el archivo automáticamente en media_items para que aparezca al instante en /browse
                     $ingestService->indexMediaContent($task);
                 }
+
+                // Notificar al servidor Emby para refrescar la biblioteca multimedia
+                try {
+                    app(\App\Services\RemoteMediaConnectorService::class)->refreshLibrary();
+                } catch (\Throwable $e) {
+                    Log::warning("Error invocando refreshLibrary en Emby: " . $e->getMessage());
+                }
+
                 $this->syncOttDownloadTask($task);
             }
         } catch (\Throwable $e) {
