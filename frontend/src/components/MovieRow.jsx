@@ -1,42 +1,40 @@
-import React, { useRef, useState, useCallback } from 'react';
+import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import MovieCard from './MovieCard';
 
 const MovieRow = ({ title, items, isProgressRow = false, onPlay, onOpenModal, onRemoveProgress }) => {
-  const rowRef = useRef(null);
+  const containerRef = useRef(null);
+  const rowRef = containerRef;
   const [showLeftArrow, setShowLeftArrow] = useState(false);
   const [showRightArrow, setShowRightArrow] = useState(true);
 
   const handleScroll = useCallback((direction) => {
-    if (rowRef.current) {
-      const { scrollLeft, clientWidth, scrollWidth } = rowRef.current;
-      const scrollAmount = clientWidth * 0.75;
-      const newScrollLeft = direction === 'left' ? scrollLeft - scrollAmount : scrollLeft + scrollAmount;
+    if (!containerRef.current) return;
+    const { scrollLeft, clientWidth, scrollWidth } = containerRef.current;
+    const scrollAmount = clientWidth * 0.75;
+    const newScrollLeft = direction === 'left' ? scrollLeft - scrollAmount : scrollLeft + scrollAmount;
 
-      rowRef.current.scrollTo({
-        left: newScrollLeft,
-        behavior: 'smooth',
-      });
+    containerRef.current.scrollTo({
+      left: newScrollLeft,
+      behavior: 'smooth',
+    });
 
-      // Actualizar visibilidad de flechas tras animación
-      setTimeout(() => {
-        if (rowRef.current) {
-          setShowLeftArrow(rowRef.current.scrollLeft > 20);
-          setShowRightArrow(
-            rowRef.current.scrollLeft + rowRef.current.clientWidth < rowRef.current.scrollWidth - 20
-          );
-        }
-      }, 350);
-    }
+    // Actualizar visibilidad de flechas tras animación
+    setTimeout(() => {
+      if (!containerRef.current) return;
+      setShowLeftArrow(containerRef.current.scrollLeft > 20);
+      setShowRightArrow(
+        containerRef.current.scrollLeft + containerRef.current.clientWidth < containerRef.current.scrollWidth - 20
+      );
+    }, 350);
   }, []);
 
   const onScrollCheck = useCallback(() => {
-    if (rowRef.current) {
-      setShowLeftArrow(rowRef.current.scrollLeft > 20);
-      setShowRightArrow(
-        rowRef.current.scrollLeft + rowRef.current.clientWidth < rowRef.current.scrollWidth - 20
-      );
-    }
+    if (!containerRef.current) return;
+    setShowLeftArrow(containerRef.current.scrollLeft > 20);
+    setShowRightArrow(
+      containerRef.current.scrollLeft + containerRef.current.clientWidth < containerRef.current.scrollWidth - 20
+    );
   }, []);
 
   if (!items || items.length === 0) return null;
@@ -64,7 +62,7 @@ const MovieRow = ({ title, items, isProgressRow = false, onPlay, onOpenModal, on
 
         {/* Fila Desplazable de Tarjetas */}
         <div
-          ref={rowRef}
+          ref={containerRef}
           onScroll={onScrollCheck}
           className="flex items-center gap-2.5 md:gap-4 overflow-x-auto no-scrollbar scroll-smooth py-4 px-1"
         >

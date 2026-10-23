@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import { Play, X } from 'lucide-react';
 import HoverPreviewCard from './HoverPreviewCard';
 
@@ -143,10 +143,9 @@ const MovieCard = ({ item, title: propTitle, isProgress, onPlay, onOpenModal, on
     if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
 
     hoverTimerRef.current = setTimeout(() => {
-      if (cardRef.current) {
-        setCardRect(cardRef.current.getBoundingClientRect());
-        setIsHovered(true);
-      }
+      if (!cardRef.current) return;
+      setCardRect(cardRef.current.getBoundingClientRect());
+      setIsHovered(true);
     }, 380);
   }, []);
 

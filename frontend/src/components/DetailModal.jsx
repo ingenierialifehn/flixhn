@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import { X, Play, Clock, Tv, Volume2, VolumeX } from 'lucide-react';
 import api from '../api/axios';
 import { useAuth } from '../context/AuthContext';

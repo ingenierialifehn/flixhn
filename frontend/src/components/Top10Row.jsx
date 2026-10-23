@@ -1,4 +1,4 @@
-import React, { useRef, useState, useCallback, useMemo } from 'react';
+import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import { ChevronLeft, ChevronRight, TrendingUp } from 'lucide-react';
 import Top10Card from './Top10Card';
 
@@ -7,7 +7,8 @@ import Top10Card from './Top10Card';
  */
 const Top10Row = ({ items, currentTab = 'home', onPlay, onOpenModal }) => {
   // 1. Declaración incondicional de hooks al inicio
-  const rowRef = useRef(null);
+  const containerRef = useRef(null);
+  const rowRef = containerRef;
   const [showLeftArrow, setShowLeftArrow] = useState(false);
   const [showRightArrow, setShowRightArrow] = useState(true);
 
@@ -18,36 +19,33 @@ const Top10Row = ({ items, currentTab = 'home', onPlay, onOpenModal }) => {
     return 'Las 10 Series y Películas más populares hoy';
   }, [currentTab]);
 
-  // Manejador de scroll horizontal fluido
+  // Manejador de scroll horizontal fluido con validación de ref
   const handleScroll = useCallback((direction) => {
-    if (rowRef.current) {
-      const { scrollLeft, clientWidth, scrollWidth } = rowRef.current;
-      const scrollAmount = clientWidth * 0.75;
-      const newScrollLeft = direction === 'left' ? scrollLeft - scrollAmount : scrollLeft + scrollAmount;
+    if (!containerRef.current) return;
+    const { scrollLeft, clientWidth, scrollWidth } = containerRef.current;
+    const scrollAmount = clientWidth * 0.75;
+    const newScrollLeft = direction === 'left' ? scrollLeft - scrollAmount : scrollLeft + scrollAmount;
 
-      rowRef.current.scrollTo({
-        left: newScrollLeft,
-        behavior: 'smooth',
-      });
+    containerRef.current.scrollTo({
+      left: newScrollLeft,
+      behavior: 'smooth',
+    });
 
-      setTimeout(() => {
-        if (rowRef.current) {
-          setShowLeftArrow(rowRef.current.scrollLeft > 20);
-          setShowRightArrow(
-            rowRef.current.scrollLeft + rowRef.current.clientWidth < rowRef.current.scrollWidth - 20
-          );
-        }
-      }, 350);
-    }
+    setTimeout(() => {
+      if (!containerRef.current) return;
+      setShowLeftArrow(containerRef.current.scrollLeft > 20);
+      setShowRightArrow(
+        containerRef.current.scrollLeft + containerRef.current.clientWidth < containerRef.current.scrollWidth - 20
+      );
+    }, 350);
   }, []);
 
   const onScrollCheck = useCallback(() => {
-    if (rowRef.current) {
-      setShowLeftArrow(rowRef.current.scrollLeft > 20);
-      setShowRightArrow(
-        rowRef.current.scrollLeft + rowRef.current.clientWidth < rowRef.current.scrollWidth - 20
-      );
-    }
+    if (!containerRef.current) return;
+    setShowLeftArrow(containerRef.current.scrollLeft > 20);
+    setShowRightArrow(
+      containerRef.current.scrollLeft + containerRef.current.clientWidth < containerRef.current.scrollWidth - 20
+    );
   }, []);
 
   if (!items || items.length === 0) return null;
@@ -83,7 +81,7 @@ const Top10Row = ({ items, currentTab = 'home', onPlay, onOpenModal }) => {
 
         {/* Fila Desplazable de Tarjetas con Números Gigantes */}
         <div
-          ref={rowRef}
+          ref={containerRef}
           onScroll={onScrollCheck}
           className="flex items-center gap-4 sm:gap-6 md:gap-8 overflow-x-auto no-scrollbar scroll-smooth py-4 px-2"
         >

@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import Navbar from './Navbar';
 import Billboard from './Billboard';
 import MovieRow from './MovieRow';
 import MovieCard from './MovieCard';
+import MediaCard from './MediaCard';
 import Top10Row from './Top10Row';
 import DetailModal from './DetailModal';
 import CatalogFilterBar from './CatalogFilterBar';
@@ -13,6 +14,7 @@ import { useLanguage } from '../context/LanguageContext';
 
 const Browse = ({ onPlay, onNavigateToAdmin }) => {
   // 1. Declaración incondicional de todos los Hooks al inicio del componente
+  const containerRef = useRef(null);
   const { activeProfile, user, loading: authLoading } = useAuth();
   const { t } = useLanguage();
   const [currentTab, setCurrentTab] = useState('home');
@@ -416,7 +418,7 @@ const Browse = ({ onPlay, onNavigateToAdmin }) => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 dark:bg-[#141414] text-gray-900 dark:text-white flex flex-col justify-between selection:bg-[#E50914] selection:text-white transition-colors duration-200">
+    <div ref={containerRef} className="min-h-screen bg-gray-100 dark:bg-[#141414] text-gray-900 dark:text-white flex flex-col justify-between selection:bg-[#E50914] selection:text-white transition-colors duration-200">
       <Navbar
         currentTab={currentTab}
         setCurrentTab={handleTabChange}
