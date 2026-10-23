@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Play } from 'lucide-react';
 import Top10Number from './Top10Number';
 import HoverPreviewCard from './HoverPreviewCard';
@@ -21,9 +21,10 @@ const Top10Card = ({ item, rank, onPlay, onOpenModal }) => {
     if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
 
     hoverTimerRef.current = setTimeout(() => {
-      if (!cardRef.current) return;
-      setCardRect(cardRef.current.getBoundingClientRect());
-      setIsHovered(true);
+      if (cardRef.current) {
+        setCardRect(cardRef.current.getBoundingClientRect());
+        setIsHovered(true);
+      }
     }, 380);
   }, []);
 

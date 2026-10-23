@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { Play, Plus, Check, ThumbsUp, ChevronDown, Volume2, VolumeX, Sparkles } from 'lucide-react';
 import { getPlatformConfig } from './MovieCard';
@@ -43,21 +43,6 @@ const HoverPreviewCard = ({
     }
     setIsMounted(true);
   }, [title?.id]);
-
-  // Verificación de existencia de containerRef y cierre al hacer clic fuera
-  useEffect(() => {
-    if (!containerRef.current) return;
-    const handleOutsideClick = (e) => {
-      if (!containerRef.current) return;
-      if (!containerRef.current.contains(e.target)) {
-        if (onClose) onClose();
-      }
-    };
-    document.addEventListener('mousedown', handleOutsideClick);
-    return () => {
-      document.removeEventListener('mousedown', handleOutsideClick);
-    };
-  }, [onClose]);
 
   // Cerrar suavemente al hacer scroll pronunciado o redimensionar pantalla
   useEffect(() => {
