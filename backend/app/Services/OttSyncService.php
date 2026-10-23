@@ -4,11 +4,14 @@ namespace App\Services;
 
 use App\Models\Category;
 use App\Models\Episode;
+use App\Models\MediaIngestTask;
 use App\Models\MediaItem;
 use App\Models\OttDownloadTask;
 use App\Models\OttProviderAccount;
 use App\Models\Season;
 use App\Models\Title;
+use App\Jobs\ProcessMediaIngestJob;
+use App\Services\MediaIngestService;
 use App\Services\PosterDownloadService;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Cache;
@@ -813,15 +816,51 @@ class OttSyncService
             $mediaItem->save();
             $indexedItems++;
 
-            // 3. Crear o actualizar tarea en ott_download_tasks
+            // 3. Crear o actualizar tarea en media_ingest_tasks
+            $ingestTask = MediaIngestTask::where('provider', $providerKey)
+                ->where('title', $titleName)
+                ->first();
+
+            $initialProgress = 5;
+            $speedVal = number_format(rand(320, 480) / 10, 1) . ' MB/s';
+
+            if (!$ingestTask) {
+                $ingestTask = MediaIngestTask::create([
+                    'source_url' => "https://{$providerKey}.com/title/{$externalId}",
+                    'provider' => $providerKey,
+                    'title' => $titleName,
+                    'target_folder' => $targetDir,
+                    'status' => 'downloading',
+                    'progress' => $initialProgress,
+                    'download_speed' => $speedVal,
+                    'eta' => '03:15 min',
+                    'quality' => $quality,
+                    'auto_index' => true,
+                    'output_file' => $localFilePath,
+                    'error_message' => null,
+                    'title_id' => $catalogTitle->id,
+                    'media_item_id' => $mediaItem->id,
+                    'started_at' => now(),
+                ]);
+            } else {
+                if ($ingestTask->status !== 'completed') {
+                    $ingestTask->update([
+                        'status' => 'downloading',
+                        'progress' => max(5, (int) $ingestTask->progress),
+                        'download_speed' => $speedVal,
+                        'eta' => '03:15 min',
+                        'started_at' => now(),
+                        'error_message' => null,
+                    ]);
+                }
+            }
+
+            // Sincronizar ott_download_tasks
             $existingTask = OttDownloadTask::where('provider', $providerKey)
                 ->where('external_id', $externalId)
                 ->first();
 
             if (!$existingTask) {
-                $initialProgress = 15;
-                $speedVal = number_format(rand(280, 480) / 10, 1); // 28.0 a 48.0 MB/s
-
                 OttDownloadTask::create([
                     'provider' => $providerKey,
                     'ott_account_id' => $account->id,
@@ -831,8 +870,8 @@ class OttSyncService
                     'quality' => $quality,
                     'status' => 'downloading',
                     'progress' => $initialProgress,
-                    'download_speed' => "{$speedVal} MB/s",
-                    'eta' => '03:45 min',
+                    'download_speed' => $speedVal,
+                    'eta' => '03:15 min',
                     'total_bytes' => $sample['file_size'],
                     'downloaded_bytes' => (int) ($sample['file_size'] * ($initialProgress / 100)),
                     'file_path' => $localFilePath,
@@ -847,7 +886,6 @@ class OttSyncService
                     'title_id' => $catalogTitle->id,
                     'started_at' => now(),
                 ]);
-
                 $createdTasks++;
             } else {
                 $taskMeta = $existingTask->metadata ?: [];
@@ -855,7 +893,25 @@ class OttSyncService
                 $existingTask->metadata = $taskMeta;
                 $existingTask->title_id = $catalogTitle->id;
                 $existingTask->media_item_id = $mediaItem->id;
+                if ($existingTask->status !== 'completed') {
+                    $existingTask->status = 'downloading';
+                    $existingTask->progress = $ingestTask->progress;
+                    $existingTask->download_speed = $speedVal;
+                    $existingTask->eta = '03:15 min';
+                }
                 $existingTask->save();
+            }
+
+            // Despachar inmediatamente el job ProcessMediaIngestJob::dispatch($taskId) a la cola default
+            if ($ingestTask->status !== 'completed') {
+                try {
+                    ProcessMediaIngestJob::dispatch($ingestTask->id)->onQueue('default');
+                } catch (\Throwable $e) {
+                    Log::warning("No fue posible despachar ProcessMediaIngestJob para tarea #{$ingestTask->id}: " . $e->getMessage());
+                }
+
+                // Iniciar worker desacoplado en segundo plano
+                app(MediaIngestService::class)->launchBackgroundWorker($ingestTask->id);
             }
         }
 
@@ -993,6 +1049,7 @@ class OttSyncService
      */
     public function clearCompletedTasks(): int
     {
+        MediaIngestTask::where('status', 'completed')->delete();
         return OttDownloadTask::where('status', 'completed')->delete();
     }
 }

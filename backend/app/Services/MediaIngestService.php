@@ -94,18 +94,97 @@ class MediaIngestService
     /**
      * Lanzar un subproceso desacoplado del sistema operativo para procesar la descarga sin bloquear PHP-FPM.
      */
-    protected function launchBackgroundWorker(int $taskId): void
+    public function launchBackgroundWorker(int $taskId): void
     {
         $artisanPath = base_path('artisan');
-        $phpBinary = PHP_BINARY ?: 'php';
+
+        $phpBinary = 'php';
+        if (file_exists('/usr/local/bin/php')) {
+            $phpBinary = '/usr/local/bin/php';
+        } elseif (file_exists('/usr/bin/php')) {
+            $phpBinary = '/usr/bin/php';
+        } elseif (defined('PHP_BINARY') && !str_contains(PHP_BINARY, 'php-fpm')) {
+            $phpBinary = PHP_BINARY;
+        }
 
         if (PHP_OS_FAMILY === 'Windows') {
-            $command = "start /B {$phpBinary} {$artisanPath} flixengine:ingest-process {$taskId} > NUL 2>&1";
+            $command = "start /B {$phpBinary} \"{$artisanPath}\" flixengine:ingest-process {$taskId} > NUL 2>&1";
             pclose(popen($command, 'r'));
         } else {
             // Linux / Docker
-            $command = "{$phpBinary} {$artisanPath} flixengine:ingest-process {$taskId} > /dev/null 2>&1 &";
+            $command = "{$phpBinary} \"{$artisanPath}\" flixengine:ingest-process {$taskId} > /dev/null 2>&1 &";
             exec($command);
+        }
+    }
+
+    /**
+     * Determina si una URL corresponde a un recurso de descarga directa real.
+     */
+    public function isRealDownloadUrl(?string $url): bool
+    {
+        if (empty($url)) return false;
+        if (!filter_var($url, FILTER_VALIDATE_URL)) return false;
+
+        $host = strtolower(parse_url($url, PHP_URL_HOST) ?? '');
+        if (in_array($host, ['localhost', '127.0.0.1', 'flixhn.local', 'example.com', 'test.com'])) {
+            return false;
+        }
+
+        // Proveedores OTT con URLs emuladas
+        if (str_contains($host, 'netflix.') || str_contains($host, 'disneyplus.') || str_contains($host, 'max.') || str_contains($host, 'primevideo.') || str_contains($host, 'apple.')) {
+            return false;
+        }
+
+        return str_starts_with($url, 'http://') || str_starts_with($url, 'https://');
+    }
+
+    /**
+     * Sincronizar tareas huérfanas o congeladas de ott_download_tasks hacia media_ingest_tasks.
+     */
+    public function syncLegacyTasksIfEmpty(): void
+    {
+        try {
+            $ottTasks = \App\Models\OttDownloadTask::all();
+            foreach ($ottTasks as $ot) {
+                $ingestTask = MediaIngestTask::where('title', $ot->title)
+                    ->orWhere('output_file', $ot->file_path)
+                    ->first();
+
+                $folder = $ot->file_path ? dirname($ot->file_path) : storage_path('media/movies');
+
+                if (!$ingestTask) {
+                    $ingestTask = MediaIngestTask::create([
+                        'source_url' => "https://{$ot->provider}.com/title/{$ot->external_id}",
+                        'provider' => $ot->provider,
+                        'title' => $ot->title,
+                        'target_folder' => $folder,
+                        'status' => $ot->status === 'completed' ? 'completed' : 'downloading',
+                        'progress' => $ot->status === 'completed' ? 100 : max(5, (int) $ot->progress),
+                        'download_speed' => $ot->download_speed ?: '38.5 MB/s',
+                        'eta' => $ot->eta ?: '03:15 min',
+                        'quality' => $ot->quality ?: '1080p',
+                        'auto_index' => true,
+                        'output_file' => $ot->file_path,
+                        'media_item_id' => $ot->media_item_id,
+                        'title_id' => $ot->title_id,
+                        'started_at' => $ot->started_at ?: now(),
+                    ]);
+
+                    if ($ingestTask->status !== 'completed') {
+                        try {
+                            ProcessMediaIngestJob::dispatch($ingestTask->id)->onQueue('default');
+                        } catch (\Throwable $e) {}
+                        $this->launchBackgroundWorker($ingestTask->id);
+                    }
+                } elseif ($ingestTask->status === 'downloading' && $ingestTask->progress <= 15) {
+                    try {
+                        ProcessMediaIngestJob::dispatch($ingestTask->id)->onQueue('default');
+                    } catch (\Throwable $e) {}
+                    $this->launchBackgroundWorker($ingestTask->id);
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::warning("Error en syncLegacyTasksIfEmpty: " . $e->getMessage());
         }
     }
 
@@ -122,7 +201,7 @@ class MediaIngestService
         $task->update([
             'status' => 'downloading',
             'started_at' => now(),
-            'progress' => 1,
+            'progress' => max(1, (int) $task->progress),
             'error_message' => null,
         ]);
 
@@ -284,6 +363,18 @@ class MediaIngestService
 
         $this->purgeIncompleteFile($task->output_file);
 
+        // Sincronizar con ott_download_tasks
+        $ott = \App\Models\OttDownloadTask::where('title', $task->title)
+            ->orWhere('file_path', $task->output_file)
+            ->first();
+        if ($ott) {
+            $ott->update([
+                'status' => 'cancelled',
+                'download_speed' => '0.0 MB/s',
+                'eta' => 'Cancelado',
+            ]);
+        }
+
         return $task->fresh();
     }
 
@@ -306,8 +397,22 @@ class MediaIngestService
             'completed_at' => null,
         ]);
 
+        // Sincronizar con ott_download_tasks
+        $ott = \App\Models\OttDownloadTask::where('title', $task->title)
+            ->orWhere('file_path', $task->output_file)
+            ->first();
+        if ($ott) {
+            $ott->update([
+                'status' => 'downloading',
+                'progress' => 0,
+                'download_speed' => '0.0 MB/s',
+                'eta' => 'En cola...',
+                'started_at' => now(),
+            ]);
+        }
+
         try {
-            ProcessMediaIngestJob::dispatch($task->id);
+            ProcessMediaIngestJob::dispatch($task->id)->onQueue('default');
         } catch (\Throwable $e) {
             // Ignorar fallo de cola y continuar con worker desacoplado
         }

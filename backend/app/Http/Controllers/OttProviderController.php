@@ -366,6 +366,9 @@ class OttProviderController extends Controller
     {
         try {
             $task = $this->ottService->cancelTask($id);
+            try {
+                app(\App\Services\MediaIngestService::class)->cancelTask($id);
+            } catch (\Throwable $e) {}
 
             return response()->json([
                 'success' => true,
@@ -387,6 +390,9 @@ class OttProviderController extends Controller
     {
         try {
             $task = $this->ottService->retryTask($id);
+            try {
+                app(\App\Services\MediaIngestService::class)->retryTask($id);
+            } catch (\Throwable $e) {}
 
             return response()->json([
                 'success' => true,

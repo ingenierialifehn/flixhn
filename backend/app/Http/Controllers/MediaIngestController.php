@@ -21,11 +21,14 @@ class MediaIngestController extends Controller
      */
     public function tasks(Request $request): JsonResponse
     {
+        // Asegurar sincronización de tareas existentes de proveedores OTT
+        $this->ingestService->syncLegacyTasksIfEmpty();
+
         $status = $request->query('status');
         $search = $request->query('q') ?? $request->query('search');
 
         $query = MediaIngestTask::with(['mediaItem', 'titleModel'])
-            ->orderBy('id', 'desc');
+            ->orderBy('updated_at', 'desc');
 
         if (!empty($status) && $status !== 'all') {
             $query->where('status', $status);

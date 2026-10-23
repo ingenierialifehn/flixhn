@@ -334,7 +334,7 @@ export default function OttSyncManagement() {
   const [folderPickerTarget, setFolderPickerTarget] = useState('connect'); // 'connect' | 'add'
 
   /* -------------------------------------------------------------------------
-     CARGA DE DATOS REALES (Exclusivamente vía GET /api/admin/ott-providers y GET /api/admin/ott-tasks)
+     CARGA DE DATOS REALES (Vía GET /api/admin/ott-providers y GET /api/admin/ingest/tasks)
      ------------------------------------------------------------------------- */
   const loadOttData = useCallback(
     async (isPolling = false) => {
@@ -342,7 +342,7 @@ export default function OttSyncManagement() {
       try {
         const [resProviders, resTasks] = await Promise.allSettled([
           api.get('/admin/ott-providers'),
-          api.get('/admin/ott-tasks'),
+          api.get('/admin/ingest/tasks'),
         ]);
 
         let loadedProviders = [];
@@ -358,10 +358,14 @@ export default function OttSyncManagement() {
           setTasks(loadedTasks);
         }
 
-        // Cálculo estricto de métricas basado exclusivamente en registros reales de BD
-        const downloadingTasks = loadedTasks.filter((t) => t.status === 'downloading');
+        // Cálculo estricto de métricas basado en registros reales de BD
+        const downloadingTasks = loadedTasks.filter(
+          (t) => t.status === 'downloading' || t.status === 'processing'
+        );
         const pendingTasks = loadedTasks.filter((t) => t.status === 'pending');
-        const completedTasks = loadedTasks.filter((t) => t.status === 'completed');
+        const completedTasks = loadedTasks.filter(
+          (t) => t.status === 'completed' || t.progress >= 100
+        );
         const failedTasks = loadedTasks.filter((t) => t.status === 'failed');
 
         let totalSpeed = 0;
@@ -403,6 +407,13 @@ export default function OttSyncManagement() {
     loadOttData();
   }, [loadOttData]);
 
+  // Comprobar si hay tareas activas en progreso (pending, downloading, processing)
+  const hasActiveTasks = useMemo(() => {
+    return tasks.some(
+      (t) => t.status === 'pending' || t.status === 'downloading' || t.status === 'processing'
+    );
+  }, [tasks]);
+
   // Comprobar si hay alguna sincronización activa ('syncing')
   const hasActiveSync = useMemo(() => {
     return (
@@ -411,15 +422,17 @@ export default function OttSyncManagement() {
     );
   }, [providers, syncingProviders]);
 
-  // Sondeo periódico: cada 4 segundos mientras el estado sea 'syncing' para refrescar la vista
-  // automáticamente en cuanto el Job termine o falle; cada 8 segundos en reposo.
+  // Polling automático cada 2.5 segundos mientras existan tareas en estado 'pending', 'downloading' o 'processing'
   useEffect(() => {
-    const pollInterval = hasActiveSync ? 4000 : 8000;
+    const shouldPollFast = hasActiveTasks || hasActiveSync;
+    const pollInterval = shouldPollFast ? 2500 : 8000;
+
     const interval = setInterval(() => {
       loadOttData(true);
     }, pollInterval);
+
     return () => clearInterval(interval);
-  }, [hasActiveSync, loadOttData]);
+  }, [hasActiveTasks, hasActiveSync, loadOttData]);
 
   /* -------------------------------------------------------------------------
      ACCIONES: CONEXIÓN, SINCRONIZACIÓN Y DESCONEXIÓN
@@ -747,8 +760,8 @@ export default function OttSyncManagement() {
      ------------------------------------------------------------------------- */
   const handleCancelTask = async (task) => {
     try {
-      const res = await api.post(`/admin/ott-providers/tasks/${task.id}/cancel`);
-      if (res.data?.success) {
+      const res = await api.post(`/admin/ingest/tasks/${task.id}/cancel`);
+      if (res.data?.status === 'success' || res.data?.success) {
         showToast('info', `Descarga de '${task.title}' cancelada.`);
         loadOttData();
       }
@@ -759,8 +772,8 @@ export default function OttSyncManagement() {
 
   const handleRetryTask = async (task) => {
     try {
-      const res = await api.post(`/admin/ott-providers/tasks/${task.id}/retry`);
-      if (res.data?.success) {
+      const res = await api.post(`/admin/ingest/tasks/${task.id}/retry`);
+      if (res.data?.status === 'success' || res.data?.success) {
         showToast('success', `Reanudando descarga de '${task.title}'...`);
         loadOttData();
       }
@@ -777,8 +790,8 @@ export default function OttSyncManagement() {
       danger: true,
       onConfirm: async () => {
         try {
-          const res = await api.delete(`/admin/ott-providers/tasks/${task.id}`);
-          if (res.data?.success) {
+          const res = await api.delete(`/admin/ingest/tasks/${task.id}`);
+          if (res.data?.status === 'success' || res.data?.success) {
             showToast('success', 'Tarea removida de la cola.');
             loadOttData();
           }
@@ -1316,19 +1329,22 @@ export default function OttSyncManagement() {
               </thead>
               <tbody className="divide-y divide-zinc-800/60">
                 {filteredTasks.map((task) => {
-                  const isDownloading = task.status === 'downloading';
-                  const isCompleted = task.status === 'completed';
+                  const isDownloading = task.status === 'downloading' || task.status === 'processing';
+                  const isCompleted = task.status === 'completed' || task.progress >= 100;
                   const isCancelled = task.status === 'cancelled';
                   const isFailed = task.status === 'failed';
+                  const mediaType = task.media_type || task.title_model?.type || task.type || (task.provider === 'series' || (task.output_file && task.output_file.includes('series')) ? 'series' : 'movie');
+                  const posterUrl = task.metadata?.poster_url || task.title_model?.poster_url || task.poster_url || '/img/placeholder-poster.png';
+                  const filePath = task.file_path || task.output_file || '';
 
                   return (
                     <tr key={task.id} className="hover:bg-zinc-900/40 transition-colors">
                       {/* Título y Carátula */}
                       <td className="py-3 px-4">
                         <div className="flex items-center gap-3">
-                          {task.metadata?.poster_url || task.title_model?.poster_url ? (
+                          {posterUrl ? (
                             <img
-                              src={task.metadata?.poster_url || task.title_model?.poster_url || '/img/placeholder-poster.png'}
+                              src={posterUrl}
                               alt={task.title}
                               onError={(e) => {
                                 e.target.onerror = null;
@@ -1338,7 +1354,7 @@ export default function OttSyncManagement() {
                             />
                           ) : (
                             <div className="w-9 h-13 bg-zinc-900 rounded border border-zinc-800 flex items-center justify-center">
-                              {task.media_type === 'series' ? (
+                              {mediaType === 'series' ? (
                                 <Tv className="w-4 h-4 text-zinc-600" />
                               ) : (
                                 <Film className="w-4 h-4 text-zinc-600" />
@@ -1350,17 +1366,17 @@ export default function OttSyncManagement() {
                               {task.title}
                             </span>
                             <div className="flex items-center gap-2 text-[11px] text-zinc-400">
-                              <span className="capitalize">{task.media_type}</span>
-                              {task.metadata?.release_year && (
+                              <span className="capitalize">{mediaType}</span>
+                              {(task.metadata?.release_year || task.title_model?.release_year || task.release_year) && (
                                 <>
                                   <span>•</span>
-                                  <span>{task.metadata.release_year}</span>
+                                  <span>{task.metadata?.release_year || task.title_model?.release_year || task.release_year}</span>
                                 </>
                               )}
-                              {task.metadata?.genre && (
+                              {(task.metadata?.genre || task.title_model?.genre || task.genre) && (
                                 <>
                                   <span>•</span>
-                                  <span className="truncate max-w-[150px]">{task.metadata.genre}</span>
+                                  <span className="truncate max-w-[150px]">{task.metadata?.genre || task.title_model?.genre || task.genre}</span>
                                 </>
                               )}
                             </div>
@@ -1371,14 +1387,14 @@ export default function OttSyncManagement() {
                       {/* Plataforma */}
                       <td className="py-3 px-3">
                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold uppercase tracking-wider bg-zinc-900 border border-zinc-700 text-zinc-300">
-                          {task.provider.replace('_', ' ')}
+                          {task.provider ? task.provider.replace('_', ' ') : 'OTT'}
                         </span>
                       </td>
 
                       {/* Calidad */}
                       <td className="py-3 px-3">
                         <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-zinc-900 text-zinc-300 border border-zinc-800">
-                          {task.quality}
+                          {task.quality || '1080p'}
                         </span>
                       </td>
 
@@ -1390,7 +1406,7 @@ export default function OttSyncManagement() {
                               {task.progress}%
                             </span>
                             <span className="text-zinc-400 font-mono">
-                              {isDownloading ? task.download_speed : isCompleted ? 'Completado' : task.status}
+                              {isDownloading ? (task.download_speed || 'Descargando...') : isCompleted ? 'Completado' : task.status}
                             </span>
                           </div>
 
@@ -1403,13 +1419,13 @@ export default function OttSyncManagement() {
                                   ? 'bg-zinc-600'
                                   : 'bg-red-600'
                               }`}
-                              style={{ width: `${task.progress}%` }}
+                              style={{ width: `${Math.min(100, Math.max(0, task.progress))}%` }}
                             />
                           </div>
 
                           {isDownloading && task.eta && (
                             <div className="text-[10px] text-zinc-500 font-mono">
-                              ETA estimado: {task.eta}
+                              ETA restante: {task.eta}
                             </div>
                           )}
                         </div>
@@ -1419,9 +1435,9 @@ export default function OttSyncManagement() {
                       <td className="py-3 px-3">
                         <span
                           className="font-mono text-[11px] text-zinc-400 bg-zinc-900/80 px-2 py-1 rounded border border-zinc-800/80 truncate block max-w-[200px]"
-                          title={task.file_path}
+                          title={filePath}
                         >
-                          {task.file_path}
+                          {filePath || 'Almacenamiento On-Net'}
                         </span>
                       </td>
 

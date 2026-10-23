@@ -30,14 +30,14 @@ class FlixEngineIngestCommand extends Command
 
         $this->info("Iniciando proceso de ingesta FlixEngine para tarea #{$id}...");
 
-        $success = $ingestService->executeDownloadById($id);
-
-        if ($success) {
+        try {
+            $job = new \App\Jobs\ProcessMediaIngestJob($id);
+            $job->handle($ingestService);
             $this->info("Tarea #{$id} procesada e indexada exitosamente.");
             return self::SUCCESS;
+        } catch (\Throwable $e) {
+            $this->error("La tarea #{$id} finalizó con error o fue cancelada: " . $e->getMessage());
+            return self::FAILURE;
         }
-
-        $this->error("La tarea #{$id} finalizó con error o fue cancelada.");
-        return self::FAILURE;
     }
 }
