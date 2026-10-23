@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use App\Services\OttSyncService;
 use Illuminate\Support\Str;
 use Symfony\Component\Process\Process;
 
@@ -36,13 +37,14 @@ class MediaIngestService
         // Determinar proveedor
         $provider = $payload['provider'] ?? $this->inferProviderFromUrl($sourceUrl);
 
-        // Carpeta destino normalizada
-        $targetFolder = $this->normalizeTargetFolder($payload['target_folder'] ?? null);
+        // Carpeta destino normalizada y resuelta con permisos 0777
+        $targetFolder = OttSyncService::resolveAndEnsureTargetFolder($payload['target_folder'] ?? null, $provider ?: 'movies');
 
         // Asegurar que la carpeta física exista
         if (!File::isDirectory($targetFolder)) {
-            File::makeDirectory($targetFolder, 0775, true, true);
+            File::makeDirectory($targetFolder, 0777, true, true);
         }
+        @chmod($targetFolder, 0777);
 
         $quality = $payload['quality'] ?? '1080p';
         $autoIndex = isset($payload['auto_index']) ? (bool) $payload['auto_index'] : true;
@@ -126,8 +128,9 @@ class MediaIngestService
         $outputFile = $task->output_file;
         $targetFolder = dirname($outputFile);
         if (!File::isDirectory($targetFolder)) {
-            File::makeDirectory($targetFolder, 0775, true, true);
+            File::makeDirectory($targetFolder, 0777, true, true);
         }
+        @chmod($targetFolder, 0777);
 
         // Determinar herramientas disponibles en el sistema
         $tool = $this->detectBestDownloadTool($task->source_url, $task->provider);
@@ -675,25 +678,11 @@ class MediaIngestService
     }
 
     /**
-     * Normalizar ruta de almacenamiento de destino.
+     * Normalizar ruta de almacenamiento de destino garantizando permisos 0777.
      */
     protected function normalizeTargetFolder(?string $folder): string
     {
-        $default = '/storage/media/movies';
-
-        // En contenedor o entorno Unix, priorizar /storage/media
-        if (File::isDirectory('/storage/media/movies')) {
-            $default = '/storage/media/movies';
-        } elseif (File::isDirectory(storage_path('media/movies'))) {
-            $default = storage_path('media/movies');
-        }
-
-        if (empty($folder)) {
-            return $default;
-        }
-
-        $folder = str_replace('\\', '/', trim($folder));
-        return rtrim($folder, '/');
+        return OttSyncService::resolveAndEnsureTargetFolder($folder, 'movies');
     }
 
     /**

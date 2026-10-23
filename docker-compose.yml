@@ -42,7 +42,7 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-flixhn_secret}
       APP_ENV: ${APP_ENV:-local}
       APP_DEBUG: ${APP_DEBUG:-true}
-      APP_KEY: ${APP_KEY:-base64:XG8d2m0qL1zOa8Pq3K9yN5wV8jR4eU1iB6tY7sA2dC0=}
+      APP_KEY: ${APP_KEY:-base64:ekQ3f/Sody1ONo82Wl+CfomzAOeaj45HYYRurVD8cnw=}
       SANCTUM_STATEFUL_DOMAINS: "localhost,127.0.0.1"
       SESSION_DRIVER: cookie
       QUEUE_CONNECTION: database

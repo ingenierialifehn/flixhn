@@ -121,6 +121,50 @@ if (!globalThis.__fs_shim_applied) {
     };
   }
 
+  if (fs.stat) {
+    const origStat = fs.stat;
+    fs.stat = function (...args) {
+      const cb = args[args.length - 1];
+      if (typeof cb === 'function') {
+        const wrappedCb = (err, stats) => {
+          if (err && (err.code === 'EIO' || err.code === 'EBUSY')) {
+            try {
+              const res = fs.statSync(...args.slice(0, -1));
+              return cb(null, res);
+            } catch (e) {
+              return cb(e);
+            }
+          }
+          return cb(err, stats);
+        };
+        args[args.length - 1] = wrappedCb;
+      }
+      return origStat.apply(fs, args);
+    };
+  }
+
+  if (fs.lstat) {
+    const origLstat = fs.lstat;
+    fs.lstat = function (...args) {
+      const cb = args[args.length - 1];
+      if (typeof cb === 'function') {
+        const wrappedCb = (err, stats) => {
+          if (err && (err.code === 'EIO' || err.code === 'EBUSY')) {
+            try {
+              const res = fs.lstatSync(...args.slice(0, -1));
+              return cb(null, res);
+            } catch (e) {
+              return cb(e);
+            }
+          }
+          return cb(err, stats);
+        };
+        args[args.length - 1] = wrappedCb;
+      }
+      return origLstat.apply(fs, args);
+    };
+  }
+
   // 7. Safe patch helper
   const safePatchAsync = (target, prop, fallbackVal) => {
     if (!target) return;

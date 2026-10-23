@@ -8,6 +8,8 @@ use App\Models\OttProviderAccount;
 use App\Services\OttSyncService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
 
 class OttProviderController extends Controller
@@ -48,6 +50,7 @@ class OttProviderController extends Controller
      * POST /api/admin/ott-providers/connect
      * POST /api/admin/ott-providers/{provider}/connect
      * Valida, cifra y almacena de forma segura las credenciales/cookies/token de sesión.
+     * Garantiza la creación física automática de la ruta destino con permisos 0777.
      */
     public function connect(Request $request, ?string $provider = null): JsonResponse
     {
@@ -78,12 +81,76 @@ class OttProviderController extends Controller
             'token' => 'nullable|string',
             'api_token' => 'nullable|string',
             'quality_profile' => 'nullable|string|in:720p,1080p,4K HDR',
-            'storage_path' => 'nullable|string|max:255',
+            'storage_path' => 'nullable|string|max:500',
+            'target_folder' => 'nullable|string|max:500',
             'auto_download' => 'nullable|boolean',
         ]);
 
         try {
-            $account = $this->ottService->connectAccount($targetProvider, $request->all());
+            // 1. Cifrado seguro de credenciales (password, cookies, token)
+            // Verificar si la APP_KEY está configurada correctamente; si falla, manejar fallback seguro:
+            $encryptedPassword = null;
+            if (!empty($request->password)) {
+                try {
+                    $encryptedPassword = Crypt::encryptString($request->password);
+                } catch (\Illuminate\Contracts\Encryption\DecryptException | \Exception $e) {
+                    // Fallback si la clave APP_KEY no tiene longitud adecuada:
+                    $cipherKey = substr(hash('sha256', config('app.key') ?: 'flixhn-secret-salt-key-32bytes!!'), 0, 32);
+                    $iv = openssl_random_pseudo_bytes(16);
+                    $encryptedPassword = base64_encode($iv . openssl_encrypt($request->password, 'aes-256-cbc', $cipherKey, OPENSSL_RAW_DATA, $iv));
+                }
+            }
+
+            $encryptedCookies = null;
+            if (!empty($request->cookies)) {
+                $cookieStr = is_string($request->cookies) ? trim($request->cookies) : json_encode($request->cookies);
+                try {
+                    $encryptedCookies = Crypt::encryptString($cookieStr);
+                } catch (\Illuminate\Contracts\Encryption\DecryptException | \Exception $e) {
+                    $cipherKey = substr(hash('sha256', config('app.key') ?: 'flixhn-secret-salt-key-32bytes!!'), 0, 32);
+                    $iv = openssl_random_pseudo_bytes(16);
+                    $encryptedCookies = base64_encode($iv . openssl_encrypt($cookieStr, 'aes-256-cbc', $cipherKey, OPENSSL_RAW_DATA, $iv));
+                }
+            }
+
+            $encryptedToken = null;
+            $tokenInput = $request->input('token') ?: $request->input('api_token');
+            if (!empty($tokenInput)) {
+                $tokenStr = trim($tokenInput);
+                try {
+                    $encryptedToken = Crypt::encryptString($tokenStr);
+                } catch (\Illuminate\Contracts\Encryption\DecryptException | \Exception $e) {
+                    $cipherKey = substr(hash('sha256', config('app.key') ?: 'flixhn-secret-salt-key-32bytes!!'), 0, 32);
+                    $iv = openssl_random_pseudo_bytes(16);
+                    $encryptedToken = base64_encode($iv . openssl_encrypt($tokenStr, 'aes-256-cbc', $cipherKey, OPENSSL_RAW_DATA, $iv));
+                }
+            }
+
+            // 2. Creación Automática de Carpetas con Lectura y Escritura:
+            $targetFolder = $request->input('target_folder') ?: $request->input('storage_path');
+            $fullTargetPath = OttSyncService::resolveAndEnsureTargetFolder($targetFolder, $targetProvider);
+
+            if (!File::isDirectory($fullTargetPath)) {
+                File::makeDirectory($fullTargetPath, 0777, true, true);
+            }
+            // Asegurar permisos de lectura y escritura completos
+            @chmod($fullTargetPath, 0777);
+
+            // Preparar payload con rutas validadas y credenciales protegidas
+            $payload = $request->all();
+            $payload['storage_path'] = $fullTargetPath;
+            $payload['target_folder'] = $fullTargetPath;
+            if ($encryptedPassword !== null) {
+                $payload['encrypted_password'] = $encryptedPassword;
+            }
+            if ($encryptedCookies !== null) {
+                $payload['encrypted_cookies'] = $encryptedCookies;
+            }
+            if ($encryptedToken !== null) {
+                $payload['encrypted_token'] = $encryptedToken;
+            }
+
+            $account = $this->ottService->connectAccount($targetProvider, $payload);
 
             return response()->json([
                 'success' => true,
@@ -95,6 +162,8 @@ class OttProviderController extends Controller
                     'status' => $account->status,
                     'quality_profile' => $account->quality_profile,
                     'auto_download' => (bool) $account->auto_download,
+                    'storage_path' => $fullTargetPath,
+                    'target_folder' => $fullTargetPath,
                     'last_sync_at' => $account->last_sync_at ? $account->last_sync_at->toIso8601String() : null,
                     'has_credentials' => true,
                 ],

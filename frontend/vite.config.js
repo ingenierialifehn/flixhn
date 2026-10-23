@@ -42,7 +42,7 @@ export default defineConfig({
     watch: {
       usePolling: true,
       interval: 1000,
-      ignored: ['**/node_modules/**', '**/dist/**', '**/.git/**', '/tmp/**'],
+      ignored: ['**/node_modules/**', '**/dist/**', '**/.git/**', '/tmp/**', '**/.vite/**', '**/*.timestamp-*'],
     },
   },
 });

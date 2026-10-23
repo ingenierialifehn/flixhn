@@ -16,6 +16,8 @@ RUN install-php-extensions \
 
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
+RUN mkdir -p /var/www/html/storage && ln -sfn /var/www/html/storage /storage && chmod -R 777 /var/www/html/storage
+
 WORKDIR /var/www/backend
 
 EXPOSE 9000

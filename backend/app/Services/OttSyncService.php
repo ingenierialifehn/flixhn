@@ -439,6 +439,67 @@ class OttSyncService
     }
 
     /**
+     * Resuelve y asegura la creación física de la carpeta destino en /storage/... o storage_path(...)
+     * con permisos completos de lectura y escritura (0777).
+     */
+    public static function resolveAndEnsureTargetFolder(?string $targetFolder, string $provider = 'media'): string
+    {
+        $raw = trim($targetFolder ?? '');
+        if (empty($raw)) {
+            $raw = "/storage/media/{$provider}";
+        }
+
+        // Normalizar separadores
+        $normalized = str_replace('\\', '/', $raw);
+        $fullTargetPath = $normalized;
+
+        // Entorno Windows o rutas relativas
+        if (PHP_OS_FAMILY === 'Windows' && str_starts_with($normalized, '/storage')) {
+            $relative = ltrim(substr($normalized, 8), '/');
+            $fullTargetPath = storage_path($relative);
+        } elseif (str_starts_with($normalized, 'storage/')) {
+            $relative = substr($normalized, 8);
+            $fullTargetPath = storage_path($relative);
+        } elseif (!str_starts_with($normalized, '/') && !preg_match('/^[a-zA-Z]:/', $normalized)) {
+            $fullTargetPath = storage_path($normalized);
+        } else {
+            // Ruta absoluta Unix (/storage/media/...)
+            // Si /storage es inaccesible o no existe ni como symlink, mapear a storage_path
+            if (str_starts_with($normalized, '/storage')) {
+                if (!File::isDirectory('/storage') && !@is_link('/storage')) {
+                    if (!@mkdir('/storage', 0777, true)) {
+                        $relative = ltrim(substr($normalized, 8), '/');
+                        $fullTargetPath = storage_path($relative);
+                    }
+                }
+            }
+        }
+
+        // Si el directorio no existe, créalo automáticamente:
+        try {
+            if (!File::isDirectory($fullTargetPath)) {
+                File::makeDirectory($fullTargetPath, 0777, true, true);
+            }
+            // Asegurar permisos de lectura y escritura completos
+            @chmod($fullTargetPath, 0777);
+        } catch (\Throwable $e) {
+            Log::warning("No se pudo crear directamente {$fullTargetPath}, aplicando fallback a storage_path: " . $e->getMessage());
+            $fallback = storage_path("media/{$provider}");
+            try {
+                if (!File::isDirectory($fallback)) {
+                    File::makeDirectory($fallback, 0777, true, true);
+                }
+                @chmod($fallback, 0777);
+                $fullTargetPath = $fallback;
+            } catch (\Throwable $ex) {
+                Log::error("Fallo crítico en creación de carpeta destino: " . $ex->getMessage());
+            }
+        }
+
+        return $fullTargetPath;
+    }
+
+    /**
      * Conecta o actualiza una cuenta OTT guardando las credenciales de forma cifrada (AES).
      */
     public function connectAccount(string $provider, array $payload): OttProviderAccount
@@ -458,7 +519,10 @@ class OttSyncService
         $authMethod = $payload['auth_method'] ?? 'credentials'; // credentials | cookies | token
         $qualityProfile = $payload['quality_profile'] ?? ($isBuiltIn ? $this->supportedProviders[$provider]['defaultQuality'] : '1080p');
         $autoDownload = !empty($payload['auto_download']);
-        $storagePath = trim($payload['storage_path'] ?? '') ?: "/storage/media/{$provider}";
+
+        // 2. Resolver y crear automáticamente la ruta destino con permisos 0777
+        $rawTarget = $payload['target_folder'] ?? $payload['storage_path'] ?? "/storage/media/{$provider}";
+        $storagePath = self::resolveAndEnsureTargetFolder($rawTarget, $provider);
 
         $credentialsData = [
             'auth_method' => $authMethod,
@@ -466,20 +530,20 @@ class OttSyncService
         ];
 
         if ($authMethod === 'cookies') {
-            $cookies = $payload['cookies'] ?? '';
+            $cookies = $payload['encrypted_cookies'] ?? $payload['cookies'] ?? '';
             if (empty($cookies)) {
                 throw new \InvalidArgumentException("Debes ingresar las cookies de sesión exportadas.");
             }
             $credentialsData['cookies'] = is_string($cookies) ? trim($cookies) : json_encode($cookies);
         } elseif ($authMethod === 'token') {
-            $token = $payload['token'] ?? $payload['api_token'] ?? '';
+            $token = $payload['encrypted_token'] ?? $payload['token'] ?? $payload['api_token'] ?? '';
             if (empty($token)) {
                 throw new \InvalidArgumentException("Debes ingresar el Token de API o clave de sesión.");
             }
             $credentialsData['token'] = trim($token);
         } else {
             $email = trim($payload['email'] ?? $accountName);
-            $password = $payload['password'] ?? '';
+            $password = $payload['encrypted_password'] ?? $payload['password'] ?? '';
             if (empty($password)) {
                 throw new \InvalidArgumentException("Debes ingresar la contraseña de la cuenta OTT.");
             }
@@ -502,6 +566,7 @@ class OttSyncService
             'platform' => $defaultName,
             'display_name' => $payload['display_name'] ?? $defaultName,
             'storage_path' => $storagePath,
+            'target_folder' => $storagePath,
             'region' => 'HN / Central America (LATAM)',
             'max_streams' => 4,
             'profile_name' => 'FlixHN Gateway',
@@ -517,7 +582,7 @@ class OttSyncService
         $account->session_metadata = $sessionMetadata;
         $account->save();
 
-        Log::info("Cuenta de proveedor OTT [{$provider}] conectada exitosamente como [{$accountName}].");
+        Log::info("Cuenta de proveedor OTT [{$provider}] conectada exitosamente como [{$accountName}]. Ruta destino: {$storagePath}");
 
         return $account;
     }
@@ -532,7 +597,7 @@ class OttSyncService
             : OttProviderAccount::where('provider', $provider)->first();
 
         if ($account) {
-            $account->credentials = Crypt::encryptString('{}');
+            $account->credentials = OttProviderAccount::encryptSecret('{}');
             $account->status = 'disconnected';
             $account->error_message = null;
             $account->save();
@@ -573,7 +638,7 @@ class OttSyncService
             $account = OttProviderAccount::create([
                 'provider' => $providerSlug,
                 'account_name' => $defaultName . ' Account',
-                'credentials' => Crypt::encryptString('{}'),
+                'credentials' => OttProviderAccount::encryptSecret('{}'),
                 'status' => 'disconnected',
                 'auto_download' => true,
             ]);
@@ -601,7 +666,7 @@ class OttSyncService
             $account = OttProviderAccount::create([
                 'provider' => $providerSlug,
                 'account_name' => $defaultName . ' Ingest',
-                'credentials' => Crypt::encryptString('{}'),
+                'credentials' => OttProviderAccount::encryptSecret('{}'),
                 'status' => 'syncing',
                 'quality_profile' => $this->supportedProviders[$providerSlug]['defaultQuality'] ?? '1080p',
             ]);
@@ -650,7 +715,9 @@ class OttSyncService
 
             $folderSubdir = $mediaType === 'series' ? 'series' : 'movies';
             $fileName = Str::slug($titleName) . '.' . Str::lower(str_replace(' ', '', $quality)) . '.mkv';
-            $localFilePath = "/storage/media/{$folderSubdir}/{$fileName}";
+            $baseDir = $account->session_metadata['storage_path'] ?? "/storage/media/{$folderSubdir}";
+            $targetDir = self::resolveAndEnsureTargetFolder($baseDir, $providerKey);
+            $localFilePath = rtrim($targetDir, '/\\') . "/{$fileName}";
             $localStreamUrl = "/media/{$folderSubdir}/{$fileName}";
 
             // 1. Registro automático en media_items
