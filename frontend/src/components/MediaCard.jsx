@@ -7,7 +7,10 @@ const MediaCard = (props) => {
     <MovieCard
       {...props}
       onError={(e) => {
-        handlePosterError(e);
+        if (e && e.target) {
+          e.target.onerror = null;
+          e.target.src = 'https://images.unsplash.com/photo-1594909122845-11baa439b7bf?w=500';
+        }
         if (typeof props.onError === 'function') {
           props.onError(e);
         }

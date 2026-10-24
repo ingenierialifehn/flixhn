@@ -783,26 +783,27 @@ export default function OttSyncManagement() {
     }
   };
 
-  const handleDeleteTask = (task) => {
-    setConfirmModal({
-      title: 'Eliminar de la Cola',
-      message: `¿Deseas remover '${task.title}' de la cola de descargas?`,
-      confirmText: 'Remover',
-      danger: true,
-      onConfirm: async () => {
-        try {
-          const res = await api.delete(`/admin/ingest/tasks/${task.id}`);
-          if (res.data?.status === 'success' || res.data?.success) {
-            showToast('success', 'Tarea removida de la cola.');
-            loadOttData();
-          }
-        } catch (err) {
-          showToast('error', 'Error al eliminar tarea.');
-        } finally {
-          setConfirmModal(null);
-        }
-      },
-    });
+  const handleDeleteTask = async (task) => {
+    try {
+      await api.delete(`/admin/ingest/tasks/${task.id}`);
+      showToast('success', 'Tarea eliminada');
+      await loadOttData();
+    } catch (err) {
+      console.error('Error al eliminar tarea:', err);
+      showToast('error', 'Error al eliminar la tarea.');
+    }
+  };
+
+  const handleDeleteAllTasks = async () => {
+    try {
+      await api.delete('/admin/ingest/tasks/delete-all');
+      showToast('success', 'Todas las tareas han sido eliminadas');
+      setTasks([]);
+      await loadOttData();
+    } catch (err) {
+      console.error('Error eliminando todas las tareas:', err);
+      showToast('error', 'Error al eliminar todas las tareas.');
+    }
   };
 
   const handleClearCompleted = async () => {
@@ -1271,48 +1272,75 @@ export default function OttSyncManagement() {
           )}
         </div>
 
-        {/* Barra de Filtros y Búsqueda */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-zinc-950/50 p-3 rounded-xl border border-zinc-800/80">
-          <div className="relative">
-            <Search className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              placeholder="Buscar título o identificador..."
-              value={searchFilter}
-              onChange={(e) => setSearchFilter(e.target.value)}
-              className="w-full bg-zinc-900 border border-zinc-800 rounded-lg pl-9 pr-3 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-red-500"
-            />
+        {/* Barra de Filtros y Búsqueda con Botón Limpiar Todas las Tareas */}
+        <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 bg-zinc-950/50 p-3 rounded-xl border border-zinc-800/80">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 flex-1">
+            <div className="relative">
+              <Search className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder="Buscar título o identificador..."
+                value={searchFilter}
+                onChange={(e) => setSearchFilter(e.target.value)}
+                className="w-full bg-zinc-900 border border-zinc-800 rounded-lg pl-9 pr-3 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-red-500"
+              />
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Filter className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+              <select
+                value={providerFilter}
+                onChange={(e) => setProviderFilter(e.target.value)}
+                className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 focus:outline-none focus:border-red-500"
+              >
+                <option value="all">Todas las Plataformas</option>
+                {providers.map((p) => (
+                  <option key={p.provider} value={p.provider}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 focus:outline-none focus:border-red-500"
+              >
+                <option value="all">Todos los Estados</option>
+                <option value="downloading">En Descarga</option>
+                <option value="pending">Pendientes</option>
+                <option value="completed">Completados</option>
+                <option value="cancelled">Cancelados</option>
+                <option value="failed">Fallidos</option>
+              </select>
+            </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <Filter className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
-            <select
-              value={providerFilter}
-              onChange={(e) => setProviderFilter(e.target.value)}
-              className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 focus:outline-none focus:border-red-500"
-            >
-              <option value="all">Todas las Plataformas</option>
-              {providers.map((p) => (
-                <option key={p.provider} value={p.provider}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </div>
+          {/* Botones de acción masiva en cabecera de tabla */}
+          <div className="flex items-center gap-2 shrink-0">
+            {metrics.completed > 0 && (
+              <button
+                onClick={handleClearCompleted}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-900 border border-zinc-800 rounded-lg hover:bg-zinc-800 transition-colors cursor-pointer"
+                title="Limpiar tareas en estado completado"
+                type="button"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Limpiar Completadas ({metrics.completed})</span>
+              </button>
+            )}
 
-          <div>
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 focus:outline-none focus:border-red-500"
+            <button
+              onClick={handleDeleteAllTasks}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-red-400 hover:text-white bg-red-950/40 border border-red-800/60 hover:bg-red-900/80 rounded-lg transition-all shadow-sm active:scale-95 cursor-pointer"
+              title="Limpiar todas las tareas de la cola"
+              type="button"
             >
-              <option value="all">Todos los Estados</option>
-              <option value="downloading">En Descarga</option>
-              <option value="pending">Pendientes</option>
-              <option value="completed">Completados</option>
-              <option value="cancelled">Cancelados</option>
-              <option value="failed">Fallidos</option>
-            </select>
+              <Trash2 className="w-3.5 h-3.5 text-red-400" />
+              <span>Limpiar Todas las Tareas</span>
+            </button>
           </div>
         </div>
 
@@ -1361,7 +1389,7 @@ export default function OttSyncManagement() {
                               alt={task.title}
                               onError={(e) => {
                                 e.target.onerror = null;
-                                e.target.src = '/img/placeholder-poster.png';
+                                e.target.src = 'https://images.unsplash.com/photo-1594909122845-11baa439b7bf?w=500';
                               }}
                               className="w-9 h-13 object-cover rounded shadow border border-zinc-800"
                             />

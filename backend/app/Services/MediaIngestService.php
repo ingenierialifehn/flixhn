@@ -720,6 +720,60 @@ class MediaIngestService
                 'rating' => 8.2,
                 'release_year' => 2024,
             ],
+            'last-of-us' => [
+                'poster_url' => 'https://image.tmdb.org/t/p/w500/uKvVjHNqB5VmOrdxqAt2V7JMrRI.jpg',
+                'backdrop_url' => 'https://image.tmdb.org/t/p/original/uDgy6hyPd82kOHh6I95FLtLnj6p.jpg',
+                'overview' => 'Veinte años después de la destrucción de la civilización moderna, Joel, un sobreviviente rudo, es contratado para sacar a Ellie, una niña de 14 años, de una opresiva zona de cuarentena.',
+                'genre' => 'Drama / Ciencia Ficción',
+                'genres' => ['Drama', 'Ciencia Ficción'],
+                'rating' => 8.7,
+                'release_year' => 2023,
+            ],
+            'breaking' => [
+                'poster_url' => 'https://image.tmdb.org/t/p/w500/ztkUQFLlC19CCMYHW9o1zWhJRNq.jpg',
+                'backdrop_url' => 'https://image.tmdb.org/t/p/original/tsRy63Mu5cu8etL1X7ZLyf7UP1M.jpg',
+                'overview' => 'Un profesor de química de secundaria con cáncer de pulmón terminal se asocia con un exalumno para fabricar y vender metanfetamina para asegurar el futuro financiero de su familia.',
+                'genre' => 'Crimen / Drama',
+                'genres' => ['Crimen', 'Drama'],
+                'rating' => 9.5,
+                'release_year' => 2023,
+            ],
+            'papel' => [
+                'poster_url' => 'https://image.tmdb.org/t/p/w500/reEMJA1uzscCbk5rSXGno2G4T7C.jpg',
+                'backdrop_url' => 'https://image.tmdb.org/t/p/original/gFZriCkpJYsApPZEAVcqRoTkHp3.jpg',
+                'overview' => 'Ocho atracadores toman rehenes en la Fábrica Nacional de Moneda y Timbre de España, mientras el líder de la banda manipula a la policía para cumplir su ambicioso plan.',
+                'genre' => 'Crimen / Suspenso',
+                'genres' => ['Crimen', 'Suspenso'],
+                'rating' => 8.3,
+                'release_year' => 2023,
+            ],
+            'deadpool' => [
+                'poster_url' => 'https://image.tmdb.org/t/p/w500/8cdWjvZQUExUUTzyp4t6EDMubfO.jpg',
+                'backdrop_url' => 'https://image.tmdb.org/t/p/original/yDHYTfA3R0jFYba16jBB1jv8uaC.jpg',
+                'overview' => 'Un apático Wade Wilson se afana en la vida civil dejando atrás sus días como Deadpool. Pero cuando su mundo natal se enfrenta a una amenaza existencial, vuelve a la acción con Wolverine.',
+                'genre' => 'Acción / Comedia',
+                'genres' => ['Acción', 'Comedia'],
+                'rating' => 7.8,
+                'release_year' => 2024,
+            ],
+            'gladiator' => [
+                'poster_url' => 'https://image.tmdb.org/t/p/w500/2cxhvwyEwRlysAmRH4iodkvo0z5.jpg',
+                'backdrop_url' => 'https://image.tmdb.org/t/p/original/euYIwmwkmz95mnExloguf0MweqP.jpg',
+                'overview' => 'Años después de presenciar la muerte del admirado héroe Máximo a manos de su tío, Lucio debe entrar en el Coliseo tras ser testigo de la conquista de su hogar por parte de los tiránicos emperadores.',
+                'genre' => 'Acción / Aventura',
+                'genres' => ['Acción', 'Aventura'],
+                'rating' => 8.2,
+                'release_year' => 2024,
+            ],
+            'arcane' => [
+                'poster_url' => 'https://image.tmdb.org/t/p/w500/abf8tHznhSvl9BAElD2cQYRrQI2.jpg',
+                'backdrop_url' => 'https://image.tmdb.org/t/p/original/fqldf2t8ztc9aiwn397FvFeUQgr.jpg',
+                'overview' => 'En medio del conflicto entre las ciudades gemelas de Piltóver y Zaun, dos hermanas luchan en bandos opuestos de una guerra entre tecnologías mágicas y convicciones incompatibles.',
+                'genre' => 'Animación / Ciencia Ficción',
+                'genres' => ['Animación', 'Ciencia Ficción'],
+                'rating' => 9.0,
+                'release_year' => 2024,
+            ],
         ];
 
         foreach ($verifiedDict as $key => $data) {
@@ -734,7 +788,7 @@ class MediaIngestService
             }
         }
 
-        // 4. Fallback estándar garantizado con imagen oficial TMDb horizontal y vertical
+        // 4. Fallback estándar garantizado con imagen oficial TMDb horizontal y vertical y sinopsis en español
         $readableTitle = ucwords(trim(preg_replace('/\s+/', ' ', str_replace(['_', '-'], ' ', $cleanTitle))));
         return [
             'title' => $readableTitle,

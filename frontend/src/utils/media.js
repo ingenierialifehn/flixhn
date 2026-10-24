@@ -2,17 +2,19 @@
  * Utilidades centralizadas para resolución de medios, carátulas y streaming en FlixHN
  */
 
+export const DEFAULT_FALLBACK_POSTER = 'https://images.unsplash.com/photo-1594909122845-11baa439b7bf?w=500';
+
 /**
  * Resuelve y normaliza la URL completa de carátulas/pósters.
  * - Si es una ruta relativa de storage (/storage/... o storage/...), antepone la URL base correcta.
- * - Si no existe o es inválida, retorna el fallback institucional '/img/placeholder-poster.png'.
+ * - Si no existe o es inválida, retorna el fallback garantizado.
  *
  * @param {string|null} url URL cruda de póster o backdrop
  * @returns {string} URL lista para usar en elementos <img>
  */
 export const resolvePosterUrl = (url) => {
   if (!url || typeof url !== 'string') {
-    return '/img/placeholder-poster.png';
+    return DEFAULT_FALLBACK_POSTER;
   }
 
   const trimmed = url.trim();
@@ -22,7 +24,7 @@ export const resolvePosterUrl = (url) => {
     trimmed === 'undefined' ||
     trimmed === '[object Object]'
   ) {
-    return '/img/placeholder-poster.png';
+    return DEFAULT_FALLBACK_POSTER;
   }
 
   // 1. Si ya es una URL absoluta HTTP o HTTPS (TMDb, Emby remoto, CDNs externos)
@@ -72,12 +74,12 @@ export const resolvePosterUrl = (url) => {
 
 /**
  * Manejador onError reactivo para imágenes de carátulas.
- * Asigna inmediatamente el fallback institucional sin provocar ciclos de recarga infinitos.
+ * Asigna inmediatamente el fallback garantizado sin provocar ciclos de recarga infinitos.
  *
  * @param {SyntheticEvent} e Evento de error del elemento <img>
  * @param {string} fallback Ruta del fallback institucional
  */
-export const handlePosterError = (e, fallback = '/img/placeholder-poster.png') => {
+export const handlePosterError = (e, fallback = DEFAULT_FALLBACK_POSTER) => {
   if (!e || !e.target) return;
   e.target.onerror = null;
   e.target.src = fallback;

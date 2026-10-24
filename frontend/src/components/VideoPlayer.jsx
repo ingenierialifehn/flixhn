@@ -241,6 +241,11 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
     return 'http://45.4.87.126:6789';
   }, [rawStreamPath]);
 
+  const activeMedia = currentEpisode || title;
+  const isOtt = !activeMedia?.emby_id && !targetItemId;
+  const API_BASE_URL = (import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || '').replace(/\/api\/?$/, '');
+  const ottStreamUrl = activeMedia?.id ? `${API_BASE_URL}/api/media/${activeMedia.id}/stream` : '';
+
   // Resolución de URL de video: valida si el item posee emby_id antes de construir URL de Emby
   const streamUrl = React.useMemo(() => {
     const media = currentEpisode || title;
@@ -313,6 +318,12 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
 
   // Inicialización de Reproducción con Consulta previa a PlaybackInfo (Flujo Oficial Emby / HLS)
   useEffect(() => {
+    if (isOtt) {
+      setIsLoading(false);
+      setPlaybackError(null);
+      return;
+    }
+
     const video = videoRef.current;
     if (!video || (!streamUrl && !targetItemId)) return;
 
@@ -1010,6 +1021,36 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
   const episodeLabel = currentEpisode
     ? `T${currentEpisode.season_number || 1} E${currentEpisode.episode_number || 1} - ${currentEpisode.title}`
     : null;
+
+  if (isOtt && activeMedia) {
+    return (
+      <div
+        ref={playerContainerRef}
+        className="fixed inset-0 z-50 bg-black flex flex-col items-center justify-center select-none overflow-hidden"
+      >
+        <button
+          onClick={handleClose}
+          className="absolute top-6 left-6 z-50 w-11 h-11 rounded-full bg-black/70 hover:bg-neutral-800 text-white flex items-center justify-center transition-all shadow-md active:scale-95 cursor-pointer hover:text-[#E50914]"
+          title="Salir del reproductor"
+          type="button"
+        >
+          <ArrowLeft className="w-6 h-6 stroke-[2.5]" />
+        </button>
+
+        <video
+          ref={videoRef}
+          controls
+          autoPlay
+          playsInline
+          src={ottStreamUrl}
+          className="w-full h-full object-contain"
+          onError={(e) => {
+            console.error('Error cargando stream OTT nativo:', e);
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div
