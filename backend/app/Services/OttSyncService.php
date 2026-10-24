@@ -1486,6 +1486,9 @@ class OttSyncService
 
     /**
      * Crear y encolar tarea de descarga física desde la búsqueda de catálogo remoto.
+     * Enforce estricto: solo permite asociar descargas a plataformas en estado 'connected'.
+     * Si el usuario solo tiene Netflix conectada, provider = 'netflix' y target_folder = '/storage/media/netflix'.
+     * No permite la creación de carpetas para plataformas desconectadas.
      */
     public function createDownloadTaskFromSearch(array $payload): MediaIngestTask
     {
@@ -1494,7 +1497,28 @@ class OttSyncService
             throw new \InvalidArgumentException('El título es requerido para ordenar la descarga.');
         }
 
-        $provider = $payload['provider'] ?? 'netflix';
+        // 1. Obtener plataformas que realmente están en estado 'connected' con credenciales activas
+        $connectedAccounts = OttProviderAccount::where('status', 'connected')->get();
+        if ($connectedAccounts->isEmpty()) {
+            $all = OttProviderAccount::all();
+            $connectedAccounts = $all->filter(fn($a) => $a->status === 'connected' || $a->hasCredentials());
+        }
+
+        if ($connectedAccounts->isEmpty()) {
+            throw new \InvalidArgumentException('No hay plataformas OTT con credenciales conectadas y activas. Conecta una plataforma antes de ordenar descargas.');
+        }
+
+        // 2. Resolver proveedor estrictamente contra plataformas conectadas
+        $requestedProvider = Str::slug($payload['provider'] ?? '', '_');
+        $activeAccount = $connectedAccounts->firstWhere('provider', $requestedProvider);
+
+        // Si el usuario buscó globalmente o el proveedor solicitado no está conectado,
+        // asociar únicamente al proveedor activo configurado (ej. 'netflix')
+        if (!$activeAccount) {
+            $activeAccount = $connectedAccounts->first();
+        }
+
+        $provider = $activeAccount->provider;
         $mediaType = ($payload['media_type'] ?? 'movie') === 'series' ? 'series' : 'movie';
         $quality = $payload['quality'] ?? '1080p';
         $posterUrl = $payload['poster_url'] ?? null;
@@ -1502,8 +1526,16 @@ class OttSyncService
         $overview = $payload['overview'] ?? "Contenido descargado desde {$provider} a la red On-Net de FlixHN.";
         $externalId = $payload['id'] ?? ('ext_' . Str::slug($title));
 
-        // Determinar y asegurar carpeta destino física con permisos 0777
-        $rawFolder = $payload['target_folder'] ?? "/storage/media/{$provider}";
+        // 3. Carpeta destino estrictamente asociada al proveedor conectado activo (/storage/media/{provider})
+        // Evita que se creen carpetas cruzadas como /storage/media/disney o /storage/media/paramount si no están conectadas
+        $allowedTargetBase = "/storage/media/{$provider}";
+        $rawFolder = trim($payload['target_folder'] ?? '');
+
+        // Si la ruta enviada apunta a una plataforma desconectada o no contiene la ruta del proveedor activo, forzarla
+        if (empty($rawFolder) || !str_contains(str_replace('\\', '/', $rawFolder), "/media/{$provider}")) {
+            $rawFolder = $allowedTargetBase;
+        }
+
         $targetFolder = self::resolveAndEnsureTargetFolder($rawFolder, $provider);
 
         if (!File::isDirectory($targetFolder)) {

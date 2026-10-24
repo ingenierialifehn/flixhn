@@ -131,7 +131,8 @@ export const getPlatformConfig = (providerRaw) => {
 const MovieCard = ({ item, title: propTitle, isProgress, onPlay, onOpenModal, onRemoveProgress, onError, ...restProps }) => {
   // 1. Declaración incondicional de hooks al inicio
   const cardRef = useRef(null);
-  const hoverTimerRef = useRef(null);
+  let hoverTimeout = useRef(null);
+  let closeTimeout = useRef(null);
   const [isHovered, setIsHovered] = useState(false);
   const [cardRect, setCardRect] = useState(null);
 
@@ -139,37 +140,53 @@ const MovieCard = ({ item, title: propTitle, isProgress, onPlay, onOpenModal, on
   const title = propTitle || (isProgress ? item?.title : item);
   const episode = isProgress ? item?.episode : null;
 
-  // Manejo de entrada del cursor con retardo sutil de 380ms para evitar aperturas accidentales
+  // Temporizador con retardo (debounce) para apertura y cierre fluido estilo Netflix
   const handleMouseEnter = useCallback(() => {
-    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
-
-    hoverTimerRef.current = setTimeout(() => {
+    if (closeTimeout.current) clearTimeout(closeTimeout.current);
+    hoverTimeout.current = setTimeout(() => {
       if (!cardRef.current) return;
       setCardRect(cardRef.current.getBoundingClientRect());
       setIsHovered(true);
-    }, 380);
+    }, 300); // 300ms de espera antes de abrir
   }, []);
 
-  // Manejo de salida del cursor
   const handleMouseLeave = useCallback(() => {
-    if (hoverTimerRef.current) {
-      clearTimeout(hoverTimerRef.current);
-      hoverTimerRef.current = null;
-    }
-    // Retardo suave para permitir pasar el cursor sobre la tarjeta desplegada
-    setTimeout(() => {
+    if (hoverTimeout.current) clearTimeout(hoverTimeout.current);
+    closeTimeout.current = setTimeout(() => {
       setIsHovered(false);
-    }, 150);
+    }, 200); // margen para que no parpadee si el cursor pasa a la tarjeta flotante
+  }, []);
+
+  // Handlers para el contenedor flotante HoverPreviewCard para mantenerla fija y sólida
+  const handlePreviewMouseEnter = useCallback(() => {
+    if (closeTimeout.current) {
+      clearTimeout(closeTimeout.current);
+      closeTimeout.current = null;
+    }
+    setIsHovered(true);
+  }, []);
+
+  const handlePreviewMouseLeave = useCallback(() => {
+    if (hoverTimeout.current) {
+      clearTimeout(hoverTimeout.current);
+      hoverTimeout.current = null;
+    }
+    closeTimeout.current = setTimeout(() => {
+      setIsHovered(false);
+    }, 200); // margen de 200ms al salir de la tarjeta flotante
   }, []);
 
   const handleClosePreview = useCallback(() => {
+    if (hoverTimeout.current) clearTimeout(hoverTimeout.current);
+    if (closeTimeout.current) clearTimeout(closeTimeout.current);
     setIsHovered(false);
   }, []);
 
   // Limpieza al desmontar
   useEffect(() => {
     return () => {
-      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+      if (hoverTimeout.current) clearTimeout(hoverTimeout.current);
+      if (closeTimeout.current) clearTimeout(closeTimeout.current);
     };
   }, []);
 
@@ -205,7 +222,11 @@ const MovieCard = ({ item, title: propTitle, isProgress, onPlay, onOpenModal, on
         onClick={() => onOpenModal && onOpenModal(title)}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
-        className="group relative flex-shrink-0 w-36 sm:w-44 md:w-56 bg-zinc-100 dark:bg-[#181818] rounded-md overflow-hidden cursor-pointer shadow-sm dark:shadow-lg border border-zinc-300/40 dark:border-zinc-800 transition-all duration-300 ease-out hover:scale-105 hover:z-20 hover:shadow-2xl hover:ring-2 hover:ring-[#E50914]/50 select-none"
+        className={`group relative flex-shrink-0 w-36 sm:w-44 md:w-56 bg-zinc-100 dark:bg-[#181818] rounded-md overflow-hidden cursor-pointer shadow-sm dark:shadow-lg border border-zinc-300/40 dark:border-zinc-800 transition-all duration-300 ease-out select-none ${
+          isHovered
+            ? 'z-20 ring-2 ring-[#E50914]/50 shadow-2xl'
+            : 'hover:scale-105 hover:z-20 hover:shadow-2xl hover:ring-2 hover:ring-[#E50914]/50'
+        }`}
       >
         {/* Imagen del Poster */}
         <div className="relative aspect-[16/9] md:aspect-[2/3] w-full overflow-hidden bg-zinc-200 dark:bg-neutral-900">
@@ -323,6 +344,8 @@ const MovieCard = ({ item, title: propTitle, isProgress, onPlay, onOpenModal, on
           episode={episode}
           rect={cardRect}
           onClose={handleClosePreview}
+          onMouseEnter={handlePreviewMouseEnter}
+          onMouseLeave={handlePreviewMouseLeave}
           onPlay={onPlay}
           onOpenModal={onOpenModal}
           isProgress={isProgress}

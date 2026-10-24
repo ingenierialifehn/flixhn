@@ -111,8 +111,8 @@ class MediaIngestService
             $command = "start /B {$phpBinary} \"{$artisanPath}\" flixengine:ingest-process {$taskId} > NUL 2>&1";
             pclose(popen($command, 'r'));
         } else {
-            // Linux / Docker
-            $command = "{$phpBinary} \"{$artisanPath}\" flixengine:ingest-process {$taskId} > /dev/null 2>&1 &";
+            // Linux / Docker: uso de nohup para desacople total del proceso sin trabar php-fpm
+            $command = "nohup {$phpBinary} \"{$artisanPath}\" flixengine:ingest-process {$taskId} > /dev/null 2>&1 &";
             exec($command);
         }
     }

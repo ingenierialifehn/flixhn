@@ -253,7 +253,7 @@ const CustomOttLogo = ({ name = 'OTT', color = '#8B5CF6' }) => (
    COMPONENTE PRINCIPAL: OttSyncManagement
    ========================================================================= */
 
-export default function OttSyncManagement() {
+export default function OttSyncManagement({ connectedPlatforms: propConnectedPlatforms = [] } = {}) {
   // Estado principal de proveedores y tareas (Consumidos exclusivamente de la API real)
   const [providers, setProviders] = useState([]);
   const [tasks, setTasks] = useState([]);
@@ -1244,7 +1244,7 @@ export default function OttSyncManagement() {
           loadOttData(true);
         }}
         showToast={showToast}
-        connectedProviders={providers}
+        connectedProviders={providers.length > 0 ? providers : propConnectedPlatforms}
       />
 
       {/* Sección 2: Cola de Descargas e Ingesta On-Net */}

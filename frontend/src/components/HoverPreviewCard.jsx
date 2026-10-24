@@ -14,16 +14,58 @@ const HoverPreviewCard = ({
   episode = null,
   rect,
   onClose,
+  onMouseEnter,
+  onMouseLeave,
   onPlay,
   onOpenModal,
   isProgress = false,
 }) => {
   // 1. Declaración incondicional de todos los Hooks al inicio
   const containerRef = useRef(null);
+  let hoverTimeout = useRef(null);
+  let closeTimeout = useRef(null);
   const [isMyList, setIsMyList] = useState(false);
   const [isLiked, setIsLiked] = useState(false);
   const [isMuted, setIsMuted] = useState(true);
   const [isMounted, setIsMounted] = useState(false);
+
+  // Handlers para mantener fija y sólida la tarjeta flotante mientras el ratón esté sobre ella
+  const handleContainerMouseEnter = useCallback(
+    (e) => {
+      if (closeTimeout.current) {
+        clearTimeout(closeTimeout.current);
+        closeTimeout.current = null;
+      }
+      if (typeof onMouseEnter === 'function') {
+        onMouseEnter(e);
+      }
+    },
+    [onMouseEnter]
+  );
+
+  const handleContainerMouseLeave = useCallback(
+    (e) => {
+      if (hoverTimeout.current) {
+        clearTimeout(hoverTimeout.current);
+        hoverTimeout.current = null;
+      }
+      if (typeof onMouseLeave === 'function') {
+        onMouseLeave(e);
+      } else if (onClose) {
+        closeTimeout.current = setTimeout(() => {
+          onClose();
+        }, 200);
+      }
+    },
+    [onMouseLeave, onClose]
+  );
+
+  useEffect(() => {
+    return () => {
+      if (hoverTimeout.current) clearTimeout(hoverTimeout.current);
+      if (closeTimeout.current) clearTimeout(closeTimeout.current);
+    };
+  }, []);
 
   // Normalización del objeto title
   const title = useMemo(() => {
@@ -224,15 +266,15 @@ const HoverPreviewCard = ({
   const content = (
     <div
       ref={containerRef}
-      onMouseEnter={() => {}}
-      onMouseLeave={onClose}
+      onMouseEnter={handleContainerMouseEnter}
+      onMouseLeave={handleContainerMouseLeave}
       style={{
         position: 'absolute',
         top: `${top}px`,
         left: `${left}px`,
         width: `${cardWidth}px`,
       }}
-      className={`z-50 select-none animate-fadeIn ${originClass} transition-all duration-300 ease-out`}
+      className={`z-50 select-none animate-fadeIn ${originClass} transition-all duration-300 ease-out pointer-events-auto`}
     >
       <div className="bg-[#141414] dark:bg-[#141414] rounded-xl overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.95)] border border-zinc-700/60 ring-1 ring-white/10 flex flex-col">
         {/* Banner Superior / Backdrop Panorámico con degradado inferior */}

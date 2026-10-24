@@ -96,6 +96,45 @@ export default function OttRemoteCatalogExplorer({
   const [loading, setLoading] = useState(false);
   const [searchedOnce, setSearchedOnce] = useState(false);
 
+  // Lista sincronizada de proveedores y filtro estricto de plataformas activas en estado 'connected'
+  const [providersList, setProvidersList] = useState(connectedProviders || []);
+
+  useEffect(() => {
+    if (connectedProviders && connectedProviders.length > 0) {
+      setProvidersList(connectedProviders);
+    } else {
+      api
+        .get('/admin/ott-providers')
+        .then((res) => {
+          if (res.data?.providers && Array.isArray(res.data.providers)) {
+            setProvidersList(res.data.providers);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [connectedProviders]);
+
+  const activeConnectedProviders = useMemo(() => {
+    return (providersList || []).filter((p) => p.status === 'connected');
+  }, [providersList]);
+
+  // Resolver qué proveedor conectado debe asumir la descarga
+  const resolveTargetProvider = useCallback(
+    (item) => {
+      if (activeConnectedProviders.length === 0) {
+        return null;
+      }
+      const match = activeConnectedProviders.find(
+        (p) => p.provider === item?.provider
+      );
+      if (match) {
+        return match.provider;
+      }
+      return activeConnectedProviders[0].provider;
+    },
+    [activeConnectedProviders]
+  );
+
   // Modal de confirmación rápida de descarga
   const [confirmItem, setConfirmItem] = useState(null);
   const [downloadQuality, setDownloadQuality] = useState('1080p');
@@ -161,30 +200,61 @@ export default function OttRemoteCatalogExplorer({
     fetchRemoteCatalog('', selectedProvider);
   };
 
-  // Abrir modal de confirmación de descarga
+  // Abrir modal de confirmación de descarga verificando plataformas conectadas
   const handleOpenDownloadModal = (item) => {
-    setConfirmItem(item);
+    if (activeConnectedProviders.length === 0) {
+      if (showToast) {
+        showToast(
+          'warning',
+          'No tienes plataformas OTT conectadas. Conecta una plataforma (como Netflix) antes de ordenar descargas.',
+          'Sin Plataforma Conectada'
+        );
+      }
+      return;
+    }
+
+    const assignedProvider = resolveTargetProvider(item);
+    setConfirmItem({
+      ...item,
+      assignedProvider,
+    });
     setDownloadQuality('1080p');
 
-    // Asignar ruta de carpeta destino por defecto según el proveedor o tipo
-    const provSlug = item.provider || 'movies';
-    setTargetFolder(`/storage/media/${provSlug}`);
+    // La carpeta destino DEBE ser estrictamente /storage/media/{assignedProvider}
+    setTargetFolder(`/storage/media/${assignedProvider}`);
   };
 
   // Confirmar y despachar la tarea de descarga
   const handleConfirmDownload = async () => {
     if (!confirmItem) return;
 
+    if (activeConnectedProviders.length === 0) {
+      if (showToast) {
+        showToast(
+          'warning',
+          'No tienes plataformas OTT conectadas. Conecta una plataforma activa antes de descargar.',
+          'Plataforma Requerida'
+        );
+      }
+      return;
+    }
+
+    const assignedProvider = confirmItem.assignedProvider || resolveTargetProvider(confirmItem);
+    const strictFolder =
+      targetFolder && targetFolder.includes(`/media/${assignedProvider}`)
+        ? targetFolder
+        : `/storage/media/${assignedProvider}`;
+
     setSubmittingDownload(true);
     try {
       const payload = {
         title: confirmItem.title,
         original_title: confirmItem.original_title || confirmItem.title,
-        provider: confirmItem.provider || 'netflix',
+        provider: assignedProvider,
         media_type: confirmItem.media_type || 'movie',
         poster_url: confirmItem.poster_url,
         quality: downloadQuality,
-        target_folder: targetFolder,
+        target_folder: strictFolder,
         overview: confirmItem.overview,
         year: confirmItem.year,
         id: confirmItem.id,
@@ -207,7 +277,7 @@ export default function OttRemoteCatalogExplorer({
         if (showToast) {
           showToast(
             'success',
-            `Descarga de "${confirmItem.title}" iniciada hacia ${targetFolder}.`,
+            `Descarga de "${confirmItem.title}" iniciada hacia ${strictFolder} (${assignedProvider}).`,
             'Descarga Encolada'
           );
         }
@@ -266,6 +336,19 @@ export default function OttRemoteCatalogExplorer({
         </div>
       </div>
 
+      {/* Alerta si no hay plataformas conectadas */}
+      {activeConnectedProviders.length === 0 && (
+        <div className="flex items-center gap-3 p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs">
+          <AlertCircle className="w-5 h-5 text-amber-400 shrink-0" />
+          <div className="flex-1">
+            <span className="font-bold">No hay plataformas OTT conectadas:</span>
+            <span className="ml-1 text-zinc-300">
+              Para ordenar descargas directas a tu almacenamiento On-Net, conecta una plataforma activa (ej. Netflix) en el panel de cuentas superior.
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Barra de Búsqueda Interactiva & Filtros */}
       <form onSubmit={handleSearchSubmit} className="space-y-3">
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
@@ -293,30 +376,30 @@ export default function OttRemoteCatalogExplorer({
             )}
           </div>
 
-          {/* Selector de plataforma */}
-          <div className="relative sm:w-56 shrink-0">
+          {/* Selector de plataforma filtrado por conectadas */}
+          <div className="relative sm:w-60 shrink-0">
             <select
               value={selectedProvider}
               onChange={(e) => handleProviderChange(e.target.value)}
               className="w-full px-3.5 py-2.5 bg-[#141414] border border-zinc-800 rounded-xl text-xs font-medium text-zinc-200 focus:outline-none focus:border-red-500/60 cursor-pointer appearance-none pr-8"
             >
-              <option value="all">Todas las Plataformas</option>
-              <option value="netflix">Netflix</option>
-              <option value="disney">Disney+</option>
-              <option value="hbo_max">Max (HBO)</option>
-              <option value="amazon_prime">Amazon Prime Video</option>
-              <option value="apple_tv">Apple TV+</option>
-              <option value="paramount">Paramount+</option>
-              {connectedProviders
+              <option value="all">
+                {activeConnectedProviders.length > 0
+                  ? `Todas las Conectadas (${activeConnectedProviders.length})`
+                  : 'Todas las Plataformas'}
+              </option>
+              {activeConnectedProviders.map((p) => (
+                <option key={p.provider} value={p.provider}>
+                  {p.name || p.provider} (Conectada)
+                </option>
+              ))}
+              {providersList
                 .filter(
-                  (p) =>
-                    !['netflix', 'disney', 'hbo_max', 'amazon_prime', 'apple_tv', 'paramount'].includes(
-                      p.provider
-                    )
+                  (p) => !activeConnectedProviders.some((cp) => cp.provider === p.provider)
                 )
                 .map((p) => (
-                  <option key={p.provider} value={p.provider}>
-                    {p.name || p.provider}
+                  <option key={p.provider} value={p.provider} disabled className="text-zinc-600">
+                    {p.name || p.provider} (Desconectada)
                   </option>
                 ))}
             </select>
@@ -579,7 +662,7 @@ export default function OttRemoteCatalogExplorer({
               />
               <div className="flex-1 min-w-0 space-y-1">
                 <div className="flex items-center gap-2">
-                  <PlatformMiniBadge provider={confirmItem.provider} />
+                  <PlatformMiniBadge provider={confirmItem.assignedProvider || confirmItem.provider} />
                   <span className="text-[10px] text-zinc-400 font-mono">
                     {confirmItem.media_type === 'series' ? 'Serie' : 'Película'} • {confirmItem.year || '2024'}
                   </span>
@@ -588,6 +671,14 @@ export default function OttRemoteCatalogExplorer({
                 <p className="text-xs text-zinc-400 line-clamp-2 leading-relaxed">
                   {confirmItem.overview || 'Sin descripción disponible.'}
                 </p>
+                {confirmItem.provider && confirmItem.assignedProvider && confirmItem.provider !== confirmItem.assignedProvider && (
+                  <p className="text-[11px] text-amber-400/90 flex items-center gap-1.5 mt-1 font-medium bg-amber-500/10 px-2 py-1 rounded-lg border border-amber-500/20">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-400" />
+                    <span>
+                      Asociado a tu plataforma conectada: <strong>{(confirmItem.assignedProvider).toUpperCase()}</strong>
+                    </span>
+                  </p>
+                )}
               </div>
             </div>
 
@@ -638,7 +729,10 @@ export default function OttRemoteCatalogExplorer({
                 />
               </div>
               <p className="text-[11px] text-zinc-400">
-                La ruta física se validará y creará automáticamente con permisos completos (0777).
+                Almacenamiento exclusivo para plataforma conectada:{' '}
+                <span className="text-emerald-400 font-mono font-bold">
+                  /storage/media/{confirmItem?.assignedProvider || 'netflix'}
+                </span>
               </p>
             </div>
 
@@ -676,7 +770,11 @@ export default function OttRemoteCatalogExplorer({
         onClose={() => setFolderPickerOpen(false)}
         initialPath={targetFolder}
         onSelect={(path) => {
-          setTargetFolder(path);
+          const assigned = confirmItem?.assignedProvider || 'netflix';
+          const resolved = path && path.includes(`/media/${assigned}`)
+            ? path
+            : `/storage/media/${assigned}`;
+          setTargetFolder(resolved);
           setFolderPickerOpen(false);
         }}
         title="Seleccionar Carpeta Destino para Ingesta"
