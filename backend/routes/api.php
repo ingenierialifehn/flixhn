@@ -284,6 +284,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/tasks', [MediaIngestController::class, 'tasks']);
             Route::post('/tasks', [MediaIngestController::class, 'store']);
             Route::post('/tasks/{id}/cancel', [MediaIngestController::class, 'cancel']);
+            Route::delete('/tasks/delete-all', [MediaIngestController::class, 'deleteAll']);
             Route::delete('/tasks/{id}', [MediaIngestController::class, 'destroy']);
             Route::post('/tasks/{id}/retry', [MediaIngestController::class, 'retry']);
             Route::get('/metrics', [MediaIngestController::class, 'metrics']);

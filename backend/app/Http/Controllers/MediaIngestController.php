@@ -152,22 +152,92 @@ class MediaIngestController extends Controller
 
     /**
      * DELETE /api/admin/ingest/tasks/{id}
-     * Elimina la tarea del historial y purga temporales.
+     * Busca la tarea, si tiene media_item_id y archivo físico los elimina, y ejecuta delete().
      */
     public function destroy(int $id): JsonResponse
     {
         try {
-            $this->ingestService->deleteTask($id, true);
+            $task = MediaIngestTask::find($id);
+            if (!$task) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Tarea no encontrada',
+                ], 404);
+            }
+
+            // Si tiene un media_item_id asociado y el archivo físico existe, elimina el registro y el archivo
+            if ($task->media_item_id) {
+                $mediaItem = \App\Models\MediaItem::find($task->media_item_id);
+                if ($mediaItem) {
+                    if (!empty($mediaItem->file_path) && file_exists($mediaItem->file_path) && !str_contains($mediaItem->file_path, 'samples/sample.mp4')) {
+                        @unlink($mediaItem->file_path);
+                    }
+                    $mediaItem->delete();
+                }
+            }
+
+            // Si tiene output_file y el archivo físico existe
+            if (!empty($task->output_file) && file_exists($task->output_file) && !str_contains($task->output_file, 'samples/sample.mp4')) {
+                @unlink($task->output_file);
+            }
+
+            // Ejecuta $task->delete(); en la base de datos MySQL
+            $task->delete();
 
             return response()->json([
+                'success' => true,
                 'status' => 'success',
-                'message' => 'Tarea eliminada del historial y temporales purgados.',
+                'message' => 'Tarea eliminada',
             ]);
         } catch (\Throwable $e) {
             Log::error("Error eliminando tarea de ingesta #{$id}: " . $e->getMessage());
             return response()->json([
+                'success' => false,
                 'status' => 'error',
                 'message' => 'No fue posible eliminar la tarea: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * DELETE /api/admin/ingest/tasks/delete-all
+     * Ejecuta MediaIngestTask::truncate(); y limpia archivos temporales asociados.
+     */
+    public function deleteAll(): JsonResponse
+    {
+        try {
+            $tasks = MediaIngestTask::all();
+            foreach ($tasks as $task) {
+                if (!empty($task->output_file) && file_exists($task->output_file) && !str_contains($task->output_file, 'samples/sample.mp4')) {
+                    @unlink($task->output_file);
+                }
+                if ($task->media_item_id) {
+                    $mediaItem = \App\Models\MediaItem::find($task->media_item_id);
+                    if ($mediaItem) {
+                        if (!empty($mediaItem->file_path) && file_exists($mediaItem->file_path) && !str_contains($mediaItem->file_path, 'samples/sample.mp4')) {
+                            @unlink($mediaItem->file_path);
+                        }
+                        $mediaItem->delete();
+                    }
+                }
+            }
+
+            // Ejecuta MediaIngestTask::truncate();
+            \Illuminate\Support\Facades\DB::statement('SET FOREIGN_KEY_CHECKS=0;');
+            MediaIngestTask::truncate();
+            \Illuminate\Support\Facades\DB::statement('SET FOREIGN_KEY_CHECKS=1;');
+
+            return response()->json([
+                'success' => true,
+                'status' => 'success',
+                'message' => 'Todas las tareas han sido eliminadas',
+            ]);
+        } catch (\Throwable $e) {
+            Log::error("Error eliminando todas las tareas de ingesta: " . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'status' => 'error',
+                'message' => 'No fue posible eliminar las tareas: ' . $e->getMessage(),
             ], 500);
         }
     }

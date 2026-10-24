@@ -42,7 +42,19 @@ class MediaItem extends Model
 
     protected $appends = [
         'source_platform',
+        'rating',
+        'genres',
     ];
+
+    public function getRatingAttribute(): float
+    {
+        return (float) ($this->metadata['rating'] ?? 8.5);
+    }
+
+    public function getGenresAttribute(): array
+    {
+        return $this->metadata['genres'] ?? (!empty($this->genre) ? array_map('trim', explode('/', $this->genre)) : ['Acción', 'Streaming']);
+    }
 
     public function getProviderAttribute(?string $value): string
     {

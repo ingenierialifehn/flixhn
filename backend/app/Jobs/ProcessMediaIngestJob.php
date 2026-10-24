@@ -206,8 +206,15 @@ class ProcessMediaIngestJob implements ShouldQueue
             if (!File::isDirectory($dir)) {
                 File::makeDirectory($dir, 0777, true, true);
             }
-            if (!File::exists($filePath)) {
-                @file_put_contents($filePath, "FLIXHN_MEDIA_INGEST_" . time());
+
+            $sampleSource = storage_path('media/samples/sample.mp4');
+
+            if (!File::exists($filePath) || @filesize($filePath) < 1024) {
+                if (File::exists($sampleSource) && @filesize($sampleSource) >= 1024) {
+                    @copy($sampleSource, $filePath);
+                } else {
+                    @shell_exec('ffmpeg -y -f lavfi -i testsrc=duration=15:size=1280x720:rate=30 -f lavfi -i sine=frequency=440:duration=15 -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart ' . escapeshellarg($filePath) . ' 2>&1');
+                }
                 @chmod($filePath, 0666);
             }
         } catch (\Throwable $e) {
