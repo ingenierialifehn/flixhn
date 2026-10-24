@@ -1526,14 +1526,17 @@ class OttSyncService
         $overview = $payload['overview'] ?? "Contenido descargado desde {$provider} a la red On-Net de FlixHN.";
         $externalId = $payload['id'] ?? ('ext_' . Str::slug($title));
 
-        // 3. Carpeta destino estrictamente asociada al proveedor conectado activo (/storage/media/{provider})
-        // Evita que se creen carpetas cruzadas como /storage/media/disney o /storage/media/paramount si no están conectadas
-        $allowedTargetBase = "/storage/media/{$provider}";
-        $rawFolder = trim($payload['target_folder'] ?? '');
+        // 3. Carpeta destino estrictamente asociada al proveedor y slug (/storage/media/{provider}/{slug})
+        $slugTitle = Str::slug($title);
+        if (empty($slugTitle)) {
+            $slugTitle = 'ott_' . time();
+        }
 
-        // Si la ruta enviada apunta a una plataforma desconectada o no contiene la ruta del proveedor activo, forzarla
+        $rawFolder = trim($payload['target_folder'] ?? '');
         if (empty($rawFolder) || !str_contains(str_replace('\\', '/', $rawFolder), "/media/{$provider}")) {
-            $rawFolder = $allowedTargetBase;
+            $rawFolder = "/storage/media/{$provider}/{$slugTitle}";
+        } elseif (!str_contains(str_replace('\\', '/', $rawFolder), $slugTitle)) {
+            $rawFolder = rtrim($rawFolder, '/\\') . "/{$slugTitle}";
         }
 
         $targetFolder = self::resolveAndEnsureTargetFolder($rawFolder, $provider);
@@ -1543,11 +1546,10 @@ class OttSyncService
         }
         @chmod($targetFolder, 0777);
 
-        // Preparar nombre de archivo destino
-        $slugTitle = Str::slug($title);
-        $qualitySlug = Str::lower(str_replace(' ', '', $quality));
-        $fileName = "{$slugTitle}.{$qualitySlug}.mkv";
+        // Archivo definitivo en formato .mp4 según requerimiento
+        $fileName = "{$slugTitle}.mp4";
         $outputFile = rtrim($targetFolder, '/\\') . DIRECTORY_SEPARATOR . $fileName;
+        $canonicalRelativePath = "storage/media/{$provider}/{$slugTitle}/{$fileName}";
 
         // Crear registro en media_ingest_tasks en estado 'pending'
         $ingestTask = MediaIngestTask::create([
@@ -1579,7 +1581,7 @@ class OttSyncService
                 'progress' => 0,
                 'download_speed' => '0.0 MB/s',
                 'eta' => 'Calculando...',
-                'file_path' => $outputFile,
+                'file_path' => $canonicalRelativePath,
                 'metadata' => [
                     'poster_url' => $posterUrl,
                     'overview' => $overview,

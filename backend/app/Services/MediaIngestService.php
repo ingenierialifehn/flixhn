@@ -37,9 +37,17 @@ class MediaIngestService
 
         // Determinar proveedor
         $provider = $payload['provider'] ?? $this->inferProviderFromUrl($sourceUrl);
+        $slugTitle = Str::slug($title);
+        if (empty($slugTitle)) {
+            $slugTitle = 'media_' . time();
+        }
 
-        // Carpeta destino normalizada y resuelta con permisos 0777
-        $targetFolder = OttSyncService::resolveAndEnsureTargetFolder($payload['target_folder'] ?? null, $provider ?: 'movies');
+        // Carpeta destino normalizada y resuelta: storage/media/{provider}/{slug}
+        $rawTarget = $payload['target_folder'] ?? "storage/media/{$provider}/{$slugTitle}";
+        if (!str_contains(str_replace('\\', '/', $rawTarget), $slugTitle)) {
+            $rawTarget = rtrim($rawTarget, '/\\') . "/{$slugTitle}";
+        }
+        $targetFolder = OttSyncService::resolveAndEnsureTargetFolder($rawTarget, $provider ?: 'movies');
 
         // Asegurar que la carpeta física exista
         if (!File::isDirectory($targetFolder)) {
@@ -50,14 +58,8 @@ class MediaIngestService
         $quality = $payload['quality'] ?? '1080p';
         $autoIndex = isset($payload['auto_index']) ? (bool) $payload['auto_index'] : true;
 
-        // Generar nombre de archivo destino
-        $fileExtension = $this->inferExtension($sourceUrl, $provider);
-        $slugTitle = Str::slug($title);
-        if (empty($slugTitle)) {
-            $slugTitle = 'media_' . time();
-        }
-        $fileName = "{$slugTitle}." . Str::lower(str_replace(' ', '', $quality)) . ".{$fileExtension}";
-        $outputFile = rtrim($targetFolder, '/\\') . DIRECTORY_SEPARATOR . $fileName;
+        // Archivo de video definitivo: {slug}.mp4
+        $outputFile = rtrim($targetFolder, '/\\') . DIRECTORY_SEPARATOR . "{$slugTitle}.mp4";
 
         // Crear registro en la tabla media_ingest_tasks
         $task = MediaIngestTask::create([
@@ -281,9 +283,9 @@ class MediaIngestService
             }
 
             $exitCode = $process->getExitCode();
-            $fileExists = File::exists($outputFile) && File::size($outputFile) > 1024; // > 1 KB
+            $fileExists = File::exists($outputFile) && File::size($outputFile) > 1048576; // Requerido estrictamente > 1 MB
 
-            if ($exitCode === 0 || $fileExists) {
+            if (($exitCode === 0 || File::exists($outputFile)) && $fileExists) {
                 // Descarga completada con éxito
                 $task->update([
                     'status' => 'processing',
@@ -297,6 +299,13 @@ class MediaIngestService
                     $this->indexMediaContent($task);
                 }
 
+                // Sincronización con la Biblioteca de Emby
+                try {
+                    app(RemoteMediaConnectorService::class)->refreshLibrary();
+                } catch (\Throwable $e) {
+                    Log::warning("Error invocando refreshLibrary en Emby desde MediaIngestService: " . $e->getMessage());
+                }
+
                 $task->update([
                     'status' => 'completed',
                     'progress' => 100,
@@ -306,11 +315,14 @@ class MediaIngestService
                     'error_message' => null,
                 ]);
 
-                Log::info("Ingesta completada e indexada exitosamente para tarea #{$task->id}: {$task->title}");
+                Log::info("Ingesta completada e indexada exitosamente para tarea #{$task->id}: {$task->title} (" . File::size($outputFile) . " bytes)");
                 return true;
             } else {
+                $fileCurrentSize = File::exists($outputFile) ? File::size($outputFile) : 0;
                 $err = $process->getErrorOutput() ?: $process->getOutput();
-                $msg = 'El proceso finalizó con código ' . $exitCode . ': ' . Str::limit(trim($err), 300);
+                $msg = $fileCurrentSize > 0 && $fileCurrentSize <= 1048576
+                    ? "El archivo descargado ({$fileCurrentSize} bytes) es menor al tamaño mínimo requerido de 1 MB."
+                    : ('El proceso finalizó con código ' . $exitCode . ': ' . Str::limit(trim($err), 300));
 
                 $task->update([
                     'status' => 'failed',
@@ -493,14 +505,42 @@ class MediaIngestService
             ? $meta['backdrop_url']
             : 'https://image.tmdb.org/t/p/original/56v2KjBlU4XaOv9rVYEQypROD7P.jpg';
 
+        $providerKey = Str::slug($task->provider ?: 'movies', '_');
+        $itemSlug = Str::slug($finalTitle);
+        if (empty($itemSlug)) {
+            $itemSlug = 'media_' . $task->id;
+        }
+
+        // Ruta canónica requerida: storage/media/{provider}/{slug}/{slug}.mp4
+        $canonicalPath = "storage/media/{$providerKey}/{$itemSlug}/{$itemSlug}.mp4";
+        $physicalDestination = storage_path("media/{$providerKey}/{$itemSlug}/{$itemSlug}.mp4");
+
+        // Asegurar que el archivo físico esté en storage/media/{provider}/{slug}/{slug}.mp4
+        if (!File::exists($physicalDestination)) {
+            $destDir = dirname($physicalDestination);
+            if (!File::isDirectory($destDir)) {
+                File::makeDirectory($destDir, 0777, true, true);
+                @chmod($destDir, 0777);
+            }
+            if (!empty($task->output_file) && File::exists($task->output_file) && $task->output_file !== $physicalDestination) {
+                @copy($task->output_file, $physicalDestination);
+                @chmod($physicalDestination, 0666);
+            }
+        }
+
+        $finalFileSize = File::exists($physicalDestination)
+            ? File::size($physicalDestination)
+            : (!empty($task->output_file) && File::exists($task->output_file) ? File::size($task->output_file) : 0);
+
         // 1. Crear o actualizar registro en titles (/browse)
         $titleSlug = Str::slug($finalTitle . '-ingest-' . $task->id);
-        $titleModel = Title::firstOrNew(['slug' => $titleSlug]);
-        if (!$titleModel->exists) {
-            $titleModel = Title::firstOrNew(['name' => $finalTitle]);
-            if (!$titleModel->exists) {
-                $titleModel->slug = $titleSlug;
-            }
+        $titleModel = Title::where('slug', $titleSlug)->first();
+        if (!$titleModel) {
+            $titleModel = Title::where('name', $finalTitle)->first();
+        }
+        if (!$titleModel) {
+            $titleModel = new Title();
+            $titleModel->slug = $titleSlug;
         }
 
         $titleModel->name = $finalTitle;
@@ -513,15 +553,21 @@ class MediaIngestService
         $titleModel->genre = $finalGenre;
         $titleModel->community_rating = $meta['rating'] ?? 8.5;
         $titleModel->duration_seconds = $finalDuration;
-        $titleModel->stream_path = $task->output_file;
+        $titleModel->stream_path = $canonicalPath;
         $titleModel->is_featured = true;
         $titleModel->provider = $task->provider ?: 'external';
         $titleModel->save();
 
-        // 2. Registrar en media_items
-        $mediaItem = MediaItem::firstOrNew([
-            'file_path' => $task->output_file,
-        ]);
+        // 2. Registrar en media_items con ruta canónica exacta storage/media/{provider}/{slug}/{slug}.mp4
+        $mediaItem = MediaItem::where('title_id', $titleModel->id)->first();
+        if (!$mediaItem) {
+            $mediaItem = MediaItem::where('file_path', $canonicalPath)
+                ->orWhere('file_path', $task->output_file)
+                ->first();
+        }
+        if (!$mediaItem) {
+            $mediaItem = new MediaItem();
+        }
 
         $mediaItem->title = $finalTitle;
         $mediaItem->original_title = $meta['original_title'] ?? $finalTitle;
@@ -535,13 +581,15 @@ class MediaIngestService
         $mediaItem->genre = $finalGenre;
         $mediaItem->duration_seconds = $finalDuration;
         $mediaItem->quality = $task->quality ?: '1080p';
-        $mediaItem->file_size = File::exists($task->output_file) ? File::size($task->output_file) : 0;
+        $mediaItem->file_path = $canonicalPath;
+        $mediaItem->file_size = $finalFileSize;
         $mediaItem->title_id = $titleModel->id;
         $mediaItem->metadata = [
             'ingest_task_id' => $task->id,
             'source_url' => $task->source_url,
             'ingested_at' => now()->toIso8601String(),
             'storage_folder' => $task->target_folder,
+            'canonical_path' => $canonicalPath,
             'rating' => $meta['rating'] ?? 8.5,
             'genres' => $meta['genres'] ?? [$finalGenre],
             'poster_url' => $localPosterUrl,

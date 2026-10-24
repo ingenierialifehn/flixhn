@@ -98,18 +98,20 @@ class RemoteMediaConnectorService
         }
 
         try {
+            $refreshUrl = "{$cleanBaseUrl}/emby/Library/Refresh" . (!empty($apiKey) ? "?api_key={$apiKey}" : '');
             $response = Http::timeout(6)
                 ->connectTimeout(2)
                 ->withHeaders($headers)
-                ->post("{$cleanBaseUrl}/emby/Library/Refresh", [
+                ->post($refreshUrl, [
                     'api_key' => $apiKey,
                 ]);
 
             if ($response->status() === 404) {
+                $altUrl = "{$cleanBaseUrl}/Library/Refresh" . (!empty($apiKey) ? "?api_key={$apiKey}" : '');
                 $response = Http::timeout(6)
                     ->connectTimeout(2)
                     ->withHeaders($headers)
-                    ->post("{$cleanBaseUrl}/Library/Refresh", [
+                    ->post($altUrl, [
                         'api_key' => $apiKey,
                     ]);
             }

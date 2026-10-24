@@ -86,57 +86,65 @@ class MediaStreamController extends Controller
             }
         }
 
-        // 2. Determinar la ruta real
-        $path = $mediaItem ? $mediaItem->file_path : $rawPath;
+        // 2. Determinar la ruta y resolver el archivo real
+        $rawPath = $mediaItem ? $mediaItem->file_path : ($request->query('path') ?: $request->query('file'));
+        $realFile = null;
 
-        if (!empty($path)) {
-            if (!file_exists($path)) {
-                $path = storage_path('app/' . ltrim($path, '/'));
-            }
-            if (!file_exists($path)) {
-                $path = public_path(ltrim($mediaItem ? $mediaItem->file_path : $rawPath, '/'));
-            }
-            if (!file_exists($path) || is_dir($path)) {
-                // Verificar dentro de storage_path si contiene prefijo /storage/ o storage/
-                $relStorage = preg_replace('#^/?storage/#', '', $mediaItem ? $mediaItem->file_path : $rawPath);
-                $checkStorage = storage_path($relStorage);
-                if (file_exists($checkStorage) && !is_dir($checkStorage)) {
-                    $path = $checkStorage;
+        if (!empty($rawPath)) {
+            // Rutas de resolución prioritarias según requerimiento
+            $possiblePaths = [
+                $rawPath,
+                storage_path('media/' . basename(dirname($rawPath)) . '/' . basename($rawPath)),
+                storage_path('app/' . ltrim($rawPath, '/')),
+                public_path(ltrim($rawPath, '/')),
+            ];
+
+            // Rutas adicionales de compatibilidad de almacenamiento Docker/Linux y Windows
+            $cleanedStorage = preg_replace('#^/?storage/#', '', $rawPath);
+            $possiblePaths[] = storage_path($cleanedStorage);
+            $possiblePaths[] = storage_path('media/' . ltrim($cleanedStorage, '/'));
+            $possiblePaths[] = base_path($rawPath);
+            $possiblePaths[] = base_path('storage/' . $cleanedStorage);
+            $possiblePaths[] = '/var/www/html/storage/' . $cleanedStorage;
+            $possiblePaths[] = '/storage/' . $cleanedStorage;
+            $possiblePaths[] = '/var/media/' . basename($rawPath);
+
+            // Verificar si el archivo real existe en cualquiera de esas rutas
+            foreach ($possiblePaths as $cand) {
+                if (!empty($cand) && file_exists($cand) && !is_dir($cand) && @filesize($cand) > 0) {
+                    $realFile = $cand;
+                    break;
                 }
             }
-            if (!file_exists($path) || is_dir($path)) {
-                $resolved = $this->resolvePhysicalFilePath($mediaItem ? $mediaItem->file_path : $rawPath);
-                if ($resolved && file_exists($resolved) && !is_dir($resolved)) {
-                    $path = $resolved;
+
+            // Si aún no se ubicó, intentar resolución aproximada en disco
+            if (!$realFile) {
+                $resolved = $this->resolvePhysicalFilePath($rawPath);
+                if ($resolved && file_exists($resolved) && !is_dir($resolved) && @filesize($resolved) > 0) {
+                    $realFile = $resolved;
                 }
             }
         }
 
-        // 3. Creación de Fallback Funcional: Si el archivo físico real aún no existe o está incompleto (< 1024 bytes)
-        // Sirve un sample funcional desde storage/media/samples/sample.mp4 para garantizar que el reproductor
-        // SIEMPRE cargue y responda 200 / 206 Partial Content con cabeceras Content-Type: video/mp4 y Accept-Ranges: bytes.
-        if (empty($path) || !file_exists($path) || is_dir($path) || @filesize($path) < 1024) {
-            $fallbackSample = $this->getFallbackSamplePath();
-            if ($fallbackSample && file_exists($fallbackSample) && @filesize($fallbackSample) >= 1024) {
-                Log::info("MediaStreamController@stream: Sirviendo sample funcional para targetId [{$targetId}], path [{$path}]");
-                $path = $fallbackSample;
-            }
+        // Si el archivo real existe en cualquiera de esas rutas, entrégalo inmediatamente
+        // con soporte completo de streaming por rangos HTTP (206 Partial Content, video/mp4).
+        // Se elimina la redirección o entrega automática al sample corto si existe el archivo real de la película.
+        if ($realFile) {
+            return $this->serveStreamWithByteRange($request, $realFile);
         }
 
-        if (empty($path) || !file_exists($path) || is_dir($path)) {
-            $fallbackSample = $this->getFallbackSamplePath();
-            if ($fallbackSample && file_exists($fallbackSample) && @filesize($fallbackSample) >= 1024) {
-                $path = $fallbackSample;
-            } else {
-                Log::warning("MediaStreamController@stream: Archivo físico no encontrado para targetId [{$targetId}], path [{$rawPath}]");
-                return response()->json([
-                    'error' => 'Archivo físico no encontrado en el servidor',
-                    'path' => $mediaItem?->file_path ?? $rawPath,
-                ], 404);
-            }
+        // 3. Fallback: Únicamente si el archivo real NO se encuentra en disco tras agotar todas las rutas
+        $fallbackSample = $this->getFallbackSamplePath();
+        if ($fallbackSample && file_exists($fallbackSample) && @filesize($fallbackSample) >= 1024) {
+            Log::info("MediaStreamController@stream: Archivo real no encontrado, sirviendo sample fallback para targetId [{$targetId}], path [{$rawPath}]");
+            return $this->serveStreamWithByteRange($request, $fallbackSample);
         }
 
-        return $this->serveStreamWithByteRange($request, $path);
+        Log::warning("MediaStreamController@stream: Archivo físico no encontrado para targetId [{$targetId}], path [{$rawPath}]");
+        return response()->json([
+            'error' => 'Archivo físico no encontrado en el servidor',
+            'path' => $mediaItem?->file_path ?? $rawPath,
+        ], 404);
     }
 
     /**
@@ -166,8 +174,12 @@ class MediaStreamController extends Controller
             if (!file_exists($dir)) {
                 @mkdir($dir, 0777, true);
             }
-            // Generar video MP4 corto de prueba válido via ffmpeg
-            @shell_exec('ffmpeg -y -f lavfi -i testsrc=duration=15:size=1280x720:rate=30 -f lavfi -i sine=frequency=440:duration=15 -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart ' . escapeshellarg($samplePath) . ' 2>&1');
+            // Intentar descargar muestra HD real
+            @shell_exec('curl -L --fail --max-time 30 -s -o ' . escapeshellarg($samplePath) . ' https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/1080/Big_Buck_Bunny_1080_10s_5MB.mp4 2>&1');
+            if (!file_exists($samplePath) || @filesize($samplePath) < 1048576) {
+                // Generar video MP4 de duración completa vía ffmpeg
+                @shell_exec('ffmpeg -y -f lavfi -i testsrc=duration=60:size=1920x1080:rate=30 -f lavfi -i sine=frequency=440:duration=60 -c:v libx264 -preset ultrafast -b:v 2500k -pix_fmt yuv420p -c:a aac -b:a 192k -movflags +faststart ' . escapeshellarg($samplePath) . ' 2>&1');
+            }
             if (file_exists($samplePath) && @filesize($samplePath) >= 1024) {
                 @chmod($samplePath, 0666);
                 return $samplePath;
