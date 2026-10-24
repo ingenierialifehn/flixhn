@@ -7,6 +7,7 @@ use App\Models\Episode;
 use App\Models\Season;
 use App\Models\Title;
 use App\Models\PlaybackProgress;
+use App\Models\MediaIngestTask;
 use App\Services\RemoteMediaConnectorService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -331,6 +332,19 @@ class TitleController extends Controller
             'billboard' => $baseData['billboard'],
             'rows' => $finalRows,
             'total_titles' => $baseData['total_titles'],
+            'has_active_downloads' => MediaIngestTask::whereIn('status', ['pending', 'downloading', 'processing'])->exists(),
+        ]);
+    }
+
+    /**
+     * Comprobar de forma ultraligera si existen descargas activas en proceso.
+     */
+    public function activeDownloads(): JsonResponse
+    {
+        $hasActive = MediaIngestTask::whereIn('status', ['pending', 'downloading', 'processing'])->exists();
+        return response()->json([
+            'status' => 'success',
+            'has_active_downloads' => $hasActive,
         ]);
     }
 

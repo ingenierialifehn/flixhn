@@ -100,6 +100,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Catálogo de Video y Streaming
     Route::get('/titles', [TitleController::class, 'index']);
+    Route::get('/titles/active-downloads', [TitleController::class, 'activeDownloads']);
     Route::get('/home', [TitleController::class, 'index']);
     Route::get('/browse', [TitleController::class, 'index']);
     Route::get('/titles/{id}', [TitleController::class, 'show']);

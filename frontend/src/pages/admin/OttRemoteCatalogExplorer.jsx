@@ -19,6 +19,7 @@ import {
   Eye,
 } from 'lucide-react';
 import FolderPickerModal from './FolderPickerModal';
+import { notifyCatalogUpdated } from '../../utils/catalogEvents';
 
 /**
  * Insignia vectorial o estilizada de la plataforma para las tarjetas de catálogo remoto.
@@ -144,15 +145,22 @@ export default function OttRemoteCatalogExplorer({
   // Explorador de carpetas dentro del modal de descarga
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
 
-  // Consulta de catálogo remoto al backend
-  const fetchRemoteCatalog = useCallback(
-    async (query = '', provider = 'all') => {
+  // Consulta de catálogo remoto al backend (Tiempo real)
+  const fetchOttResults = useCallback(
+    async (query = '') => {
+      const cleanQuery = (query || '').trim();
+      if (!cleanQuery || cleanQuery.length < 2) {
+        setResults([]);
+        setLoading(false);
+        return;
+      }
+
       setLoading(true);
       try {
         const res = await api.get('/admin/ott-providers/search', {
           params: {
-            query: query.trim(),
-            provider: provider !== 'all' ? provider : undefined,
+            query: cleanQuery,
+            provider: selectedProvider !== 'all' ? selectedProvider : undefined,
           },
         });
 
@@ -174,30 +182,45 @@ export default function OttRemoteCatalogExplorer({
         setLoading(false);
       }
     },
-    [showToast]
+    [selectedProvider, showToast]
   );
 
-  // Carga inicial de títulos destacados al montar el componente
+  // Búsqueda en tiempo real con debounce de 350ms en el input
   useEffect(() => {
-    fetchRemoteCatalog('', 'all');
-  }, [fetchRemoteCatalog]);
+    if (!searchQuery || searchQuery.trim().length < 2) {
+      setResults([]);
+      setLoading(false);
+      setSearchedOnce(false);
+      return;
+    }
 
-  // Manejador del submit de búsqueda
+    setLoading(true);
+    const timer = setTimeout(() => {
+      fetchOttResults(searchQuery);
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery, selectedProvider, fetchOttResults]);
+
+  // Manejador del submit de búsqueda (Enter)
   const handleSearchSubmit = (e) => {
     if (e) e.preventDefault();
-    fetchRemoteCatalog(searchQuery, selectedProvider);
+    if (searchQuery && searchQuery.trim().length >= 2) {
+      fetchOttResults(searchQuery);
+    }
   };
 
   // Cambio de plataforma desde el selector
   const handleProviderChange = (newProvider) => {
     setSelectedProvider(newProvider);
-    fetchRemoteCatalog(searchQuery, newProvider);
   };
 
   // Limpiar búsqueda
   const handleClearSearch = () => {
     setSearchQuery('');
-    fetchRemoteCatalog('', selectedProvider);
+    setResults([]);
+    setSearchedOnce(false);
+    setLoading(false);
   };
 
   // Abrir modal de confirmación de descarga verificando plataformas conectadas
@@ -287,6 +310,14 @@ export default function OttRemoteCatalogExplorer({
           onTaskCreated(createdTask);
         }
 
+        // Emitir señal global al canal para refrescar el catálogo en /browse y otras pestañas
+        notifyCatalogUpdated({
+          action: 'task_created',
+          task: createdTask,
+          title: confirmItem.title,
+          provider: assignedProvider,
+        });
+
         setConfirmItem(null);
       }
     } catch (err) {
@@ -352,18 +383,27 @@ export default function OttRemoteCatalogExplorer({
       {/* Barra de Búsqueda Interactiva & Filtros */}
       <form onSubmit={handleSearchSubmit} className="space-y-3">
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-          {/* Campo de búsqueda de texto */}
+          {/* Campo de búsqueda de texto con spinner sutil integrado */}
           <div className="relative flex-1">
             <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-zinc-400">
-              <Search className="w-4 h-4" />
+              {loading ? (
+                <RefreshCw className="w-4 h-4 text-red-500 animate-spin" />
+              ) : (
+                <Search className="w-4 h-4 text-zinc-400" />
+              )}
             </div>
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Buscar película, serie, documental en tus plataformas conectadas..."
+              placeholder="Escribe para buscar en tiempo real (mín. 2 letras)..."
               className="w-full pl-10 pr-10 py-2.5 bg-[#141414] border border-zinc-800 rounded-xl text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-red-500/60 focus:ring-1 focus:ring-red-500/50 transition-all"
             />
+            {loading && (
+              <div className="absolute inset-y-0 right-10 flex items-center pointer-events-none">
+                <span className="text-[11px] font-mono text-zinc-500 animate-pulse mr-1">Buscando...</span>
+              </div>
+            )}
             {searchQuery && (
               <button
                 type="button"
@@ -377,7 +417,7 @@ export default function OttRemoteCatalogExplorer({
           </div>
 
           {/* Selector de plataforma filtrado por conectadas */}
-          <div className="relative sm:w-60 shrink-0">
+          <div className="relative sm:w-64 shrink-0">
             <select
               value={selectedProvider}
               onChange={(e) => handleProviderChange(e.target.value)}
@@ -407,20 +447,6 @@ export default function OttRemoteCatalogExplorer({
               <Filter className="w-3.5 h-3.5" />
             </div>
           </div>
-
-          {/* Botón de búsqueda */}
-          <button
-            type="submit"
-            disabled={loading}
-            className="flex items-center justify-center gap-2 px-5 py-2.5 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-white text-xs font-bold rounded-xl shadow-lg shadow-red-950/40 transition-all active:scale-95 disabled:opacity-50 cursor-pointer shrink-0"
-          >
-            {loading ? (
-              <RefreshCw className="w-4 h-4 animate-spin text-white" />
-            ) : (
-              <Search className="w-4 h-4 text-white" />
-            )}
-            <span>{loading ? 'Consultando...' : 'Buscar en Catálogo'}</span>
-          </button>
         </div>
 
         {/* Píldoras de filtro por tipo de medio */}
@@ -595,28 +621,46 @@ export default function OttRemoteCatalogExplorer({
           })}
         </div>
       ) : (
-        // Estado vacío
+        // Estado vacío o en consulta
         <div className="text-center py-12 px-4 border border-dashed border-zinc-800 rounded-xl space-y-3 bg-[#141414]/50">
-          <Search className="w-8 h-8 text-zinc-600 mx-auto" />
-          <h3 className="text-sm font-semibold text-zinc-300">
-            {searchedOnce
-              ? `No se encontraron resultados para "${searchQuery}"`
-              : 'Explora o busca títulos en tus plataformas conectadas'}
-          </h3>
-          <p className="text-xs text-zinc-400 max-w-md mx-auto">
-            {searchedOnce
-              ? 'Prueba buscando con palabras clave en español o inglés, o selecciona otra plataforma en el filtro superior.'
-              : 'Escribe el nombre de cualquier película o serie arriba para buscarla remotamente en Netflix, Disney+, Max, etc.'}
-          </p>
-          {searchedOnce && (
-            <button
-              type="button"
-              onClick={handleClearSearch}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium rounded-lg transition-colors cursor-pointer"
-            >
-              <RefreshCw className="w-3.5 h-3.5 text-zinc-400" />
-              <span>Ver Títulos Destacados</span>
-            </button>
+          {loading ? (
+            <>
+              <RefreshCw className="w-8 h-8 text-red-500 animate-spin mx-auto" />
+              <h3 className="text-sm font-semibold text-zinc-300">
+                Consultando catálogo remoto OTT...
+              </h3>
+              <p className="text-xs text-zinc-500 max-w-md mx-auto">
+                Buscando coincidencias para "{searchQuery}" en plataformas conectadas.
+              </p>
+            </>
+          ) : !searchQuery || searchQuery.trim().length < 2 ? (
+            <>
+              <Search className="w-8 h-8 text-zinc-600 mx-auto" />
+              <h3 className="text-sm font-semibold text-zinc-300">
+                Búsqueda On-Demand en Tiempo Real
+              </h3>
+              <p className="text-xs text-zinc-400 max-w-md mx-auto">
+                Escribe al menos 2 caracteres en el buscador para consultar al instante títulos disponibles en Netflix, Disney+, Max, Prime Video y TMDb.
+              </p>
+            </>
+          ) : (
+            <>
+              <AlertCircle className="w-8 h-8 text-zinc-600 mx-auto" />
+              <h3 className="text-sm font-semibold text-zinc-300">
+                No se encontraron resultados para "{searchQuery}"
+              </h3>
+              <p className="text-xs text-zinc-400 max-w-md mx-auto">
+                Prueba buscando con palabras clave diferentes o selecciona otra plataforma en el selector.
+              </p>
+              <button
+                type="button"
+                onClick={handleClearSearch}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium rounded-lg transition-colors cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5 text-zinc-400" />
+                <span>Limpiar Búsqueda</span>
+              </button>
+            </>
           )}
         </div>
       )}

@@ -35,6 +35,7 @@ import {
 } from 'lucide-react';
 import FolderPickerModal from './FolderPickerModal';
 import OttRemoteCatalogExplorer from './OttRemoteCatalogExplorer';
+import { notifyCatalogUpdated } from '../../utils/catalogEvents';
 
 /* =========================================================================
    LOGOS OFICIALES EN BADGES VECTORIALES NÍTITOS (#141414)
@@ -272,6 +273,7 @@ export default function OttSyncManagement({ connectedPlatforms: propConnectedPla
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [syncingProviders, setSyncingProviders] = useState({});
+  const prevCompletedCountRef = useRef(null);
 
   // Filtros de la cola de descargas
   const [searchFilter, setSearchFilter] = useState('');
@@ -368,6 +370,18 @@ export default function OttSyncManagement({ connectedPlatforms: propConnectedPla
           (t) => t.status === 'completed' || t.progress >= 100
         );
         const failedTasks = loadedTasks.filter((t) => t.status === 'failed');
+
+        // Notificar al canal global si alguna tarea ha completado su descarga
+        if (
+          prevCompletedCountRef.current !== null &&
+          completedTasks.length > prevCompletedCountRef.current
+        ) {
+          notifyCatalogUpdated({
+            action: 'task_completed',
+            completedCount: completedTasks.length,
+          });
+        }
+        prevCompletedCountRef.current = completedTasks.length;
 
         let totalSpeed = 0;
         downloadingTasks.forEach((t) => {
@@ -765,6 +779,7 @@ export default function OttSyncManagement({ connectedPlatforms: propConnectedPla
       if (res.data?.status === 'success' || res.data?.success) {
         showToast('info', `Descarga de '${task.title}' cancelada.`);
         loadOttData();
+        notifyCatalogUpdated({ action: 'task_canceled', taskId: task.id, title: task.title });
       }
     } catch (err) {
       showToast('error', 'Error cancelando la descarga.');
@@ -777,6 +792,7 @@ export default function OttSyncManagement({ connectedPlatforms: propConnectedPla
       if (res.data?.status === 'success' || res.data?.success) {
         showToast('success', `Reanudando descarga de '${task.title}'...`);
         loadOttData();
+        notifyCatalogUpdated({ action: 'task_retried', taskId: task.id, title: task.title });
       }
     } catch (err) {
       showToast('error', 'Error al reanudar la tarea.');
@@ -788,6 +804,7 @@ export default function OttSyncManagement({ connectedPlatforms: propConnectedPla
       await api.delete(`/admin/ingest/tasks/${task.id}`);
       showToast('success', 'Tarea eliminada');
       await loadOttData();
+      notifyCatalogUpdated({ action: 'task_deleted', taskId: task.id });
     } catch (err) {
       console.error('Error al eliminar tarea:', err);
       showToast('error', 'Error al eliminar la tarea.');
@@ -800,6 +817,7 @@ export default function OttSyncManagement({ connectedPlatforms: propConnectedPla
       showToast('success', 'Todas las tareas han sido eliminadas');
       setTasks([]);
       await loadOttData();
+      notifyCatalogUpdated({ action: 'all_tasks_deleted' });
     } catch (err) {
       console.error('Error eliminando todas las tareas:', err);
       showToast('error', 'Error al eliminar todas las tareas.');
@@ -812,6 +830,7 @@ export default function OttSyncManagement({ connectedPlatforms: propConnectedPla
       if (res.data?.success) {
         showToast('info', res.data.message || 'Se limpiaron las tareas completadas.');
         loadOttData();
+        notifyCatalogUpdated({ action: 'tasks_cleared' });
       }
     } catch (err) {
       showToast('error', 'Error limpiando tareas.');

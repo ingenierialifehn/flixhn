@@ -34,6 +34,7 @@ import {
   Terminal,
 } from 'lucide-react';
 import FolderPickerModal from './FolderPickerModal';
+import { notifyCatalogUpdated } from '../../utils/catalogEvents';
 
 export default function IngestManagement() {
   // Estados principales de tareas y métricas
@@ -197,6 +198,7 @@ export default function IngestManagement() {
         setIsSecurityModalOpen(false);
         setAdminPassword('');
         loadData();
+        notifyCatalogUpdated({ action: 'ingest_task_created', task: res.data.task });
       }
     } catch (err) {
       console.error('Error al iniciar ingesta:', err);
@@ -239,6 +241,7 @@ export default function IngestManagement() {
       if (res.data) {
         showFeedback('info', res.data.message || 'Descarga cancelada correctamente.');
         loadData();
+        notifyCatalogUpdated({ action: 'ingest_task_canceled', taskId });
       }
     } catch (err) {
       console.error('Error cancelando descarga:', err);
@@ -255,6 +258,7 @@ export default function IngestManagement() {
       if (res.data) {
         showFeedback('success', res.data.message || 'Reanudando ingesta...');
         loadData();
+        notifyCatalogUpdated({ action: 'ingest_task_retried', taskId });
       }
     } catch (err) {
       console.error('Error reintentando descarga:', err);
@@ -269,6 +273,7 @@ export default function IngestManagement() {
       if (res.data) {
         showFeedback('success', 'Tarea eliminada del historial.');
         loadData();
+        notifyCatalogUpdated({ action: 'ingest_task_deleted', taskId });
       }
     } catch (err) {
       console.error('Error eliminando tarea:', err);
