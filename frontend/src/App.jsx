@@ -16,6 +16,7 @@ import AdminLayout from './pages/admin/AdminLayout';
 import CatalogFilterBar from './components/CatalogFilterBar';
 import { HardDrive, RefreshCw, Settings, Film } from 'lucide-react';
 import api from './api/axios';
+import { subscribeToCatalogUpdates } from './utils/catalogEvents';
 
 function App() {
   const { user, token, activeProfile, loading } = useAuth();
@@ -45,6 +46,7 @@ function App() {
   // Estados de búsqueda reactiva en tiempo real (Estilo Netflix)
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
+  const [hasActiveDownloads, setHasActiveDownloads] = useState(false);
 
   // Estados de modales y reproducción
   const [modalTitleId, setModalTitleId] = useState(null);
@@ -52,28 +54,35 @@ function App() {
   const [activeLiveChannel, setActiveLiveChannel] = useState(null);
   const [liveChannelsList, setLiveChannelsList] = useState([]);
 
-  // Carga del catálogo desde la API de Laravel
-  const loadCatalog = useCallback(() => {
+  // Carga reactiva del catálogo desde la API de Laravel con anti-caché y soporte silencioso
+  const loadCatalog = useCallback((options = false) => {
     if (!token || !activeProfile) return;
 
-    setCatalogLoading(true);
-    api.get(`/titles?profile_id=${activeProfile.id}`)
+    const isSilent = options === true || (typeof options === 'object' && options !== null && !(options instanceof Event));
+    if (!isSilent) setCatalogLoading(true);
+
+    api.get(`/titles?profile_id=${activeProfile.id}&_t=${Date.now()}`)
       .then((res) => {
         if (res.data) {
           setBillboardTitle(res.data.billboard || null);
           setRows(res.data.rows || []);
-        } else {
+          if (typeof res.data.has_active_downloads === 'boolean') {
+            setHasActiveDownloads(res.data.has_active_downloads);
+          }
+        } else if (!isSilent) {
           setBillboardTitle(null);
           setRows([]);
         }
       })
       .catch((err) => {
         console.error('Error cargando catálogo FlixHN:', err);
-        setBillboardTitle(null);
-        setRows([]);
+        if (!isSilent) {
+          setBillboardTitle(null);
+          setRows([]);
+        }
       })
       .finally(() => {
-        setCatalogLoading(false);
+        if (!isSilent) setCatalogLoading(false);
       });
   }, [token, activeProfile?.id]);
 
@@ -92,9 +101,42 @@ function App() {
     }
   };
 
+  // 1. Recarga automática de datos al montar la vista y al enfocar la pestaña
   useEffect(() => {
     loadCatalog();
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        loadCatalog(true);
+      }
+    };
+
+    window.addEventListener('focus', loadCatalog);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.removeEventListener('focus', loadCatalog);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, [loadCatalog]);
+
+  // 2. Canal de eventos global (BroadcastChannel 'flixhn_catalog_sync' y 'catalogUpdated')
+  useEffect(() => {
+    const unsubscribe = subscribeToCatalogUpdates(() => {
+      loadCatalog(true);
+    });
+    return unsubscribe;
+  }, [loadCatalog]);
+
+  // 3. Sondeo periódico de fondo (polling cada 5 segundos) si hay descargas activas en proceso
+  useEffect(() => {
+    if (!hasActiveDownloads) return;
+
+    const intervalId = setInterval(() => {
+      loadCatalog(true);
+    }, 5000);
+
+    return () => clearInterval(intervalId);
+  }, [hasActiveDownloads, loadCatalog]);
 
   // Sincronización de URL /admin, /browse, /login y navegación del navegador (Blindaje de Sesión)
   useEffect(() => {

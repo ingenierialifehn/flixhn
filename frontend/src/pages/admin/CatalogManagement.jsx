@@ -18,6 +18,7 @@ import {
   Edit2,
   Tv,
 } from 'lucide-react';
+import { notifyCatalogUpdated } from '../../utils/catalogEvents';
 
 const CatalogManagement = ({ titles = [], onRefresh }) => {
   const [showAddTitle, setShowAddTitle] = useState(false);
@@ -145,8 +146,9 @@ const CatalogManagement = ({ titles = [], onRefresh }) => {
       });
       await loadFolder(currentFolder);
       if (onRefresh) onRefresh();
+      notifyCatalogUpdated({ action: 'title_created' });
     } catch (err) {
-      alert(err.response?.data?.message || 'Error al guardar título');
+      console.error('Error al guardar título:', err);
     } finally {
       setLoading(false);
     }
@@ -158,24 +160,26 @@ const CatalogManagement = ({ titles = [], onRefresh }) => {
     setLoading(true);
     try {
       await api.put(`/admin/titles/${showEditTitle.id}`, showEditTitle);
+      const updatedId = showEditTitle.id;
       setShowEditTitle(null);
       await loadFolder(currentFolder);
       if (onRefresh) onRefresh();
+      notifyCatalogUpdated({ action: 'title_updated', titleId: updatedId });
     } catch (err) {
-      alert(err.response?.data?.message || 'Error actualizando título');
+      console.error('Error actualizando título:', err);
     } finally {
       setLoading(false);
     }
   };
 
   const handleDeleteTitle = async (id) => {
-    if (!window.confirm('¿Seguro que deseas eliminar este título del catálogo?')) return;
     try {
       await api.delete(`/admin/titles/${id}`);
       await loadFolder(currentFolder);
       if (onRefresh) onRefresh();
+      notifyCatalogUpdated({ action: 'title_deleted', titleId: id });
     } catch (err) {
-      alert('Error eliminando título');
+      console.error('Error eliminando título:', err);
     }
   };
 
@@ -183,12 +187,13 @@ const CatalogManagement = ({ titles = [], onRefresh }) => {
     e.preventDefault();
     try {
       await api.post(`/admin/titles/${showAddEpisode.id}/episodes`, newEpisode);
-      alert('Episodio agregado con éxito.');
+      const titleId = showAddEpisode.id;
       setShowAddEpisode(null);
       await loadFolder(currentFolder);
       if (onRefresh) onRefresh();
+      notifyCatalogUpdated({ action: 'episode_added', titleId });
     } catch (err) {
-      alert(err.response?.data?.message || 'Error agregando episodio');
+      console.error('Error agregando episodio:', err);
     }
   };
 

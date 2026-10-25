@@ -274,6 +274,7 @@ export default function OttSyncManagement({ connectedPlatforms: propConnectedPla
   const [refreshing, setRefreshing] = useState(false);
   const [syncingProviders, setSyncingProviders] = useState({});
   const prevCompletedCountRef = useRef(null);
+  const prevCompletedIdsRef = useRef(null);
 
   // Filtros de la cola de descargas
   const [searchFilter, setSearchFilter] = useState('');
@@ -372,9 +373,11 @@ export default function OttSyncManagement({ connectedPlatforms: propConnectedPla
         const failedTasks = loadedTasks.filter((t) => t.status === 'failed');
 
         // Notificar al canal global si alguna tarea ha completado su descarga
+        const completedIds = new Set(completedTasks.map((t) => t.id));
         if (
           prevCompletedCountRef.current !== null &&
-          completedTasks.length > prevCompletedCountRef.current
+          (completedTasks.length > prevCompletedCountRef.current ||
+           completedTasks.some((t) => prevCompletedIdsRef.current && !prevCompletedIdsRef.current.has(t.id)))
         ) {
           notifyCatalogUpdated({
             action: 'task_completed',
@@ -382,6 +385,7 @@ export default function OttSyncManagement({ connectedPlatforms: propConnectedPla
           });
         }
         prevCompletedCountRef.current = completedTasks.length;
+        prevCompletedIdsRef.current = completedIds;
 
         let totalSpeed = 0;
         downloadingTasks.forEach((t) => {
@@ -613,6 +617,7 @@ export default function OttSyncManagement({ connectedPlatforms: propConnectedPla
           'Sync OTT En Proceso'
         );
         loadOttData(true);
+        notifyCatalogUpdated({ action: 'sync_started', provider: providerItem.provider });
       } else {
         showToast('error', res.data?.message || 'Error iniciando sincronización.');
         loadOttData();
@@ -642,6 +647,7 @@ export default function OttSyncManagement({ connectedPlatforms: propConnectedPla
           if (res.data?.success) {
             showToast('success', `Proveedor '${providerItem.name}' removido.`);
             loadOttData();
+            notifyCatalogUpdated({ action: 'provider_deleted', provider: providerItem.provider });
           }
         } catch (err) {
           showToast('error', 'Error al remover proveedor.');

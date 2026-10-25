@@ -82,7 +82,7 @@ const Browse = ({ onPlay, onNavigateToAdmin }) => {
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        loadCatalog(true);
+        loadCatalog();
       }
     };
 
@@ -92,7 +92,14 @@ const Browse = ({ onPlay, onNavigateToAdmin }) => {
       window.removeEventListener('focus', loadCatalog);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [loadCatalog]);
+  }, []);
+
+  // Recarga al cambiar o resolver el perfil activo
+  useEffect(() => {
+    if (activeProfile?.id) {
+      loadCatalog();
+    }
+  }, [activeProfile?.id, loadCatalog]);
 
   // 2. Canal de eventos global (BroadcastChannel 'flixhn_catalog_sync' y 'catalogUpdated')
   useEffect(() => {

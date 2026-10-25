@@ -185,22 +185,17 @@ export default function OttRemoteCatalogExplorer({
     [selectedProvider, showToast]
   );
 
-  // Búsqueda en tiempo real con debounce de 350ms en el input
+  // Búsqueda en tiempo real con debounce de 350-400ms en el input
   useEffect(() => {
     if (!searchQuery || searchQuery.trim().length < 2) {
       setResults([]);
-      setLoading(false);
-      setSearchedOnce(false);
       return;
     }
-
-    setLoading(true);
     const timer = setTimeout(() => {
       fetchOttResults(searchQuery);
     }, 350);
-
     return () => clearTimeout(timer);
-  }, [searchQuery, selectedProvider, fetchOttResults]);
+  }, [searchQuery, selectedProvider]);
 
   // Manejador del submit de búsqueda (Enter)
   const handleSearchSubmit = (e) => {
@@ -493,7 +488,7 @@ export default function OttRemoteCatalogExplorer({
       </form>
 
       {/* Cuadrícula de Resultados */}
-      {loading ? (
+      {loading && results.length === 0 ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
           {[...Array(6)].map((_, i) => (
             <div
@@ -508,7 +503,7 @@ export default function OttRemoteCatalogExplorer({
           ))}
         </div>
       ) : filteredResults.length > 0 ? (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+        <div className={`grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 transition-opacity duration-150 ${loading ? 'opacity-70' : 'opacity-100'}`}>
           {filteredResults.map((item) => {
             const isSeries = item.media_type === 'series';
 
