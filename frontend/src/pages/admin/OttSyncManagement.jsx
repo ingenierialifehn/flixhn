@@ -337,6 +337,17 @@ export default function OttSyncManagement({ connectedPlatforms: propConnectedPla
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
   const [folderPickerTarget, setFolderPickerTarget] = useState('connect'); // 'connect' | 'add'
 
+  // Estado del Servicio FlixGrab Daemon en Segundo Plano
+  const [daemonStatus, setDaemonStatus] = useState({
+    running: false,
+    pid: null,
+    status_label: 'DETENIDO',
+    active_tasks: 0,
+    completed_tasks: 0,
+    connected_providers: [],
+  });
+  const [daemonLoading, setDaemonLoading] = useState(false);
+
   /* -------------------------------------------------------------------------
      CARGA DE DATOS REALES (Vía GET /api/admin/ott-providers y GET /api/admin/ingest/tasks)
      ------------------------------------------------------------------------- */
@@ -344,10 +355,15 @@ export default function OttSyncManagement({ connectedPlatforms: propConnectedPla
     async (isPolling = false) => {
       if (!isPolling) setRefreshing(true);
       try {
-        const [resProviders, resTasks] = await Promise.allSettled([
+        const [resProviders, resTasks, resDaemon] = await Promise.allSettled([
           api.get('/admin/ott-providers'),
           api.get('/admin/ingest/tasks'),
+          api.get('/admin/ott-providers/daemon/status'),
         ]);
+
+        if (resDaemon.status === 'fulfilled' && resDaemon.value?.data?.daemon) {
+          setDaemonStatus(resDaemon.value.data.daemon);
+        }
 
         let loadedProviders = [];
         if (resProviders.status === 'fulfilled' && resProviders.value?.data?.providers) {
@@ -656,6 +672,23 @@ export default function OttSyncManagement({ connectedPlatforms: propConnectedPla
         }
       },
     });
+  };
+
+  // Control del servicio FlixGrab Daemon (start, stop, restart, run-once)
+  const handleDaemonControl = async (action) => {
+    setDaemonLoading(true);
+    try {
+      const res = await api.post('/admin/ott-providers/daemon/control', { action });
+      if (res.data?.daemon) {
+        setDaemonStatus(res.data.daemon);
+        showToast('success', `FlixGrab Daemon: Acción '${action}' procesada exitosamente.`);
+      }
+    } catch (err) {
+      showToast('error', `Error al controlar FlixGrab Daemon: ${err.message}`);
+    } finally {
+      setDaemonLoading(false);
+      loadOttData(true);
+    }
   };
 
   /* -------------------------------------------------------------------------
@@ -1019,6 +1052,90 @@ export default function OttSyncManagement({ connectedPlatforms: propConnectedPla
               </span>
               <span className="text-xs text-zinc-400">listas para streaming</span>
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Tarjeta de Control: FlixGrab OTT Background Daemon */}
+      <div className="bg-[#181818] border border-zinc-800 rounded-2xl p-5 shadow-xl space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-red-600/10 border border-red-500/30 flex items-center justify-center shrink-0">
+              <Zap className="w-5 h-5 text-[#E50914]" />
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-base font-bold text-white tracking-wide">
+                  FlixGrab OTT Engine
+                </h3>
+                <span className="text-[10px] uppercase font-black px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700">
+                  Daemon en Segundo Plano
+                </span>
+                {daemonStatus.running ? (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-950/70 border border-emerald-500/40 text-emerald-400">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    Activo (PID: {daemonStatus.pid})
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-zinc-900 border border-zinc-700 text-zinc-400">
+                    <span className="w-2 h-2 rounded-full bg-zinc-500" />
+                    Detenido
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-zinc-400 mt-1">
+                Vigila automáticamente cuentas conectadas (como Netflix), procesa descargas en segundo plano hacia <code className="text-zinc-300 bg-zinc-900 px-1 rounded">/storage/media</code> e indexa títulos y carátulas oficiales directamente en <strong className="text-zinc-200">/browse</strong>.
+              </p>
+            </div>
+          </div>
+
+          {/* Botones de Control del Daemon */}
+          <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+            {daemonStatus.running ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => handleDaemonControl('restart')}
+                  disabled={daemonLoading}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-zinc-300 hover:text-white bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 rounded-lg transition-colors cursor-pointer"
+                  title="Reiniciar proceso daemon"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${daemonLoading ? 'animate-spin' : ''}`} />
+                  <span>Reiniciar</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDaemonControl('stop')}
+                  disabled={daemonLoading}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-red-400 hover:text-red-300 bg-red-950/40 hover:bg-red-950/80 border border-red-500/30 rounded-lg transition-colors cursor-pointer"
+                  title="Detener servicio en segundo plano"
+                >
+                  <Pause className="w-3.5 h-3.5" />
+                  <span>Detener</span>
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => handleDaemonControl('start')}
+                disabled={daemonLoading}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-red-600 hover:bg-red-500 rounded-lg transition-colors shadow-md cursor-pointer"
+                title="Iniciar servicio en segundo plano"
+              >
+                <Play className="w-3.5 h-3.5 fill-current" />
+                <span>Iniciar Daemon</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => handleDaemonControl('run-once')}
+              disabled={daemonLoading}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-zinc-300 hover:text-white bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 rounded-lg transition-colors cursor-pointer"
+              title="Ejecutar ciclo de sincronización y descarga inmediato"
+            >
+              <DownloadCloud className="w-3.5 h-3.5 text-sky-400" />
+              <span>Ejecutar Ahora</span>
+            </button>
           </div>
         </div>
       </div>

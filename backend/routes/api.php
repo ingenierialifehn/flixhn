@@ -271,6 +271,10 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/{provider}/sync', [OttProviderController::class, 'sync']);
             Route::post('/{provider}/reset-status', [OttProviderController::class, 'resetStatus']);
             Route::delete('/{provider}', [OttProviderController::class, 'destroy']);
+
+            // FlixGrab OTT Background Daemon Endpoints
+            Route::get('/daemon/status', [OttProviderController::class, 'daemonStatus']);
+            Route::post('/daemon/control', [OttProviderController::class, 'daemonControl']);
         });
 
         // Endpoint canónico directo para tareas de ingesta OTT

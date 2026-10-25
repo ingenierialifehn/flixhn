@@ -596,4 +596,121 @@ class OttProviderController extends Controller
             Log::warning("No se pudo iniciar el worker de cola en segundo plano: " . $e->getMessage());
         }
     }
+
+    /**
+     * GET /api/admin/ott-providers/daemon/status
+     * Devuelve la telemetría en tiempo real del servicio en segundo plano FlixGrab Daemon.
+     */
+    public function daemonStatus(): JsonResponse
+    {
+        $pidFileCandidates = [
+            base_path('../daemon/flixgrab_daemon.pid'),
+            base_path('daemon/flixgrab_daemon.pid'),
+            '/var/www/html/daemon/flixgrab_daemon.pid',
+        ];
+
+        $pid = null;
+        $isRunning = false;
+
+        foreach ($pidFileCandidates as $candidate) {
+            if (File::exists($candidate)) {
+                $rawPid = trim((string) File::get($candidate));
+                if (is_numeric($rawPid)) {
+                    $pid = (int) $rawPid;
+                    // Verificar si el proceso sigue activo
+                    if (PHP_OS_FAMILY === 'Windows') {
+                        $out = @shell_exec("tasklist /FI \"PID eq {$pid}\" 2>&1");
+                        $isRunning = !empty($out) && str_contains(strtolower($out), 'python');
+                    } else {
+                        $isRunning = file_exists("/proc/{$pid}");
+                    }
+                    if ($isRunning) break;
+                }
+            }
+        }
+
+        $activeTasks = \App\Models\OttDownloadTask::whereIn('status', ['pending', 'downloading'])->count();
+        $completedTasks = \App\Models\OttDownloadTask::where('status', 'completed')->count();
+        $connectedProviders = \App\Models\OttProviderAccount::where('status', 'connected')->pluck('provider')->toArray();
+
+        return response()->json([
+            'success' => true,
+            'daemon' => [
+                'name' => 'FlixGrab OTT Engine Daemon',
+                'running' => $isRunning,
+                'pid' => $isRunning ? $pid : null,
+                'status_label' => $isRunning ? 'ACTIVO (En segundo plano)' : 'DETENIDO',
+                'active_tasks' => $activeTasks,
+                'completed_tasks' => $completedTasks,
+                'connected_providers' => $connectedProviders,
+                'last_check' => now()->toIso8601String(),
+            ]
+        ]);
+    }
+
+    /**
+     * POST /api/admin/ott-providers/daemon/control
+     * Inicia, detiene o reinicia el daemon en segundo plano.
+     */
+    public function daemonControl(Request $request): JsonResponse
+    {
+        $action = strtolower($request->input('action', 'status'));
+
+        if (!in_array($action, ['start', 'stop', 'restart', 'status', 'run-once'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Acción inválida. Opciones válidas: start, stop, restart, status, run-once',
+            ], 422);
+        }
+
+        try {
+            $daemonScriptCandidates = [
+                base_path('../daemon/flixgrab_daemon.py'),
+                base_path('daemon/flixgrab_daemon.py'),
+            ];
+
+            $script = null;
+            foreach ($daemonScriptCandidates as $cand) {
+                if (file_exists($cand)) {
+                    $script = $cand;
+                    break;
+                }
+            }
+
+            if (!$script) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No se localizó el ejecutable del daemon en el servidor.',
+                ], 500);
+            }
+
+            $pythonBin = PHP_OS_FAMILY === 'Windows' ? 'python' : 'python3';
+            $escapedScript = escapeshellarg($script);
+
+            if ($action === 'start') {
+                if (PHP_OS_FAMILY === 'Windows') {
+                    $cmd = "start /B {$pythonBin} {$escapedScript} start > NUL 2>&1";
+                    pclose(popen($cmd, 'r'));
+                } else {
+                    exec("{$pythonBin} {$escapedScript} start > /dev/null 2>&1 &");
+                }
+            } elseif ($action === 'stop') {
+                exec("{$pythonBin} {$escapedScript} stop");
+            } elseif ($action === 'restart') {
+                exec("{$pythonBin} {$escapedScript} restart");
+            } elseif ($action === 'run-once') {
+                exec("{$pythonBin} {$escapedScript} run-once > /dev/null 2>&1 &");
+            }
+
+            sleep(1);
+
+            return $this->daemonStatus();
+        } catch (\Throwable $e) {
+            Log::error("Error en daemonControl ({$action}): " . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Error ejecutando comando del daemon: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
 }
