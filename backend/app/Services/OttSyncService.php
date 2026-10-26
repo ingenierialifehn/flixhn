@@ -102,6 +102,7 @@ class OttSyncService
                 'original_title' => 'Stranger Things',
                 'type' => 'series',
                 'release_year' => 2024,
+                'seasons_count' => 4,
                 'genre' => 'Ciencia Ficción / Misterio',
                 'overview' => 'Cuando un niño desaparece, sus amigos, la familia y la policía se ven envueltos en un misterio que involucra experimentos ultrasecretos, fuerzas sobrenaturales terroríficas y una niña muy extraña.',
                 'poster_url' => 'https://image.tmdb.org/t/p/w500/49WJfeN0moxb9IPfGn8AIqMGskD.jpg',
@@ -115,6 +116,7 @@ class OttSyncService
                 'original_title' => 'Wednesday',
                 'type' => 'series',
                 'release_year' => 2023,
+                'seasons_count' => 2,
                 'genre' => 'Fantasía / Comedia Negra',
                 'overview' => 'Inteligente, sarcástica y un poco muerta por dentro, Merlina Addams investiga una ola de asesinatos mientras hace nuevos amigos —y enemigos— en la Academia Nunca Más.',
                 'poster_url' => 'https://media.themoviedb.org/t/p/w500/9PFonBhy4cQy7Jz20NpMygczOkv.jpg',
@@ -128,6 +130,7 @@ class OttSyncService
                 'original_title' => 'Squid Game',
                 'type' => 'series',
                 'release_year' => 2024,
+                'seasons_count' => 2,
                 'genre' => 'Suspense / Drama',
                 'overview' => 'Cientos de personas con dificultades económicas aceptan una extraña invitación para competir en juegos infantiles. Adentro les esperan un tentador premio y desafíos letales.',
                 'poster_url' => 'https://media.themoviedb.org/t/p/w500/1QdXdRYfktUSONkl1oD5gc6Be0s.jpg',
@@ -147,6 +150,19 @@ class OttSyncService
                 'backdrop_url' => 'https://image.tmdb.org/t/p/original/fkGIb573Zg75t0n40E4H718L.jpg',
                 'duration_seconds' => 7380,
                 'file_size' => 8589934592,
+            ],
+            [
+                'external_id' => 'nflx-661374',
+                'title' => 'Glass Onion: Un misterio de Knives Out',
+                'original_title' => 'Glass Onion: A Knives Out Mystery',
+                'type' => 'movie',
+                'release_year' => 2022,
+                'genre' => 'Misterio / Comedia / Crimen',
+                'overview' => 'El célebre detective Benoit Blanc viaja a Grecia para desentrañar un misterio que involucra a un multimillonario de la tecnología y a su ecléctico grupo de amigos.',
+                'poster_url' => 'https://image.tmdb.org/t/p/w500/vDGr1YdrlfbU9wxTOdpf3zChmv9.jpg',
+                'backdrop_url' => 'https://image.tmdb.org/t/p/original/dKqa850uvbNSCaQCV4Im1XlzEtQ.jpg',
+                'duration_seconds' => 8340,
+                'file_size' => 9100000000,
             ],
             [
                 'external_id' => 'nflx-71912',
@@ -188,6 +204,198 @@ class OttSyncService
                 'backdrop_url' => 'https://image.tmdb.org/t/p/original/9Ju0I97ZfL9VvL2VdOq5M4cK7pZ.jpg',
                 'duration_seconds' => 7860,
                 'file_size' => 8200000000,
+            ],
+            [
+                'external_id' => 'nflx-71446',
+                'title' => 'La Casa de Papel',
+                'original_title' => 'Money Heist',
+                'type' => 'series',
+                'release_year' => 2021,
+                'seasons_count' => 5,
+                'genre' => 'Acción / Crimen / Suspense',
+                'overview' => 'Ocho atracadores toman rehenes en la Fábrica Nacional de Moneda y Timbre de España mientras el líder de la banda manipula a la policía para cumplir su elaborado plan.',
+                'poster_url' => 'https://image.tmdb.org/t/p/w500/reKs8y4mPwXgOpA74TCdUQgt08x.jpg',
+                'backdrop_url' => 'https://image.tmdb.org/t/p/original/gFZri2YbFUBulBgqxaAJmYv1uio.jpg',
+                'duration_seconds' => 3000,
+                'file_size' => 4100000000,
+            ],
+            [
+                'external_id' => 'nflx-70523',
+                'title' => 'Dark',
+                'original_title' => 'Dark',
+                'type' => 'series',
+                'release_year' => 2020,
+                'seasons_count' => 3,
+                'genre' => 'Ciencia Ficción / Misterio / Drama',
+                'overview' => 'La desaparición de dos niños en el pueblo alemán de Winden saca a la luz los vínculos entre cuatro familias y un siniestro secreto que abarca tres generaciones.',
+                'poster_url' => 'https://image.tmdb.org/t/p/w500/apbrbWs8M9lyOpJYU5WXrpFbk1Z.jpg',
+                'backdrop_url' => 'https://image.tmdb.org/t/p/original/3lBDg3i6nn5R2NKICJ79mmRi5Bt.jpg',
+                'duration_seconds' => 3600,
+                'file_size' => 4500000000,
+            ],
+            [
+                'external_id' => 'nflx-42009',
+                'title' => 'Black Mirror',
+                'original_title' => 'Black Mirror',
+                'type' => 'series',
+                'release_year' => 2023,
+                'seasons_count' => 6,
+                'genre' => 'Ciencia Ficción / Distopía / Drama',
+                'overview' => 'Esta serie antológica de ciencia ficción explora un futuro próximo e inquietante donde las mayores innovaciones tecnológicas chocan con los instintos más oscuros.',
+                'poster_url' => 'https://image.tmdb.org/t/p/w500/5UaMirnkE69SknGhIknRvm59X1v.jpg',
+                'backdrop_url' => 'https://image.tmdb.org/t/p/original/7c9UVPPiT9tAuvGZ9umUV87LAwp.jpg',
+                'duration_seconds' => 3700,
+                'file_size' => 4900000000,
+            ],
+            [
+                'external_id' => 'nflx-63351',
+                'title' => 'Narcos',
+                'original_title' => 'Narcos',
+                'type' => 'series',
+                'release_year' => 2017,
+                'seasons_count' => 3,
+                'genre' => 'Crimen / Drama / Biografía',
+                'overview' => 'La verdadera historia de los poderosos y violentos cárteles de la droga en Colombia y los esfuerzos de la ley para combatirlos.',
+                'poster_url' => 'https://image.tmdb.org/t/p/w500/rTmal9fGBwhBXJnIF72QHQjCQjh.jpg',
+                'backdrop_url' => 'https://image.tmdb.org/t/p/original/kCgh5w9s0j3BfG2W8oBq57wR3Yk.jpg',
+                'duration_seconds' => 3300,
+                'file_size' => 4200000000,
+            ],
+            [
+                'external_id' => 'nflx-87739',
+                'title' => 'Gambito de Dama',
+                'original_title' => "The Queen's Gambit",
+                'type' => 'series',
+                'release_year' => 2020,
+                'seasons_count' => 1,
+                'genre' => 'Drama',
+                'overview' => 'En los años cincuenta, una joven huérfana revela un prodigioso don para el ajedrez mientras lucha con sus adicciones en su viaje hacia la cúspide mundial.',
+                'poster_url' => 'https://image.tmdb.org/t/p/w500/zU0htwkhNvBQdVSIKB9lf6v4BiP.jpg',
+                'backdrop_url' => 'https://image.tmdb.org/t/p/original/34OGjFEbHj0E3lE2w0iTUVq049z.jpg',
+                'duration_seconds' => 3600,
+                'file_size' => 4600000000,
+            ],
+            [
+                'external_id' => 'nflx-60574',
+                'title' => 'Peaky Blinders',
+                'original_title' => 'Peaky Blinders',
+                'type' => 'series',
+                'release_year' => 2022,
+                'seasons_count' => 6,
+                'genre' => 'Crimen / Drama / Época',
+                'overview' => 'En 1919, una notoria banda de Birmingham es liderada por el despiadado Tommy Shelby, un jefe del crimen decidido a dominar el mundo a cualquier precio.',
+                'poster_url' => 'https://image.tmdb.org/t/p/w500/vUUqzWa2LnHIVqkaKVlVGkVcZIW.jpg',
+                'backdrop_url' => 'https://image.tmdb.org/t/p/original/70Nx5z0f6V0Zk4YgD2j8KqV1XQx.jpg',
+                'duration_seconds' => 3600,
+                'file_size' => 4800000000,
+            ],
+            [
+                'external_id' => 'nflx-96677',
+                'title' => 'Lupin',
+                'original_title' => 'Lupin',
+                'type' => 'series',
+                'release_year' => 2023,
+                'seasons_count' => 3,
+                'genre' => 'Crimen / Misterio / Aventura',
+                'overview' => 'Inspirado por las aventuras de Arsenio Lupin, el caballero ladrón Assane Diop se propone vengar a su padre por una injusticia infligida por una familia adinerada.',
+                'poster_url' => 'https://image.tmdb.org/t/p/w500/sgxawbFB5Vi5OkPWQLil4liJTnW.jpg',
+                'backdrop_url' => 'https://image.tmdb.org/t/p/original/6KImt1A8U3rXhQ0rZ5YkC5p2Z2V.jpg',
+                'duration_seconds' => 2800,
+                'file_size' => 3800000000,
+            ],
+            [
+                'external_id' => 'nflx-94605',
+                'title' => 'Arcane',
+                'original_title' => 'Arcane',
+                'type' => 'series',
+                'release_year' => 2024,
+                'seasons_count' => 2,
+                'genre' => 'Animación / Acción / Ciencia Ficción',
+                'overview' => 'En medio del agudo conflicto entre las ciudades gemelas de Piltóver y Zaun, dos hermanas luchan en bandos opuestos en una guerra de tecnologías mágicas.',
+                'poster_url' => 'https://image.tmdb.org/t/p/w500/fqldf2t8ztc9aiwn397FQ3cfO0L.jpg',
+                'backdrop_url' => 'https://image.tmdb.org/t/p/original/q8eeiuyWh545uii5W4532i6xQ9x.jpg',
+                'duration_seconds' => 2600,
+                'file_size' => 4300000000,
+            ],
+            [
+                'external_id' => 'nflx-398978',
+                'title' => 'El Irlandés',
+                'original_title' => 'The Irishman',
+                'type' => 'movie',
+                'release_year' => 2019,
+                'genre' => 'Crimen / Drama / Biografía',
+                'overview' => 'Frank Sheeran, un veterano de guerra y asesino a sueldo, rememora los secretos que guardó como leal miembro de la familia criminal Bufalino.',
+                'poster_url' => 'https://image.tmdb.org/t/p/w500/mbm8k3GFnvSzD0biSpfdol79KyP.jpg',
+                'backdrop_url' => 'https://image.tmdb.org/t/p/original/eC0j8e7Y50R15wS9B47W1g03u4A.jpg',
+                'duration_seconds' => 12540,
+                'file_size' => 12500000000,
+            ],
+            [
+                'external_id' => 'nflx-512200',
+                'title' => 'Alerta Roja (Red Notice)',
+                'original_title' => 'Red Notice',
+                'type' => 'movie',
+                'release_year' => 2021,
+                'genre' => 'Acción / Comedia / Crimen',
+                'overview' => 'Un agente del FBI debe asociarse con el ladrón de arte más buscado del planeta para atrapar a una elusiva estafadora de guante blanco.',
+                'poster_url' => 'https://image.tmdb.org/t/p/w500/pe17f8NO5e197hHgjmn4Tpw4GHt.jpg',
+                'backdrop_url' => 'https://image.tmdb.org/t/p/original/dK12GMoJz9YPe99By9ILK0Ah8sq.jpg',
+                'duration_seconds' => 7080,
+                'file_size' => 7900000000,
+            ],
+            [
+                'external_id' => 'nflx-696806',
+                'title' => 'El Proyecto Adam',
+                'original_title' => 'The Adam Project',
+                'type' => 'movie',
+                'release_year' => 2022,
+                'genre' => 'Ciencia Ficción / Aventura / Comedia',
+                'overview' => 'Un piloto que viaja en el tiempo hace un aterrizaje forzoso en 2022 y forma equipo con su yo de 12 años para salvar el futuro de la humanidad.',
+                'poster_url' => 'https://image.tmdb.org/t/p/w500/1X7vow16X7CnCoexH4H4w2ms5v.jpg',
+                'backdrop_url' => 'https://image.tmdb.org/t/p/original/i27qVCE598Z40N1oW4u7s2u5M8z.jpg',
+                'duration_seconds' => 6360,
+                'file_size' => 7100000000,
+            ],
+            [
+                'external_id' => 'nflx-916224',
+                'title' => 'La Sociedad de la Nieve',
+                'original_title' => 'Society of the Snow',
+                'type' => 'movie',
+                'release_year' => 2023,
+                'genre' => 'Aventura / Drama / Supervivencia',
+                'overview' => 'En 1972, el vuelo 571 de la Fuerza Aérea Uruguaya se estrella en los Andes. Atrapados en uno de los entornos más inaccesibles del planeta, los supervivientes recurren a medidas extremas.',
+                'poster_url' => 'https://image.tmdb.org/t/p/w500/2r9dYQZ64oK0i7jG00k4k8hT3b4.jpg',
+                'backdrop_url' => 'https://image.tmdb.org/t/p/original/vdp588C0Z02P84H45oD18wZ7k0f.jpg',
+                'duration_seconds' => 8640,
+                'file_size' => 9500000000,
+            ],
+            [
+                'external_id' => 'nflx-111110',
+                'title' => 'One Piece',
+                'original_title' => 'ONE PIECE',
+                'type' => 'series',
+                'release_year' => 2023,
+                'seasons_count' => 1,
+                'genre' => 'Aventura / Acción / Fantasía',
+                'overview' => 'Con su sombrero de paja y su tripulación de inadaptados, el joven pirata Monkey D. Luffy emprende un viaje épico en busca del legendario tesoro One Piece.',
+                'poster_url' => 'https://image.tmdb.org/t/p/w500/fcXdJUSDiDiFGBuvvdFUt79CLDX.jpg',
+                'backdrop_url' => 'https://image.tmdb.org/t/p/original/4XM8DUTQb3lhLemJC51Jx4a2EuA.jpg',
+                'duration_seconds' => 3400,
+                'file_size' => 4900000000,
+            ],
+            [
+                'external_id' => 'nflx-91363',
+                'title' => 'Bridgerton',
+                'original_title' => 'Bridgerton',
+                'type' => 'series',
+                'release_year' => 2024,
+                'seasons_count' => 3,
+                'genre' => 'Drama Romántico / Época',
+                'overview' => 'Ocho hermanos de la poderosa familia Bridgerton intentan encontrar el amor en la alta sociedad londinense de la Regencia, narrado por la misteriosa Lady Whistledown.',
+                'poster_url' => 'https://image.tmdb.org/t/p/w500/luoKHW5BYvg5x6IMuqa3FBsZpP4.jpg',
+                'backdrop_url' => 'https://image.tmdb.org/t/p/original/f2t4Jz1eP0H2704wW2p6oE8d6j2.jpg',
+                'duration_seconds' => 3600,
+                'file_size' => 4600000000,
             ],
         ],
         'disney' => [
@@ -1311,7 +1519,30 @@ class OttSyncService
         }
 
         // 2. Buscar en el catálogo curado interno de plataformas (catalogSamples)
-        $providersToSearch = $provider ? [$provider => ($this->catalogSamples[$provider] ?? [])] : $this->catalogSamples;
+        if (!$provider || $provider === 'all') {
+            try {
+                $connectedAccounts = OttProviderAccount::where('status', 'connected')->pluck('provider')->toArray();
+            } catch (\Throwable) {
+                $connectedAccounts = [];
+            }
+
+            if (!empty($connectedAccounts)) {
+                $providersToSearch = [];
+                foreach ($connectedAccounts as $cap) {
+                    $normKey = $providerAliasMap[$cap] ?? $cap;
+                    if (isset($this->catalogSamples[$normKey])) {
+                        $providersToSearch[$normKey] = $this->catalogSamples[$normKey];
+                    }
+                }
+                if (empty($providersToSearch)) {
+                    $providersToSearch = $this->catalogSamples;
+                }
+            } else {
+                $providersToSearch = $this->catalogSamples;
+            }
+        } else {
+            $providersToSearch = [$provider => ($this->catalogSamples[$provider] ?? [])];
+        }
 
         foreach ($providersToSearch as $pKey => $items) {
             foreach ($items as $sample) {
@@ -1348,35 +1579,6 @@ class OttSyncService
 
                 $this->crossReferenceAvailability($item);
                 $results[] = $item;
-                $addedKeys[$dedupKey] = true;
-            }
-        }
-
-        // 3. Si hay query pero no hubo coincidencias en TMDb ni en samples (o muy pocas),
-        // generar sugerencias inteligentes dinámicas para que cualquier búsqueda de prueba funcione
-        if (!empty($query) && count($results) < 2) {
-            $cleanQuery = ucwords(str_replace(['_', '-'], ' ', $query));
-            $dedupKey = Str::slug($cleanQuery);
-
-            if (!isset($addedKeys[$dedupKey])) {
-                $targetProvider = $provider ?: $this->inferProviderForTitle($cleanQuery);
-                $isSeries = Str::contains(Str::lower($query), ['season', 'temporada', 'capitulo', 'serie', 'show']) || strlen($cleanQuery) % 2 === 0;
-
-                $dynamicItem = [
-                    'id' => "ext_" . substr(md5($cleanQuery), 0, 10),
-                    'title' => $cleanQuery,
-                    'original_title' => $cleanQuery,
-                    'media_type' => $isSeries ? 'series' : 'movie',
-                    'year' => (string) date('Y'),
-                    'overview' => "Producción de {$targetProvider} disponible en alta definición para descarga e ingesta física hacia el servidor FlixHN.",
-                    'poster_url' => "/api/media/poster?title=" . urlencode($cleanQuery),
-                    'backdrop_url' => "/api/media/backdrop?title=" . urlencode($cleanQuery),
-                    'seasons_count' => $isSeries ? 2 : null,
-                    'provider' => $targetProvider,
-                ];
-
-                $this->crossReferenceAvailability($dynamicItem);
-                $results[] = $dynamicItem;
                 $addedKeys[$dedupKey] = true;
             }
         }

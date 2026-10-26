@@ -8,6 +8,9 @@ use App\Models\Season;
 use App\Models\Episode;
 use App\Models\Category;
 use App\Models\PlaybackProgress;
+use App\Models\MediaItem;
+use App\Models\MediaIngestTask;
+use App\Models\OttDownloadTask;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -456,6 +459,26 @@ class AdminTitleController extends Controller
                     }
                 }
             }
+
+            // C. Títulos descargados e ingesta local On-Net (para que aparezcan directamente en la vista raíz de Biblioteca)
+            $downloadedTitles = Title::with(['seasons:id,title_id,season_number'])
+                ->where(function ($q) {
+                    $q->where('provider', '!=', 'local')
+                      ->orWhere('stream_path', 'LIKE', '%storage/media%')
+                      ->orWhere('stream_path', 'LIKE', '%netflix%')
+                      ->orWhere('stream_path', 'LIKE', '%disney%')
+                      ->orWhere('stream_path', 'LIKE', '%hbo%')
+                      ->orWhere('source_path', 'LIKE', '%storage/media%')
+                      ->orWhere('source_path', 'LIKE', '%media%');
+                })
+                ->orderBy('created_at', 'desc')
+                ->get();
+
+            foreach ($downloadedTitles as $dt) {
+                if (!$titles->contains('id', $dt->id)) {
+                    $titles->push($dt);
+                }
+            }
         } elseif ($cleanPath === 'movies' || $cleanPath === 'peliculas') {
             // ==========================================
             // NIVEL: Películas
@@ -520,16 +543,20 @@ class AdminTitleController extends Controller
                 }
             }
 
-            // Películas no categorizadas o con stream_path directo
-            $unassignedMovies = Title::with(['seasons:id,title_id,season_number'])
+            // Películas categorizadas o descargadas
+            $movieTitles = Title::with(['seasons:id,title_id,season_number'])
                 ->where('type', 'movie')
                 ->where(function ($q) {
-                    $q->whereNull('category_id')->orWhere('stream_path', 'LIKE', 'movies/%');
+                    $q->whereNull('category_id')
+                      ->orWhere('provider', '!=', 'local')
+                      ->orWhere('stream_path', 'LIKE', '%storage/media%')
+                      ->orWhere('stream_path', 'LIKE', 'movies/%');
                 })
                 ->whereNotIn('id', $titles->pluck('id')->filter()->toArray())
-                ->take(50)
+                ->orderBy('created_at', 'desc')
+                ->take(100)
                 ->get();
-            $titles = $titles->concat($unassignedMovies);
+            $titles = $titles->concat($movieTitles);
 
         } elseif ($cleanPath === 'series') {
             // ==========================================
@@ -589,6 +616,21 @@ class AdminTitleController extends Controller
                     ];
                 }
             }
+
+            // Series del catálogo o descargadas
+            $seriesTitles = Title::with(['seasons:id,title_id,season_number'])
+                ->where('type', 'series')
+                ->where(function ($q) {
+                    $q->whereNull('category_id')
+                      ->orWhere('provider', '!=', 'local')
+                      ->orWhere('stream_path', 'LIKE', '%storage/media%')
+                      ->orWhere('stream_path', 'LIKE', 'series/%');
+                })
+                ->whereNotIn('id', $titles->pluck('id')->filter()->toArray())
+                ->orderBy('created_at', 'desc')
+                ->take(100)
+                ->get();
+            $titles = $titles->concat($seriesTitles);
 
         } else {
             // ==========================================
@@ -780,15 +822,79 @@ class AdminTitleController extends Controller
     }
 
     /**
-     * Eliminar título del catálogo.
+     * Eliminar título del catálogo y sus archivos físicos asociados.
      */
-    public function destroy(int $id): JsonResponse
+    public function destroy(string|int $id): JsonResponse
     {
-        $title = Title::findOrFail($id);
+        if (is_string($id) && str_starts_with($id, 'file-')) {
+            return response()->json([
+                'success' => true,
+                'message' => 'Archivo desindexado de la vista.',
+            ]);
+        }
+
+        $title = Title::find($id);
+        if (!$title) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Título no encontrado.',
+            ], 404);
+        }
+
+        $titleName = $title->name;
+        $titleId = $title->id;
+        $streamPath = $title->stream_path;
+
+        // 1. Eliminar archivo multimedia físico si está en almacenamiento local
+        if (!empty($streamPath) && (str_contains($streamPath, 'storage/media') || str_contains($streamPath, 'media/'))) {
+            $candidates = [
+                base_path($streamPath),
+                public_path($streamPath),
+                storage_path('app/public/' . ltrim($streamPath, '/')),
+                '/var/www/html/' . ltrim($streamPath, '/'),
+            ];
+
+            foreach ($candidates as $filePath) {
+                if (!empty($filePath) && file_exists($filePath) && is_file($filePath)) {
+                    @unlink($filePath);
+                    $dir = dirname($filePath);
+                    if (is_dir($dir)) {
+                        $filesLeft = array_diff(@scandir($dir) ?: [], ['.', '..']);
+                        if (empty($filesLeft)) {
+                            @rmdir($dir);
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+
+        // 2. Limpiar registros relacionados en MediaItem, MediaIngestTask y OttDownloadTask
+        try {
+            MediaItem::where('title_id', $titleId)->orWhere('title', $titleName)->delete();
+        } catch (\Throwable) {}
+
+        try {
+            MediaIngestTask::where('title', $titleName)->delete();
+        } catch (\Throwable) {}
+
+        try {
+            OttDownloadTask::where('title_id', $titleId)->orWhere('title', $titleName)->delete();
+        } catch (\Throwable) {}
+
+        // 3. Eliminar temporadas y episodios
+        if ($title->seasons()->exists()) {
+            foreach ($title->seasons as $season) {
+                $season->episodes()->delete();
+                $season->delete();
+            }
+        }
+
         $title->delete();
 
         return response()->json([
-            'message' => 'Título eliminado del catálogo.',
+            'success' => true,
+            'message' => "Título \"{$titleName}\" eliminado del catálogo.",
         ]);
     }
 

@@ -25,6 +25,8 @@ const CatalogManagement = ({ titles = [], onRefresh }) => {
   const [showAddEpisode, setShowAddEpisode] = useState(null); // title object
   const [showEditTitle, setShowEditTitle] = useState(null); // title object for editing
   const [previewVideo, setPreviewVideo] = useState(null); // title object for playback
+  const [titleToDelete, setTitleToDelete] = useState(null); // title object for delete confirmation
+  const [isDeleting, setIsDeleting] = useState(false);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
 
@@ -172,14 +174,24 @@ const CatalogManagement = ({ titles = [], onRefresh }) => {
     }
   };
 
-  const handleDeleteTitle = async (id) => {
+  const handleDeleteTitle = (t) => {
+    setTitleToDelete(t);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!titleToDelete) return;
+    setIsDeleting(true);
     try {
-      await api.delete(`/admin/titles/${id}`);
+      await api.delete(`/admin/titles/${titleToDelete.id}`);
+      const deletedId = titleToDelete.id;
+      setTitleToDelete(null);
       await loadFolder(currentFolder);
       if (onRefresh) onRefresh();
-      notifyCatalogUpdated({ action: 'title_deleted', titleId: id });
+      notifyCatalogUpdated({ action: 'title_deleted', titleId: deletedId });
     } catch (err) {
       console.error('Error eliminando título:', err);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -536,7 +548,7 @@ const CatalogManagement = ({ titles = [], onRefresh }) => {
                 typeFilter === 'all' ? 'bg-[#E50914] text-white' : 'text-zinc-400 hover:text-white'
               }`}
             >
-              Todos ({(titles || []).length})
+              Todos ({activeTitles.length})
             </button>
             <button
               onClick={() => setTypeFilter('movie')}
@@ -648,7 +660,7 @@ const CatalogManagement = ({ titles = [], onRefresh }) => {
                       </button>
                     )}
                     <button
-                      onClick={() => handleDeleteTitle(t.id)}
+                      onClick={() => handleDeleteTitle(t)}
                       className="text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer"
                       title="Eliminar título"
                     >
@@ -1123,6 +1135,79 @@ const CatalogManagement = ({ titles = [], onRefresh }) => {
                 className="px-3 py-1 bg-zinc-800 hover:bg-zinc-700 rounded text-white text-xs font-medium cursor-pointer"
               >
                 Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Confirmación de Eliminación */}
+      {titleToDelete && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-[#181818] border border-zinc-800 rounded-xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center gap-3">
+              <div className="p-3 bg-red-950/50 border border-red-800/60 rounded-xl text-red-500 shrink-0">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="font-bold text-base text-white">¿Eliminar Título?</h3>
+                <p className="text-xs text-zinc-400 mt-0.5">
+                  Esta acción eliminará el título del catálogo y liberará el almacenamiento físico en disco.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3 bg-zinc-900/90 rounded-lg border border-zinc-800 flex items-center gap-3">
+              {titleToDelete.poster_url && (
+                <img
+                  src={titleToDelete.poster_url}
+                  alt={titleToDelete.name}
+                  className="w-10 h-14 object-cover rounded bg-zinc-800 shrink-0"
+                  onError={(e) => {
+                    e.target.onerror = null;
+                    e.target.src = '/img/placeholder-poster.png';
+                  }}
+                />
+              )}
+              <div className="min-w-0">
+                <p className="font-bold text-white text-sm truncate">{titleToDelete.name}</p>
+                <p className="text-zinc-500 text-xs">
+                  {titleToDelete.genre || 'General'} • {titleToDelete.release_year || '2024'}
+                </p>
+                {titleToDelete.stream_path && (
+                  <p className="font-mono text-[10px] text-zinc-500 truncate mt-0.5">
+                    {titleToDelete.stream_path}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-zinc-800">
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={() => setTitleToDelete(null)}
+                className="px-4 py-2 rounded-lg text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={handleConfirmDelete}
+                className="px-4 py-2 rounded-lg text-xs font-bold bg-[#E50914] hover:bg-red-700 text-white transition-all shadow-md shadow-red-950/40 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                {isDeleting ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Eliminando...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Eliminar Definitivamente</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

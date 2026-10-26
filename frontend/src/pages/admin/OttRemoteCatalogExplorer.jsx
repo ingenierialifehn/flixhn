@@ -145,13 +145,11 @@ export default function OttRemoteCatalogExplorer({
   // Explorador de carpetas dentro del modal de descarga
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
 
-  // Consulta de catálogo remoto al backend (Tiempo real)
+  // Consulta de catálogo remoto al backend (Tiempo real y carga de catálogo conectado)
   const fetchOttResults = useCallback(
     async (query = '') => {
       const cleanQuery = (query || '').trim();
-      if (!cleanQuery || cleanQuery.length < 2) {
-        setResults([]);
-        setLoading(false);
+      if (cleanQuery.length === 1) {
         return;
       }
 
@@ -159,7 +157,7 @@ export default function OttRemoteCatalogExplorer({
       try {
         const res = await api.get('/admin/ott-providers/search', {
           params: {
-            query: cleanQuery,
+            query: cleanQuery || undefined,
             provider: selectedProvider !== 'all' ? selectedProvider : undefined,
           },
         });
@@ -185,23 +183,24 @@ export default function OttRemoteCatalogExplorer({
     [selectedProvider, showToast]
   );
 
-  // Búsqueda en tiempo real con debounce de 350-400ms en el input
+  // Carga inicial y búsqueda en tiempo real con debounce
   useEffect(() => {
-    if (!searchQuery || searchQuery.trim().length < 2) {
-      setResults([]);
+    const clean = (searchQuery || '').trim();
+    if (clean.length === 1) {
       return;
     }
     const timer = setTimeout(() => {
-      fetchOttResults(searchQuery);
-    }, 350);
+      fetchOttResults(clean);
+    }, clean ? 350 : 0);
     return () => clearTimeout(timer);
-  }, [searchQuery, selectedProvider]);
+  }, [searchQuery, selectedProvider, fetchOttResults]);
 
   // Manejador del submit de búsqueda (Enter)
   const handleSearchSubmit = (e) => {
     if (e) e.preventDefault();
-    if (searchQuery && searchQuery.trim().length >= 2) {
-      fetchOttResults(searchQuery);
+    const clean = (searchQuery || '').trim();
+    if (clean.length !== 1) {
+      fetchOttResults(clean);
     }
   };
 
@@ -210,12 +209,10 @@ export default function OttRemoteCatalogExplorer({
     setSelectedProvider(newProvider);
   };
 
-  // Limpiar búsqueda
+  // Limpiar búsqueda y restaurar catálogo
   const handleClearSearch = () => {
     setSearchQuery('');
-    setResults([]);
-    setSearchedOnce(false);
-    setLoading(false);
+    fetchOttResults('');
   };
 
   // Abrir modal de confirmación de descarga verificando plataformas conectadas
