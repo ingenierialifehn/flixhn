@@ -2,8 +2,8 @@
 
 namespace App\Console\Commands;
 
+use App\Services\FlixGrabDaemonService;
 use Illuminate\Console\Command;
-use Symfony\Component\Process\Process;
 
 class FlixGrabDaemonCommand extends Command
 {
@@ -12,7 +12,7 @@ class FlixGrabDaemonCommand extends Command
      *
      * @var string
      */
-    protected $signature = 'flixgrab:daemon {action=status : Acción (status, start, stop, restart, run-once)}';
+    protected $signature = 'flixgrab:daemon {action=status : Acción (status, start, stop, restart, run, run-once)}';
 
     /**
      * The console command description.
@@ -24,31 +24,54 @@ class FlixGrabDaemonCommand extends Command
     /**
      * Execute the console command.
      */
-    public function handle(): int
+    public function handle(FlixGrabDaemonService $service): int
     {
         $action = strtolower($this->argument('action'));
-        $daemonScript = base_path('../daemon/flixgrab_daemon.py');
-
-        if (!file_exists($daemonScript)) {
-            $daemonScript = base_path('daemon/flixgrab_daemon.py');
-        }
-
         $this->info("Controlando FlixGrab OTT Daemon -> Acción: [{$action}]");
 
-        $pythonBin = 'python';
-        if (PHP_OS_FAMILY === 'Windows') {
-            $pythonBin = 'python';
-        } else {
-            $pythonBin = file_exists('/usr/bin/python3') ? '/usr/bin/python3' : 'python3';
+        switch ($action) {
+            case 'start':
+                $status = $service->startDaemon();
+                $this->info("Daemon iniciado. PID: " . ($status['pid'] ?? 'N/A'));
+                break;
+
+            case 'stop':
+                $status = $service->stopDaemon();
+                $this->info("Daemon detenido.");
+                break;
+
+            case 'restart':
+                $service->stopDaemon();
+                sleep(1);
+                $status = $service->startDaemon();
+                $this->info("Daemon reiniciado. PID: " . ($status['pid'] ?? 'N/A'));
+                break;
+
+            case 'run':
+                $this->info("Iniciando loop continuo del daemon FlixGrab...");
+                $service->runDaemonLoop(false);
+                break;
+
+            case 'run-once':
+                $this->info("Ejecutando iteración única del daemon FlixGrab...");
+                $service->runDaemonLoop(true);
+                $this->info("Iteración completada.");
+                break;
+
+            case 'status':
+            default:
+                $status = $service->getStatus();
+                $this->table(['Parámetro', 'Valor'], [
+                    ['Estado', $status['status_label']],
+                    ['PID', $status['pid'] ?? 'N/A'],
+                    ['Tareas Activas', $status['active_tasks']],
+                    ['Tareas Completadas', $status['completed_tasks']],
+                    ['Proveedores Conectados', implode(', ', $status['connected_providers'])],
+                    ['Última Verificación', $status['last_check']],
+                ]);
+                break;
         }
 
-        $command = "{$pythonBin} \"{$daemonScript}\" {$action}";
-        $process = Process::fromShellCommandLine($command);
-        $process->setTimeout(60);
-        $process->run(function ($type, $buffer) {
-            $this->output->write($buffer);
-        });
-
-        return $process->isSuccessful() ? self::SUCCESS : self::FAILURE;
+        return self::SUCCESS;
     }
 }

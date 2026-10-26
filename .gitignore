@@ -1,2 +1,4 @@
-
 /backend/public/storage
+*.pid
+daemon/__pycache__/
+backend/daemon/__pycache__/
