@@ -1,4 +1,9 @@
 /backend/public/storage
+/backend/storage/media/
+/media/
 *.pid
+*.mp4
+*.mkv
 daemon/__pycache__/
 backend/daemon/__pycache__/
+

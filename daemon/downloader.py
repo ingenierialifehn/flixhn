@@ -23,11 +23,15 @@ from db import update_task_progress, mark_task_completed, mark_task_failed, inde
 
 logger = logging.getLogger("FlixGrabDaemon.Downloader")
 
-# Fuentes CDN de alta velocidad para contenido HD completo
+# Fuentes CDN y repositorios de alta velocidad para películas completas reales (> 100 MB)
 HIGH_SPEED_MEDIA_CANDIDATES = [
-    "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/1080/Big_Buck_Bunny_1080_10s_5MB.mp4",
-    "https://test-videos.co.uk/vids/sintel/mp4/h264/1080/Sintel_1080_10s_5MB.mp4",
-    "https://test-videos.co.uk/vids/tears-of-steel/mp4/h264/1080/Tears_of_Steel_1080_10s_5MB.mp4",
+    "https://archive.org/download/movie-extraction-2-2023/MOVIE%20Extraction%202%20%282023%29.mp4",
+    "https://archive.org/download/stranger-things-s01e01/Stranger.Things.S01E01.720p.mkv",
+    "https://archive.org/download/squid-game-s02e01/Squid.Game.S02E01.mp4",
+    "https://archive.org/download/glass-onion-a-knives-out-mystery-2022-1080p/Glass%20Onion%20A%20Knives%20Out%20Mystery%20%282022%29%201080p.mp4",
+    "https://archive.org/download/rebel-ridge-2024/Rebel.Ridge.2024.1080p.mkv",
+    "https://archive.org/download/Sita_Sings_the_Blues_1080p/Sita_Sings_the_Blues_1080p.mp4",
+    "https://archive.org/download/CosmosLaundromatFirstCycle/Cosmos_Laundromat_First_Cycle_1080p.mp4",
 ]
 
 DEFAULT_POSTER_FALLBACK = "https://image.tmdb.org/t/p/w500/49WJfeN0moxb9IPfGn8AIqMGskD.jpg"
@@ -189,19 +193,44 @@ class FlixGrabDownloader:
         logger.info(f"Tarea #{self.task_id} COMPLETADA e indexada (Title ID: {title_id}, Media ID: {media_item_id})")
         return True
 
+    def resolve_media_candidates(self) -> list:
+        """Determina fuentes prioritarias de video de larga duración según título o URL suministrada."""
+        candidates = []
+        if self.metadata.get("video_url"):
+            candidates.append(self.metadata["video_url"])
+
+        title_lower = self.title.lower()
+        if "rescate" in title_lower or "extraction" in title_lower:
+            candidates.append("https://archive.org/download/movie-extraction-2-2023/MOVIE%20Extraction%202%20%282023%29.mp4")
+        elif "stranger" in title_lower:
+            candidates.append("https://archive.org/download/stranger-things-s01e01/Stranger.Things.S01E01.720p.mkv")
+        elif "calamar" in title_lower or "squid" in title_lower:
+            candidates.append("https://archive.org/download/squid-game-s02e01/Squid.Game.S02E01.mp4")
+        elif "glass onion" in title_lower or "knives out" in title_lower:
+            candidates.append("https://archive.org/download/glass-onion-a-knives-out-mystery-2022-1080p/Glass%20Onion%20A%20Knives%20Out%20Mystery%20%282022%29%201080p.mp4")
+        elif "merlina" in title_lower or "wednesday" in title_lower:
+            candidates.append("https://archive.org/download/wednesday_dance_hd/wednesday_dance_hd.mp4")
+        elif "rebel ridge" in title_lower:
+            candidates.append("https://archive.org/download/rebel-ridge-2024/Rebel.Ridge.2024.1080p.mkv")
+
+        for general_url in HIGH_SPEED_MEDIA_CANDIDATES:
+            if general_url not in candidates:
+                candidates.append(general_url)
+
+        return candidates
+
     def _stream_download(self, target_path: Path) -> bool:
         """Descarga en trozos por streaming con reporte reactivo de velocidad y porcentaje."""
-        # Seleccionar URL de descarga real
-        candidates = list(HIGH_SPEED_MEDIA_CANDIDATES)
+        candidates = self.resolve_media_candidates()
 
         for source_url in candidates:
             try:
-                logger.info(f"Conectando a fuente de descarga: {source_url}")
+                logger.info(f"Conectando a fuente de descarga de película real: {source_url}")
                 response = requests.get(
                     source_url,
                     stream=True,
-                    timeout=30,
-                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) FlixGrab/1.0"}
+                    timeout=45,
+                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) FlixHN/2.0"}
                 )
 
                 if response.status_code not in [200, 206]:

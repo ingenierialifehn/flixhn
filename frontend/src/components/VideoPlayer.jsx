@@ -206,8 +206,17 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
   const defaultMediaBase = `${window.location.protocol}//${window.location.hostname}:7000/media`;
   const streamBase = import.meta.env.VITE_STREAM_URL || defaultMediaBase;
 
+  const activeMedia = currentEpisode || title;
+  const isDownloadedOtt = Boolean(
+    (title?.provider && title.provider !== 'local' && title.provider !== 'emby') ||
+    (title?.stream_path && (title.stream_path.includes('storage/media/') || title.stream_path.includes('/storage/media/'))) ||
+    (activeMedia?.stream_path && (activeMedia.stream_path.includes('storage/media/') || activeMedia.stream_path.includes('/storage/media/')))
+  );
+
   // Extraer el ID de ítem del servidor de medios (Emby Item ID)
   const targetItemId = React.useMemo(() => {
+    if (isDownloadedOtt) return null;
+
     if (currentEpisode) {
       if (currentEpisode.emby_id && currentEpisode.emby_id !== 'undefined' && currentEpisode.emby_id !== 'null') {
         return currentEpisode.emby_id;
@@ -229,7 +238,7 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
       if (m && m[1] !== 'undefined' && m[1] !== 'null') return m[1];
     }
     return null;
-  }, [title, currentEpisode]);
+  }, [title, currentEpisode, isDownloadedOtt]);
 
   const serverHost = React.useMemo(() => {
     if (rawStreamPath && rawStreamPath.startsWith('http')) {
@@ -241,8 +250,7 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
     return 'http://45.4.87.126:6789';
   }, [rawStreamPath]);
 
-  const activeMedia = currentEpisode || title;
-  const isOtt = !activeMedia?.emby_id && !targetItemId;
+  const isOtt = isDownloadedOtt || (!activeMedia?.emby_id && !targetItemId);
   const API_BASE_URL = (import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || '').replace(/\/api\/?$/, '');
   const ottStreamUrl = activeMedia?.id ? `${API_BASE_URL}/api/media/${activeMedia.id}/stream` : '';
 

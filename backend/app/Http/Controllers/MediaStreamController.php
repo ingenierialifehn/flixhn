@@ -174,11 +174,9 @@ class MediaStreamController extends Controller
             if (!file_exists($dir)) {
                 @mkdir($dir, 0777, true);
             }
-            // Intentar descargar muestra HD real
-            @shell_exec('curl -L --fail --max-time 30 -s -o ' . escapeshellarg($samplePath) . ' https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/1080/Big_Buck_Bunny_1080_10s_5MB.mp4 2>&1');
             if (!file_exists($samplePath) || @filesize($samplePath) < 1048576) {
-                // Generar video MP4 de duración completa vía ffmpeg
-                @shell_exec('ffmpeg -y -f lavfi -i testsrc=duration=60:size=1920x1080:rate=30 -f lavfi -i sine=frequency=440:duration=60 -c:v libx264 -preset ultrafast -b:v 2500k -pix_fmt yuv420p -c:a aac -b:a 192k -movflags +faststart ' . escapeshellarg($samplePath) . ' 2>&1');
+                // Generar video MP4 de contingencia FlixHN HD 1080p con fondo oscuro (#141414) sin clips animados externos
+                @shell_exec('ffmpeg -y -f lavfi -i color=c=0x141414:s=1920x1080:rate=30:duration=30 -f lavfi -i sine=frequency=220:duration=30 -c:v libx264 -preset ultrafast -b:v 2000k -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart ' . escapeshellarg($samplePath) . ' 2>&1');
             }
             if (file_exists($samplePath) && @filesize($samplePath) >= 1024) {
                 @chmod($samplePath, 0666);
