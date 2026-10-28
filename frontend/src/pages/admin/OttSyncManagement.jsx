@@ -664,6 +664,25 @@ export default function OttSyncManagement({
      ACCIONES DE PLATAFORMA (OAuth2, Sync Ahora, Buscar)
      ------------------------------------------------------------------------- */
 
+  // Abrir modal de agregar plataforma personalizada
+  const handleOpenAddPlatformModal = () => {
+    setAddForm({
+      preset: 'amazon_prime',
+      name: 'Amazon Prime Video',
+      slug: 'amazon_prime',
+      auth_method: 'credentials',
+      email: '',
+      password: '',
+      cookies: '',
+      token: '',
+      quality_profile: '1080p',
+      storage_path: '/storage/media/movies',
+      auto_download: true,
+      color: '#00A8E1',
+    });
+    setIsAddPlatformOpen(true);
+  };
+
   // Abrir modal de conexión
   const handleOpenConnectModal = (provider) => {
     setConnectModalProvider(provider);
