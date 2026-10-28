@@ -39,6 +39,7 @@ import {
 } from 'lucide-react';
 import FolderPickerModal from './FolderPickerModal';
 import OttRemoteCatalogExplorer from './OttRemoteCatalogExplorer';
+import OttPlayerModal from './OttPlayerModal';
 import { notifyCatalogUpdated } from '../../utils/catalogEvents';
 
 /* =========================================================================
@@ -404,9 +405,41 @@ export default function OttSyncManagement({
   connectedPlatforms: propConnectedPlatforms = [],
   initialView = 'all',
 } = {}) {
-  // Estado principal de proveedores y tareas
+  // Estado principal de proveedores y tareas (Persistido en localStorage y BD)
   const [providers, setProviders] = useState(DEFAULT_PROVIDERS);
-  const [tasks, setTasks] = useState(INITIAL_DEMO_TASKS);
+  const [tasks, setTasks] = useState(() => {
+    try {
+      const saved = localStorage.getItem('flixhn_ott_tasks');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {}
+    return [];
+  });
+
+  // Estado del reproductor de video local On-Net embebido
+  const [activePlayerMedia, setActivePlayerMedia] = useState(null);
+
+  const handleOpenPlayer = useCallback((task) => {
+    const assignedProvider = task.provider || 'netflix';
+    const uniqueId = task.unique_id || task.id || 'ott_' + Date.now();
+    const slug = (task.title || 'media').toLowerCase().replace(/[^a-z0-9]/g, '_');
+    const dynamicFilePath = task.file_path || task.local_file_path || `/var/www/html/storage/media/${assignedProvider}/${uniqueId}/${slug}.mp4`;
+    const streamUrl = `/api/media/stream?path=${encodeURIComponent(dynamicFilePath)}&title=${encodeURIComponent(task.title)}`;
+
+    setActivePlayerMedia({
+      title: task.title,
+      original_title: task.original_title || task.title,
+      filePath: dynamicFilePath,
+      streamUrl: streamUrl,
+      poster: task.poster_url || task.poster,
+      provider: assignedProvider,
+      quality: task.quality || '4K HDR On-Net',
+      year: task.release_year || task.year,
+      mediaType: task.media_type || task.type,
+    });
+  }, []);
 
   // Sub-navegación: 'all' | 'dashboard' | 'search' | 'queue'
   const [activeViewTab, setActiveViewTab] = useState(() => {
@@ -553,9 +586,10 @@ export default function OttSyncManagement({
         if (resTasks.status === 'fulfilled') {
           const data = resTasks.value?.data;
           const loadedTasks = Array.isArray(data) ? data : data?.tasks || [];
-          if (loadedTasks.length > 0) {
-            setTasks(loadedTasks);
-          }
+          setTasks(loadedTasks);
+          try {
+            localStorage.setItem('flixhn_ott_tasks', JSON.stringify(loadedTasks));
+          } catch {}
         }
       } catch (err) {
         if (!isPolling) {
@@ -593,13 +627,15 @@ export default function OttSyncManagement({
 
           if (nextProg >= 100) {
             anyCompleted = true;
+            const uniqueId = t.unique_id || t.id || 'ott_' + Date.now();
+            const slug = (t.title || 'media').toLowerCase().replace(/[^a-z0-9]/g, '_');
             return {
               ...t,
               progress: 100.0,
               status: 'completed',
               download_speed: 'Completado',
               eta: null,
-              file_path: t.file_path || `/var/www/html/storage/media/${t.provider || 'netflix'}/${(t.title || 'media').toLowerCase().replace(/[^a-z0-9]/g, '_')}.mkv`,
+              file_path: t.file_path || `/var/www/html/storage/media/${t.provider || 'netflix'}/${uniqueId}/${slug}.mp4`,
             };
           }
 
@@ -614,11 +650,15 @@ export default function OttSyncManagement({
           };
         });
 
+        try {
+          localStorage.setItem('flixhn_ott_tasks', JSON.stringify(updated));
+        } catch {}
+
         if (anyCompleted) {
           notifyCatalogUpdated({ action: 'task_completed' });
           showToast(
             'success',
-            'Descarga completada y almacenada en /var/www/html/storage/media. Título disponible en streaming local On-Net.',
+            'Descarga completada y almacenada en /storage/media. Título disponible en streaming local On-Net.',
             'FlixGrab Ingesta'
           );
         }
@@ -899,20 +939,34 @@ export default function OttSyncManagement({
     } catch {}
   };
 
-  const handleDeleteTask = (task) => {
-    setTasks((prev) => prev.filter((t) => t.id !== task.id));
+  const handleDeleteTask = async (task) => {
+    const remaining = tasks.filter((t) => t.id !== task.id);
+    setTasks(remaining);
+    try {
+      localStorage.setItem('flixhn_ott_tasks', JSON.stringify(remaining));
+    } catch {}
     showToast('success', `Tarea de '${task.title}' eliminada de la cola.`);
     try {
-      api.delete(`/admin/ingest/tasks/${task.id}`).catch(() => {});
+      await Promise.allSettled([
+        api.delete(`/admin/ott-providers/tasks/${task.id}`),
+        api.delete(`/admin/ingest/tasks/${task.id}`),
+      ]);
     } catch {}
   };
 
-  const handleClearCompleted = () => {
-    const completedCount = tasks.filter((t) => t.status === 'completed' || t.progress >= 100).length;
-    setTasks((prev) => prev.filter((t) => t.status !== 'completed' && t.progress < 100));
+  const handleClearCompleted = async () => {
+    const remaining = tasks.filter((t) => t.status !== 'completed' && Number(t.progress || 0) < 100);
+    const completedCount = tasks.length - remaining.length;
+    setTasks(remaining);
+    try {
+      localStorage.setItem('flixhn_ott_tasks', JSON.stringify(remaining));
+    } catch {}
     showToast('info', `Se limpiaron ${completedCount} tareas completadas de la cola.`);
     try {
-      api.post('/admin/ott-providers/tasks/clear-completed').catch(() => {});
+      await Promise.allSettled([
+        api.post('/admin/ott-providers/tasks/clear-completed'),
+        api.post('/admin/ingest/tasks/clear-completed'),
+      ]);
     } catch {}
   };
 
@@ -1449,11 +1503,13 @@ export default function OttSyncManagement({
                 <tbody className="divide-y divide-zinc-800/70">
                   {filteredTasks.map((task) => {
                     const isDownloading = task.status === 'downloading' || task.status === 'processing';
-                    const isCompleted = task.status === 'completed' || task.progress >= 100;
+                    const isCompleted = task.status === 'completed' || Number(task.progress || 0) >= 100;
                     const isCancelled = task.status === 'cancelled';
                     const isFailed = task.status === 'failed';
                     const posterUrl = task.poster_url || 'https://images.unsplash.com/photo-1594909122845-11baa439b7bf?w=500';
-                    const filePath = task.file_path || `/var/www/html/storage/media/${task.provider || 'netflix'}/${(task.title || 'media').toLowerCase().replace(/[^a-z0-9]/g, '_')}.mkv`;
+                    const uniqueId = task.unique_id || task.id || 'ott_' + Date.now();
+                    const slug = (task.title || 'media').toLowerCase().replace(/[^a-z0-9]/g, '_');
+                    const filePath = task.file_path || task.local_file_path || `/var/www/html/storage/media/${task.provider || 'netflix'}/${uniqueId}/${slug}.mp4`;
                     const progressNum = typeof task.progress === 'number' ? task.progress : parseFloat(task.progress) || 0;
 
                     return (
@@ -1579,13 +1635,18 @@ export default function OttSyncManagement({
                         <td className="py-3.5 px-3 text-right">
                           <div className="flex items-center justify-end gap-1.5">
                             {isCompleted && (
-                              <a
-                                href="/browse"
-                                title="Reproducir en Streaming Local"
-                                className="p-1.5 text-zinc-300 hover:text-emerald-400 hover:bg-zinc-800 rounded transition-colors"
+                              <button
+                                type="button"
+                                data-path={filePath}
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  handleOpenPlayer(task);
+                                }}
+                                title="Reproducir en Streaming Local On-Net"
+                                className="p-1.5 text-zinc-300 hover:text-emerald-400 hover:bg-zinc-800 rounded transition-colors active:scale-95 cursor-pointer"
                               >
-                                <Play className="w-4 h-4 fill-current" />
-                              </a>
+                                <Play className="w-4 h-4 fill-emerald-400 text-emerald-400" />
+                              </button>
                             )}
 
                             {isDownloading && (
@@ -1893,6 +1954,14 @@ export default function OttSyncManagement({
           </div>
         </div>
       )}
+
+      {/* Modal de Reproducción On-Net Embebido */}
+      <OttPlayerModal
+        isOpen={Boolean(activePlayerMedia)}
+        onClose={() => setActivePlayerMedia(null)}
+        media={activePlayerMedia}
+      />
     </div>
   );
 }
+

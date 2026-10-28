@@ -243,6 +243,48 @@ class MediaIngestController extends Controller
     }
 
     /**
+     * POST/DELETE /api/admin/ingest/tasks/clear-completed
+     * Limpia todas las tareas completadas o al 100% de la base de datos física.
+     */
+    public function clearCompleted(): JsonResponse
+    {
+        try {
+            $deletedIngest = MediaIngestTask::where('status', 'completed')
+                ->orWhere('progress', '>=', 100)
+                ->delete();
+
+            $deletedOtt = \App\Models\OttDownloadTask::where('status', 'completed')
+                ->orWhere('progress', '>=', 100)
+                ->delete();
+
+            try {
+                if (\Illuminate\Support\Facades\Schema::hasTable('ott_contents')) {
+                    \App\Models\OttContent::where('download_status', 'completed')->delete();
+                }
+            } catch (\Throwable $e) {}
+
+            \Illuminate\Support\Facades\Cache::forget('ott_tasks_overview');
+            \Illuminate\Support\Facades\Cache::forget('ott_downloading_tasks');
+
+            $totalDeleted = $deletedIngest + $deletedOtt;
+
+            return response()->json([
+                'success' => true,
+                'status' => 'success',
+                'message' => "Se limpiaron {$totalDeleted} tareas completadas de la base de datos.",
+                'cleared_count' => $totalDeleted,
+            ]);
+        } catch (\Throwable $e) {
+            Log::error("Error limpiando tareas completadas en MediaIngestController: " . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'status' => 'error',
+                'message' => 'Error al limpiar tareas: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
      * GET /api/admin/ingest/metrics
      * Métricas de rendimiento, velocidad total y disco en tiempo real.
      */
@@ -256,3 +298,4 @@ class MediaIngestController extends Controller
         ]);
     }
 }
+

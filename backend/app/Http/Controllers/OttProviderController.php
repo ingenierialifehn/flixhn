@@ -326,16 +326,62 @@ class OttProviderController extends Controller
     }
 
     /**
+     * GET /api/v1/netflix/search
+     * Búsqueda directa simulada/real para la plataforma Netflix.
+     */
+    public function searchNetflix(Request $request): JsonResponse
+    {
+        return $this->searchProvider($request, 'netflix');
+    }
+
+    /**
+     * GET /api/v1/{provider}/search
+     * Búsqueda directa por proveedor específico.
+     */
+    public function searchProvider(Request $request, string $provider): JsonResponse
+    {
+        try {
+            $query = trim((string) ($request->query('q') ?: $request->query('query', '')));
+            $results = $this->ottService->searchRemoteCatalog($query, $provider);
+
+            // Asegurar formato compatible con array directo o envuelto
+            if ($request->query('format') === 'wrapped') {
+                return response()->json([
+                    'success' => true,
+                    'provider' => strtoupper($provider),
+                    'total' => count($results),
+                    'results' => $results,
+                ]);
+            }
+
+            return response()->json($results);
+        } catch (\Throwable $e) {
+            Log::error("Error en búsqueda OTT para [{$provider}]: " . $e->getMessage());
+            return response()->json([], 500);
+        }
+    }
+
+    /**
      * GET /api/admin/ott-providers/search
+     * GET /api/v1/search
      * Búsqueda en el catálogo remoto de plataformas conectadas o TMDb.
      */
     public function search(Request $request): JsonResponse
     {
         try {
-            $query = trim($request->query('query', $request->query('q', '')));
-            $provider = $request->query('provider', $request->query('platform'));
+            $query = trim((string) ($request->query('query') ?: $request->query('q', '')));
+            $provider = $request->query('provider') ?: $request->query('platform');
 
             $results = $this->ottService->searchRemoteCatalog($query, $provider);
+
+            // Si se solicita formato envuelto
+            if ($request->query('format') === 'wrapped') {
+                return response()->json([
+                    'success' => true,
+                    'total' => count($results),
+                    'results' => $results,
+                ]);
+            }
 
             return response()->json($results);
         } catch (\Throwable $e) {
@@ -347,6 +393,7 @@ class OttProviderController extends Controller
             ], 500);
         }
     }
+
 
     /**
      * POST /api/admin/ott-providers/download

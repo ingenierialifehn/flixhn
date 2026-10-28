@@ -288,6 +288,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::prefix('ingest')->group(function () {
             Route::get('/tasks', [MediaIngestController::class, 'tasks']);
             Route::post('/tasks', [MediaIngestController::class, 'store']);
+            Route::post('/tasks/clear-completed', [MediaIngestController::class, 'clearCompleted']);
+            Route::delete('/tasks/clear-completed', [MediaIngestController::class, 'clearCompleted']);
             Route::post('/tasks/{id}/cancel', [MediaIngestController::class, 'cancel']);
             Route::delete('/tasks/delete-all', [MediaIngestController::class, 'deleteAll']);
             Route::delete('/tasks/{id}', [MediaIngestController::class, 'destroy']);
@@ -312,9 +314,12 @@ Route::post('/telemetry/stop', [DeviceSessionController::class, 'stopPlayback'])
 */
 Route::prefix('v1')->group(function () {
     Route::get('/search', [OttProviderController::class, 'search']);
+    Route::get('/netflix/search', [OttProviderController::class, 'searchNetflix']);
+    Route::get('/{provider}/search', [OttProviderController::class, 'searchProvider']);
     Route::middleware(AuthenticateApiKey::class)->group(function () {
         Route::get('/ping', [ApiKeyAdminController::class, 'ping']);
         Route::get('/titles', [TitleController::class, 'index']);
     });
 });
+
 
