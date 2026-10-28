@@ -317,6 +317,8 @@ Route::prefix('v1')->group(function () {
     Route::get('/search', [OttSyncController::class, 'search']);
     Route::get('/netflix/search', [OttSyncController::class, 'searchNetflix']);
     Route::get('/{provider}/search', [OttSyncController::class, 'searchProvider']);
+    Route::delete('/ott/cache', [OttSyncController::class, 'clearCache']);
+    Route::post('/ott/cache/clear', [OttSyncController::class, 'clearCache']);
     Route::middleware(AuthenticateApiKey::class)->group(function () {
         Route::get('/ping', [ApiKeyAdminController::class, 'ping']);
         Route::get('/titles', [TitleController::class, 'index']);

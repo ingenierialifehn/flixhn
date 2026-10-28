@@ -21,13 +21,18 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use Exception;
 
 class OttSyncService
 {
-    /**
-     * Definición de proveedores OTT base soportados con su identidad institucional.
-     */
+    protected string $netflixApiBaseUrl = 'https://api.netflix.com/v1/';
+    protected string $activeProvider = 'netflix';
+    protected ?array $activeUserSession = null;
+    protected ?OttProviderAccount $activeAccount = null;
+    protected int $timeout = 8;
+
     protected array $supportedProviders = [
         'netflix' => [
             'id' => 'netflix',
@@ -91,589 +96,624 @@ class OttSyncService
         ],
     ];
 
-    /**
-     * Catálogo base enriquecido para ingesta y sincronización On-Net.
-     */
-    protected array $catalogSamples = [
-        'netflix' => [
-            [
-                'external_id' => 'nflx-80057281',
-                'title' => 'Stranger Things',
-                'original_title' => 'Stranger Things',
-                'type' => 'series',
-                'release_year' => 2016,
-                'seasons_count' => 4,
-                'genre' => 'Ciencia Ficción / Misterio',
-                'overview' => 'Cuando un niño desaparece, sus amigos, la familia y la policía se ven envueltos en un misterio que involucra experimentos ultrasecretos, fuerzas sobrenaturales terroríficas y una niña muy extraña.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/49WJfeN0moxb9IPfGn8AIqMGskD.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/56v2KjBlU4XaOv9rVYEQypROD7P.jpg',
-                'duration_seconds' => 3120,
-                'file_size' => 4823449600,
-            ],
-            [
-                'external_id' => 'nflx-81231974',
-                'title' => 'Merlina (Wednesday)',
-                'original_title' => 'Wednesday',
-                'type' => 'series',
-                'release_year' => 2023,
-                'seasons_count' => 2,
-                'genre' => 'Fantasía / Comedia Negra',
-                'overview' => 'Inteligente, sarcástica y un poco muerta por dentro, Merlina Addams investiga una ola de asesinatos mientras hace nuevos amigos —y enemigos— en la Academia Nunca Más.',
-                'poster_url' => 'https://media.themoviedb.org/t/p/w500/9PFonBhy4cQy7Jz20NpMygczOkv.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/iHSwvRVsRyxpX7FE7GbviaDvgGZ.jpg',
-                'duration_seconds' => 2940,
-                'file_size' => 3984588800,
-            ],
-            [
-                'external_id' => 'nflx-81040344',
-                'title' => 'El Juego del Calamar',
-                'original_title' => 'Squid Game',
-                'type' => 'series',
-                'release_year' => 2024,
-                'seasons_count' => 2,
-                'genre' => 'Suspense / Drama',
-                'overview' => 'Cientos de personas con dificultades económicas aceptan una extraña invitación para competir en juegos infantiles. Adentro les esperan un tentador premio y desafíos letales.',
-                'poster_url' => 'https://media.themoviedb.org/t/p/w500/1QdXdRYfktUSONkl1oD5gc6Be0s.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/qw3J9cNeLioOL0Ukb6UT7QiMeGO.jpg',
-                'duration_seconds' => 3600,
-                'file_size' => 4509715200,
-            ],
-            [
-                'external_id' => 'nflx-81446739',
-                'title' => 'Misión de Rescate 2 (Extraction 2)',
-                'original_title' => 'Extraction 2',
-                'type' => 'movie',
-                'release_year' => 2023,
-                'genre' => 'Acción / Suspense',
-                'overview' => 'Después de sobrevivir milagrosamente a sus graves heridas en Bangladesh, el mercenario de operaciones encubiertas Tyler Rake vuelve con otra misión mortal.',
-                'poster_url' => 'https://media.themoviedb.org/t/p/w500/7gKI9hpEMcZUQpNgKrkDzJpbnNS.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/fkGIb573Zg75t0n40E4H718L.jpg',
-                'duration_seconds' => 7380,
-                'file_size' => 8589934592,
-            ],
-            [
-                'external_id' => 'nflx-661374',
-                'title' => 'Glass Onion: Un misterio de Knives Out',
-                'original_title' => 'Glass Onion: A Knives Out Mystery',
-                'type' => 'movie',
-                'release_year' => 2022,
-                'genre' => 'Misterio / Comedia / Crimen',
-                'overview' => 'El célebre detective Benoit Blanc viaja a Grecia para desentrañar un misterio que involucra a un multimillonario de la tecnología y a su ecléctico grupo de amigos.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/vDGr1YdrlfbU9wxTOdpf3zChmv9.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/dKqa850uvbNSCaQCV4Im1XlzEtQ.jpg',
-                'duration_seconds' => 8340,
-                'file_size' => 9100000000,
-            ],
-            [
-                'external_id' => 'nflx-71912',
-                'title' => 'The Witcher',
-                'original_title' => 'The Witcher',
-                'type' => 'series',
-                'release_year' => 2019,
-                'seasons_count' => 3,
-                'genre' => 'Fantasía / Acción',
-                'overview' => 'Geralt de Rivia, un cazador de monstruos mutado, viaja en pos de su destino por un mundo turbulento donde las personas a menudo son más bestiales que las fieras.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/cZ0d3rtvXPVvuiX22swhqdURi0A.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/jBJWaqoSCiARWtfV0GlqHrcdidd.jpg',
-                'duration_seconds' => 3600,
-                'file_size' => 4700000000,
-            ],
-            [
-                'external_id' => 'nflx-77169',
-                'title' => 'Cobra Kai',
-                'original_title' => 'Cobra Kai',
-                'type' => 'series',
-                'release_year' => 2024,
-                'seasons_count' => 6,
-                'genre' => 'Acción / Artes Marciales / Drama',
-                'overview' => 'Treinta años después de su enfrentamiento en el torneo de karate de All Valley, la rivalidad entre Daniel LaRusso y Johnny Lawrence vuelve a reavivarse.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/m7tG5E123umluCnpPtq6vA5Y9Tz.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/mtoL09cM79L5dD8e1Y0p1d6N5jH.jpg',
-                'duration_seconds' => 2100,
-                'file_size' => 3200000000,
-            ],
-            [
-                'external_id' => 'nflx-1144911',
-                'title' => 'Rebel Ridge',
-                'original_title' => 'Rebel Ridge',
-                'type' => 'movie',
-                'release_year' => 2024,
-                'genre' => 'Acción / Suspense Policial',
-                'overview' => 'Un exmarine se enfrenta a una red de corrupción en un pequeño pueblo cuando la policía local le incauta injustamente el dinero destinado a pagar la fianza de su primo.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/xEt2GSz9z5rsvVoqnHVqMhI9fF7.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/9Ju0I97ZfL9VvL2VdOq5M4cK7pZ.jpg',
-                'duration_seconds' => 7860,
-                'file_size' => 8200000000,
-            ],
-            [
-                'external_id' => 'nflx-71446',
-                'title' => 'La Casa de Papel',
-                'original_title' => 'Money Heist',
-                'type' => 'series',
-                'release_year' => 2021,
-                'seasons_count' => 5,
-                'genre' => 'Acción / Crimen / Suspense',
-                'overview' => 'Ocho atracadores toman rehenes en la Fábrica Nacional de Moneda y Timbre de España mientras el líder de la banda manipula a la policía para cumplir su elaborado plan.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/reKs8y4mPwXgOpA74TCdUQgt08x.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/gFZri2YbFUBulBgqxaAJmYv1uio.jpg',
-                'duration_seconds' => 3000,
-                'file_size' => 4100000000,
-            ],
-            [
-                'external_id' => 'nflx-70523',
-                'title' => 'Dark',
-                'original_title' => 'Dark',
-                'type' => 'series',
-                'release_year' => 2020,
-                'seasons_count' => 3,
-                'genre' => 'Ciencia Ficción / Misterio / Drama',
-                'overview' => 'La desaparición de dos niños en el pueblo alemán de Winden saca a la luz los vínculos entre cuatro familias y un siniestro secreto que abarca tres generaciones.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/apbrbWs8M9lyOpJYU5WXrpFbk1Z.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/3lBDg3i6nn5R2NKICJ79mmRi5Bt.jpg',
-                'duration_seconds' => 3600,
-                'file_size' => 4500000000,
-            ],
-            [
-                'external_id' => 'nflx-42009',
-                'title' => 'Black Mirror',
-                'original_title' => 'Black Mirror',
-                'type' => 'series',
-                'release_year' => 2023,
-                'seasons_count' => 6,
-                'genre' => 'Ciencia Ficción / Distopía / Drama',
-                'overview' => 'Esta serie antológica de ciencia ficción explora un futuro próximo e inquietante donde las mayores innovaciones tecnológicas chocan con los instintos más oscuros.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/5UaMirnkE69SknGhIknRvm59X1v.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/7c9UVPPiT9tAuvGZ9umUV87LAwp.jpg',
-                'duration_seconds' => 3700,
-                'file_size' => 4900000000,
-            ],
-            [
-                'external_id' => 'nflx-63351',
-                'title' => 'Narcos',
-                'original_title' => 'Narcos',
-                'type' => 'series',
-                'release_year' => 2017,
-                'seasons_count' => 3,
-                'genre' => 'Crimen / Drama / Biografía',
-                'overview' => 'La verdadera historia de los poderosos y violentos cárteles de la droga en Colombia y los esfuerzos de la ley para combatirlos.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/rTmal9fGBwhBXJnIF72QHQjCQjh.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/kCgh5w9s0j3BfG2W8oBq57wR3Yk.jpg',
-                'duration_seconds' => 3300,
-                'file_size' => 4200000000,
-            ],
-            [
-                'external_id' => 'nflx-87739',
-                'title' => 'Gambito de Dama',
-                'original_title' => "The Queen's Gambit",
-                'type' => 'series',
-                'release_year' => 2020,
-                'seasons_count' => 1,
-                'genre' => 'Drama',
-                'overview' => 'En los años cincuenta, una joven huérfana revela un prodigioso don para el ajedrez mientras lucha con sus adicciones en su viaje hacia la cúspide mundial.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/zU0htwkhNvBQdVSIKB9lf6v4BiP.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/34OGjFEbHj0E3lE2w0iTUVq049z.jpg',
-                'duration_seconds' => 3600,
-                'file_size' => 4600000000,
-            ],
-            [
-                'external_id' => 'nflx-60574',
-                'title' => 'Peaky Blinders',
-                'original_title' => 'Peaky Blinders',
-                'type' => 'series',
-                'release_year' => 2022,
-                'seasons_count' => 6,
-                'genre' => 'Crimen / Drama / Época',
-                'overview' => 'En 1919, una notoria banda de Birmingham es liderada por el despiadado Tommy Shelby, un jefe del crimen decidido a dominar el mundo a cualquier precio.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/vUUqzWa2LnHIVqkaKVlVGkVcZIW.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/70Nx5z0f6V0Zk4YgD2j8KqV1XQx.jpg',
-                'duration_seconds' => 3600,
-                'file_size' => 4800000000,
-            ],
-            [
-                'external_id' => 'nflx-96677',
-                'title' => 'Lupin',
-                'original_title' => 'Lupin',
-                'type' => 'series',
-                'release_year' => 2023,
-                'seasons_count' => 3,
-                'genre' => 'Crimen / Misterio / Aventura',
-                'overview' => 'Inspirado por las aventuras de Arsenio Lupin, el caballero ladrón Assane Diop se propone vengar a su padre por una injusticia infligida por una familia adinerada.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/sgxawbFB5Vi5OkPWQLil4liJTnW.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/6KImt1A8U3rXhQ0rZ5YkC5p2Z2V.jpg',
-                'duration_seconds' => 2800,
-                'file_size' => 3800000000,
-            ],
-            [
-                'external_id' => 'nflx-94605',
-                'title' => 'Arcane',
-                'original_title' => 'Arcane',
-                'type' => 'series',
-                'release_year' => 2024,
-                'seasons_count' => 2,
-                'genre' => 'Animación / Acción / Ciencia Ficción',
-                'overview' => 'En medio del agudo conflicto entre las ciudades gemelas de Piltóver y Zaun, dos hermanas luchan en bandos opuestos en una guerra de tecnologías mágicas.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/fqldf2t8ztc9aiwn397FQ3cfO0L.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/q8eeiuyWh545uii5W4532i6xQ9x.jpg',
-                'duration_seconds' => 2600,
-                'file_size' => 4300000000,
-            ],
-            [
-                'external_id' => 'nflx-398978',
-                'title' => 'El Irlandés',
-                'original_title' => 'The Irishman',
-                'type' => 'movie',
-                'release_year' => 2019,
-                'genre' => 'Crimen / Drama / Biografía',
-                'overview' => 'Frank Sheeran, un veterano de guerra y asesino a sueldo, rememora los secretos que guardó como leal miembro de la familia criminal Bufalino.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/mbm8k3GFnvSzD0biSpfdol79KyP.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/eC0j8e7Y50R15wS9B47W1g03u4A.jpg',
-                'duration_seconds' => 12540,
-                'file_size' => 12500000000,
-            ],
-            [
-                'external_id' => 'nflx-512200',
-                'title' => 'Alerta Roja (Red Notice)',
-                'original_title' => 'Red Notice',
-                'type' => 'movie',
-                'release_year' => 2021,
-                'genre' => 'Acción / Comedia / Crimen',
-                'overview' => 'Un agente del FBI debe asociarse con el ladrón de arte más buscado del planeta para atrapar a una elusiva estafadora de guante blanco.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/pe17f8NO5e197hHgjmn4Tpw4GHt.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/dK12GMoJz9YPe99By9ILK0Ah8sq.jpg',
-                'duration_seconds' => 7080,
-                'file_size' => 7900000000,
-            ],
-            [
-                'external_id' => 'nflx-696806',
-                'title' => 'El Proyecto Adam',
-                'original_title' => 'The Adam Project',
-                'type' => 'movie',
-                'release_year' => 2022,
-                'genre' => 'Ciencia Ficción / Aventura / Comedia',
-                'overview' => 'Un piloto que viaja en el tiempo hace un aterrizaje forzoso en 2022 y forma equipo con su yo de 12 años para salvar el futuro de la humanidad.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/1X7vow16X7CnCoexH4H4w2ms5v.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/i27qVCE598Z40N1oW4u7s2u5M8z.jpg',
-                'duration_seconds' => 6360,
-                'file_size' => 7100000000,
-            ],
-            [
-                'external_id' => 'nflx-916224',
-                'title' => 'La Sociedad de la Nieve',
-                'original_title' => 'Society of the Snow',
-                'type' => 'movie',
-                'release_year' => 2023,
-                'genre' => 'Aventura / Drama / Supervivencia',
-                'overview' => 'En 1972, el vuelo 571 de la Fuerza Aérea Uruguaya se estrella en los Andes. Atrapados en uno de los entornos más inaccesibles del planeta, los supervivientes recurren a medidas extremas.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/2r9dYQZ64oK0i7jG00k4k8hT3b4.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/vdp588C0Z02P84H45oD18wZ7k0f.jpg',
-                'duration_seconds' => 8640,
-                'file_size' => 9500000000,
-            ],
-            [
-                'external_id' => 'nflx-111110',
-                'title' => 'One Piece',
-                'original_title' => 'ONE PIECE',
-                'type' => 'series',
-                'release_year' => 2023,
-                'seasons_count' => 1,
-                'genre' => 'Aventura / Acción / Fantasía',
-                'overview' => 'Con su sombrero de paja y su tripulación de inadaptados, el joven pirata Monkey D. Luffy emprende un viaje épico en busca del legendario tesoro One Piece.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/fcXdJUSDiDiFGBuvvdFUt79CLDX.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/4XM8DUTQb3lhLemJC51Jx4a2EuA.jpg',
-                'duration_seconds' => 3400,
-                'file_size' => 4900000000,
-            ],
-            [
-                'external_id' => 'nflx-91363',
-                'title' => 'Bridgerton',
-                'original_title' => 'Bridgerton',
-                'type' => 'series',
-                'release_year' => 2024,
-                'seasons_count' => 3,
-                'genre' => 'Drama Romántico / Época',
-                'overview' => 'Ocho hermanos de la poderosa familia Bridgerton intentan encontrar el amor en la alta sociedad londinense de la Regencia, narrado por la misteriosa Lady Whistledown.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/luoKHW5BYvg5x6IMuqa3FBsZpP4.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/f2t4Jz1eP0H2704wW2p6oE8d6j2.jpg',
-                'duration_seconds' => 3600,
-                'file_size' => 4600000000,
-            ],
-        ],
-        'disney' => [
-            [
-                'external_id' => 'dis-83867',
-                'title' => 'The Mandalorian',
-                'original_title' => 'The Mandalorian',
-                'type' => 'series',
-                'release_year' => 2023,
-                'genre' => 'Ciencia Ficción / Aventura',
-                'overview' => 'Tras la caída del Imperio, un solitario pistolero mandaloriano se abre paso a través de los confines exteriores de la galaxia, lejos de la autoridad de la Nueva República.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/eU1i6eHXlzMOlEq0ku1R07YQ7Te.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/o76Zhh8gp38ty97knscDC9UqoUq.jpg',
-                'duration_seconds' => 2400,
-                'file_size' => 5242880000,
-            ],
-            [
-                'external_id' => 'dis-84958',
-                'title' => 'Loki',
-                'original_title' => 'Loki',
-                'type' => 'series',
-                'release_year' => 2023,
-                'genre' => 'Fantasía / Acción Marvel',
-                'overview' => 'El volátil villano Loki retoma su papel de Dios del Engaño tras los eventos de "Avengers: Endgame", reclutado por la misteriosa Autoridad de Variación Temporal (TVA).',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/voHUmlvjysvjGkc6s1L3K7D4T5m.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/b9UCf9Acv0qjGQ46w1F9Yv1h4.jpg',
-                'duration_seconds' => 3180,
-                'file_size' => 4718592000,
-            ],
-            [
-                'external_id' => 'dis-76600',
-                'title' => 'Avatar: El Camino del Agua',
-                'original_title' => 'Avatar: The Way of Water',
-                'type' => 'movie',
-                'release_year' => 2023,
-                'genre' => 'Ciencia Ficción / Acción',
-                'overview' => 'Ambientada más de una década después de los acontecimientos de la primera película, cuenta la historia de la familia Sully, los problemas que los persiguen y las batallas para sobrevivir.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/t6HIqrRAclMCA60NsSmeqe9RmNV.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/8rpDcsfLJypbO6vREc0547VKqEv.jpg',
-                'duration_seconds' => 11520,
-                'file_size' => 12884901888,
-            ],
-            [
-                'external_id' => 'dis-114479',
-                'title' => 'Ahsoka',
-                'original_title' => 'Ahsoka',
-                'type' => 'series',
-                'release_year' => 2023,
-                'seasons_count' => 1,
-                'genre' => 'Ciencia Ficción / Aventura Star Wars',
-                'overview' => 'Tras la caída del Imperio, la antigua Caballera Jedi Ahsoka Tano investiga una amenaza emergente para una galaxia vulnerable liderada por el Gran Almirante Thrawn.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/laCJxobHoPVaLQTKxc14Y2zV44I.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/5ePBZ5Y0p7ePZ5y7x6yV2L4v0pI.jpg',
-                'duration_seconds' => 2820,
-                'file_size' => 4600000000,
-            ],
-            [
-                'external_id' => 'dis-533535',
-                'title' => 'Deadpool & Wolverine',
-                'original_title' => 'Deadpool & Wolverine',
-                'type' => 'movie',
-                'release_year' => 2024,
-                'genre' => 'Acción / Comedia Marvel',
-                'overview' => 'Un apático Wade Wilson se esfuerza por adaptarse a la vida civil, pero cuando su mundo natal se enfrenta a una amenaza existencial, debe unirse a regañadientes a Wolverine.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/8cdWjvZQUExUUTzyp4t6EDMubfO.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/yDHYTfA3R0jFYba16jBB12WKoZs.jpg',
-                'duration_seconds' => 7620,
-                'file_size' => 9600000000,
-            ],
-        ],
-        'hbo_max' => [
-            [
-                'external_id' => 'hbo-100088',
-                'title' => 'The Last of Us',
-                'original_title' => 'The Last of Us',
-                'type' => 'series',
-                'release_year' => 2024,
-                'genre' => 'Drama / Terror Post-Apocalíptico',
-                'overview' => 'Veinte años después de que una plaga de hongos diezmara la civilización humana, Joel es contratado para sacar de contrabando a Ellie, una niña de 14 años, fuera de una zona de cuarentena.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/uKvVjHNqB5VmOrdxqMisytaq9m.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/uDgy6hyPd82kOHh6I95FLtLnj6p.jpg',
-                'duration_seconds' => 4800,
-                'file_size' => 6291456000,
-            ],
-            [
-                'external_id' => 'hbo-94997',
-                'title' => 'La Casa del Dragón',
-                'original_title' => 'House of the Dragon',
-                'type' => 'series',
-                'release_year' => 2024,
-                'genre' => 'Fantasía / Drama',
-                'overview' => 'Ambientada 200 años antes de los acontecimientos de Juego de Tronos, narra el principio del fin de la Casa Targaryen y los eventos previos a la Danza de Dragones.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/1X4h40fcB4WWUmIBK0auT4zRBAV.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/etj5CuMuamhGQm5P9G08F9r2bC6.jpg',
-                'duration_seconds' => 3840,
-                'file_size' => 5872025600,
-            ],
-            [
-                'external_id' => 'hbo-693134',
-                'title' => 'Duna: Parte Dos',
-                'original_title' => 'Dune: Part Two',
-                'type' => 'movie',
-                'release_year' => 2024,
-                'genre' => 'Ciencia Ficción / Aventura',
-                'overview' => 'Paul Atreides se une a Chani y a los Fremen mientras busca venganza contra los conspiradores que destruyeron a su familia, enfrentando un dilema entre el amor y el destino del universo.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/8b8R8l88Qje9dn9OE8PY05Nxl1X.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/xOMo8BRK7PfcJv9JCnx7s52044F.jpg',
-                'duration_seconds' => 9960,
-                'file_size' => 11811160064,
-            ],
-        ],
-        'amazon_prime' => [
-            [
-                'external_id' => 'amz-76479',
-                'title' => 'The Boys',
-                'original_title' => 'The Boys',
-                'type' => 'series',
-                'release_year' => 2024,
-                'genre' => 'Acción / Superhéroes / Comedia Negra',
-                'overview' => 'Un grupo de justicieros se propone derrotar a los superhéroes corruptos que abusan de sus superpoderes bajo el auspicio de una poderosa corporación multinacional.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/mY7SeH4YFFxWv167RIIz3el9mNL.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/nxxCPRGTzxUJ2w2G3k3fLqP7w7b.jpg',
-                'duration_seconds' => 3600,
-                'file_size' => 5120000000,
-            ],
-            [
-                'external_id' => 'amz-84773',
-                'title' => 'El Señor de los Anillos: Los Anillos de Poder',
-                'original_title' => 'The Lord of the Rings: The Rings of Power',
-                'type' => 'series',
-                'release_year' => 2024,
-                'genre' => 'Fantasía / Aventura Épica',
-                'overview' => 'Drama épico ambientado miles de años antes de los acontecimientos de El Hobbit y El Señor de los Anillos de J.R.R. Tolkien, durante la Segunda Edad de la Tierra Media.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/mYLOqiStMxDK3fYZFirgrMt8z5d.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/8pdtv4k4h84yDqC2Nq05n6yqY7v.jpg',
-                'duration_seconds' => 4200,
-                'file_size' => 6400000000,
-            ],
-            [
-                'external_id' => 'amz-106379',
-                'title' => 'Fallout',
-                'original_title' => 'Fallout',
-                'type' => 'series',
-                'release_year' => 2024,
-                'genre' => 'Ciencia Ficción / Aventura Post-Nuclear',
-                'overview' => 'En un futuro Los Ángeles post-apocalíptico, los ciudadanos deben vivir en búnkeres subterráneos para protegerse de la radiación, mutantes y bandidos.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/22Fk92u08vGZzE25lH2R6XbU9y0.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/mo0P0qP1fP3pZ3pM3q7yT8vN5yK.jpg',
-                'duration_seconds' => 3700,
-                'file_size' => 5300000000,
-            ],
-            [
-                'external_id' => 'amz-359410',
-                'title' => 'Road House (El Duro)',
-                'original_title' => 'Road House',
-                'type' => 'movie',
-                'release_year' => 2024,
-                'genre' => 'Acción / Suspense',
-                'overview' => 'Un ex luchador de UFC acepta un trabajo como portero en un revoltoso bar de carretera en los Cayos de Florida, descubriendo que no todo es lo que parece.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/bXi6IQiQDHD00JHxNXSRcrISOhx.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/1XDDXPXGiI8id7MrUxK36ke7gkX.jpg',
-                'duration_seconds' => 7260,
-                'file_size' => 7800000000,
-            ],
-        ],
-        'apple_tv' => [
-            [
-                'external_id' => 'apl-97546',
-                'title' => 'Ted Lasso',
-                'original_title' => 'Ted Lasso',
-                'type' => 'series',
-                'release_year' => 2023,
-                'genre' => 'Comedia / Deporte / Drama',
-                'overview' => 'Un ingenuo entrenador de fútbol americano se traslada al Reino Unido para dirigir a un club de fútbol británico de la Premier League en apuros.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/5fhZdwP0DVJ0fyqtwSND4j55j5N.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/70C6U5u5oNlTqV3X5v9lY7y6U7.jpg',
-                'duration_seconds' => 2200,
-                'file_size' => 3800000000,
-            ],
-            [
-                'external_id' => 'apl-95396',
-                'title' => 'Severance (Separación)',
-                'original_title' => 'Severance',
-                'type' => 'series',
-                'release_year' => 2024,
-                'genre' => 'Ciencia Ficción / Suspense Psicológico',
-                'overview' => 'Mark lidera un equipo cuyos empleados han sido sometidos a un procedimiento quirúrgico que separa sus recuerdos laborales de sus vidas personales.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/u3bZgnGQ9T01sWNhyveQz0wH0Hl.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/9xxu1y4C6rG6v0u8p1F4y7G0v8.jpg',
-                'duration_seconds' => 3300,
-                'file_size' => 4900000000,
-            ],
-        ],
-        'paramount' => [
-            [
-                'external_id' => 'par-95557',
-                'title' => 'Halo',
-                'original_title' => 'Halo',
-                'type' => 'series',
-                'release_year' => 2024,
-                'genre' => 'Ciencia Ficción / Acción / Aventura',
-                'overview' => 'En el siglo XXVI, la humanidad se enfrenta a una amenaza alienígena conocida como el Covenant. Master Chief, el guerrero más letal, lidera la defensa.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/hmHA5jqxN3ESIAGx0jAwV7T43Te.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/zWlK0Xk3A5C9g1U3Y7z4W8e5Q1.jpg',
-                'duration_seconds' => 3600,
-                'file_size' => 5400000000,
-            ],
-            [
-                'external_id' => 'par-361743',
-                'title' => 'Top Gun: Maverick',
-                'original_title' => 'Top Gun: Maverick',
-                'type' => 'movie',
-                'release_year' => 2023,
-                'genre' => 'Acción / Aventura',
-                'overview' => 'Después de más de treinta años de servicio como aviador naval, Pete "Maverick" Mitchell entrena a un destacamento de graduados de TOPGUN para una misión especializada.',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/62HCnUTziyWcpDaBO2i1DX17ljH.jpg',
-                'backdrop_url' => 'https://image.tmdb.org/t/p/original/Aa9TLpNpBMyRkD8sPJ7ENZTUIm.jpg',
-                'duration_seconds' => 7800,
-                'file_size' => 9200000000,
-            ],
-        ],
-    ];
-
-    /**
-     * Obtener todas las muestras del catálogo oficial estructuradas.
-     */
-    public function getAllCatalogSamples(): array
+    public function __construct(?array $credentials = null, ?string $provider = 'netflix')
     {
-        $all = [];
-        foreach ($this->catalogSamples as $providerKey => $items) {
-            foreach ($items as $item) {
-                $all[] = array_merge($item, ['provider' => $providerKey]);
-            }
+        $this->activeProvider = Str::slug($provider ?: 'netflix', '_');
+        $this->netflixApiBaseUrl = config("services.ott.{$this->activeProvider}.base_url", env('NETFLIX_API_URL', 'https://api.netflix.com/v1/'));
+
+        if (!empty($credentials)) {
+            $this->activeUserSession = $credentials;
+        } else {
+            $this->activeUserSession = $this->resolveActiveSession($this->activeProvider);
         }
-        return $all;
     }
 
-    /**
-     * Buscar coincidencia en el catálogo oficial por título o external_id.
-     */
-    public function findCatalogSampleByTitle(?string $title): ?array
+    public function resolveActiveSession(string $provider): ?array
     {
-        if (empty($title)) return null;
+        $acc = OttProviderAccount::where('provider', $provider)
+            ->where('status', 'connected')
+            ->first();
 
-        $clean = trim($title);
-        $norm = Str::slug($clean);
+        if (!$acc) {
+            $acc = OttProviderAccount::where('status', 'connected')->first();
+        }
 
-        foreach ($this->getAllCatalogSamples() as $sample) {
-            $sNorm = Str::slug($sample['title']);
-            $sOrig = Str::slug($sample['original_title'] ?? '');
-            if ($norm === $sNorm || $norm === $sOrig) {
-                return $sample;
-            }
-            if (!empty($sNorm) && (str_contains($norm, $sNorm) || str_contains($sNorm, $norm))) {
-                return $sample;
-            }
-            if (!empty($sOrig) && (str_contains($norm, $sOrig) || str_contains($sOrig, $norm))) {
-                return $sample;
-            }
+        if ($acc) {
+            $this->activeAccount = $acc;
+            $this->activeProvider = $acc->provider;
+            $creds = $acc->getDecryptedCredentials();
+
+            return [
+                'account_id' => $acc->id,
+                'provider' => $acc->provider,
+                'account_name' => $acc->account_name,
+                'status' => $acc->status,
+                'quality_profile' => $acc->quality_profile ?: '4K HDR',
+                'auto_download' => (bool) $acc->auto_download,
+                'auth_method' => $creds['auth_method'] ?? 'credentials',
+                'token' => $creds['token'] ?? null,
+                'email' => $creds['email'] ?? $acc->account_name,
+                'session_metadata' => $acc->session_metadata ?: [],
+                'target_folder' => $acc->session_metadata['target_folder'] ?? "/storage/media/{$acc->provider}",
+            ];
         }
 
         return null;
     }
 
-    /**
-     * Devuelve el listado estructurado de proveedores con su estado real en ott_provider_accounts.
-     */
+    public function search(?string $query = '', ?string $provider = null, ?string $filterType = null): array
+    {
+        $cleanQuery = trim((string) $query);
+        if ($cleanQuery === '') {
+            return [];
+        }
+
+        $targetProvider = !empty($provider) && $provider !== 'all' ? Str::slug($provider, '_') : $this->activeProvider;
+
+        $providerAliasMap = [
+            'disneyplus' => 'disney',
+            'max' => 'hbo_max',
+            'hbo' => 'hbo_max',
+            'prime' => 'amazon_prime',
+            'prime_video' => 'amazon_prime',
+            'apple' => 'apple_tv',
+            'paramount_plus' => 'paramount',
+        ];
+        if (isset($providerAliasMap[$targetProvider])) {
+            $targetProvider = $providerAliasMap[$targetProvider];
+        }
+
+        $session = $this->resolveActiveSession($targetProvider);
+        if (!$session && $targetProvider !== 'all') {
+            $localResults = $this->searchLocalCache($cleanQuery, $targetProvider, $filterType);
+            if (!empty($localResults)) {
+                return $localResults;
+            }
+            return [];
+        }
+
+        try {
+            $rawResults = $this->queryRemoteProviderApi($cleanQuery, $targetProvider);
+            $normalized = $this->normalizeItems($rawResults, $targetProvider);
+
+            $lowerQuery = mb_strtolower($cleanQuery, 'UTF-8');
+            $filtered = array_filter($normalized, function ($item) use ($lowerQuery, $filterType) {
+                $titleLower = mb_strtolower($item['title'] ?? '', 'UTF-8');
+                $origLower = mb_strtolower($item['original_title'] ?? '', 'UTF-8');
+                $synopsisLower = mb_strtolower($item['overview'] ?? ($item['synopsis'] ?? ''), 'UTF-8');
+
+                $matchesText = str_contains($titleLower, $lowerQuery)
+                    || str_contains($origLower, $lowerQuery)
+                    || str_contains($synopsisLower, $lowerQuery);
+
+                if (!$matchesText) {
+                    return false;
+                }
+
+                $isAvailable = ($item['availability'] ?? 'Available') === 'Available';
+                if (!$isAvailable) {
+                    return false;
+                }
+
+                if (!empty($filterType) && $filterType !== 'ALL') {
+                    $itemType = mb_strtolower($item['type'] ?? '', 'UTF-8');
+                    $reqType = mb_strtolower($filterType, 'UTF-8');
+                    if ($itemType !== $reqType) {
+                        return false;
+                    }
+                }
+
+                return true;
+            });
+
+            $finalResults = array_values($filtered);
+
+            if (!empty($finalResults)) {
+                $this->persistToContentCache($finalResults, $targetProvider);
+            }
+
+            foreach ($finalResults as &$resItem) {
+                $this->crossReferenceAvailability($resItem);
+            }
+
+            return $finalResults;
+
+        } catch (Exception $e) {
+            Log::warning("OttSyncService Search Exception [{$targetProvider}]: " . $e->getMessage());
+            return $this->searchLocalCache($cleanQuery, $targetProvider, $filterType);
+        }
+    }
+
+    public function searchRemoteCatalog(?string $query = '', ?string $provider = null): array
+    {
+        return $this->search($query, $provider);
+    }
+
+    public function getAvailableCatalog(?string $provider = null, ?string $filterType = null): array
+    {
+        $targetProvider = !empty($provider) && $provider !== 'all' ? Str::slug($provider, '_') : $this->activeProvider;
+
+        if (Schema::hasTable('ott_content_cache')) {
+            $dbQuery = DB::table('ott_content_cache')
+                ->when($targetProvider !== 'all', function ($q) use ($targetProvider) {
+                    $q->where('platform', strtoupper($targetProvider))
+                      ->orWhere('platform', $targetProvider);
+                });
+
+            if (!empty($filterType) && $filterType !== 'ALL') {
+                $dbQuery->where('type', $filterType);
+            }
+
+            $rows = $dbQuery->orderBy('id', 'desc')->limit(60)->get();
+
+            if ($rows->isNotEmpty()) {
+                $items = $rows->map(function ($row) use ($targetProvider) {
+                    return [
+                        'id' => $row->external_id ?: 'cache_' . $row->id,
+                        'unique_id' => $row->external_id ?: 'cache_' . $row->id,
+                        'title' => $row->title,
+                        'original_title' => $row->original_title ?: $row->title,
+                        'type' => $row->type,
+                        'media_type' => $row->type === 'Serie' ? 'series' : 'movie',
+                        'year' => (int) $row->year,
+                        'poster' => $row->poster_path,
+                        'poster_path' => $row->poster_path,
+                        'poster_url' => $row->poster_path,
+                        'backdrop' => $row->backdrop_path,
+                        'backdrop_url' => $row->backdrop_path,
+                        'platform' => strtoupper($row->platform),
+                        'provider' => strtolower($row->platform),
+                        'quality' => $row->quality_available,
+                        'quality_available' => $row->quality_available,
+                        'status' => $row->status,
+                        'available' => true,
+                        'overview' => $row->synopsis ?: "Contenido disponible en {$row->platform}.",
+                        'synopsis' => $row->synopsis,
+                        'localFilePath' => $row->local_file_path ?: "/var/www/html/storage/media/" . strtolower($row->platform) . "/" . Str::slug($row->title) . ".mp4",
+                        'local_file_path' => "/storage/media/" . strtolower($row->platform) . "/" . Str::slug($row->title) . ".mp4",
+                        'filePath' => $row->local_file_path ?: "/var/www/html/storage/media/" . strtolower($row->platform) . "/" . Str::slug($row->title) . ".mp4",
+                        'file_path' => $row->local_file_path ?: "/var/www/html/storage/media/" . strtolower($row->platform) . "/" . Str::slug($row->title) . ".mp4",
+                    ];
+                })->toArray();
+
+                foreach ($items as &$item) {
+                    $this->crossReferenceAvailability($item);
+                }
+
+                return $items;
+            }
+        }
+
+        return [];
+    }
+
+    public function clearCache(?string $provider = null): bool
+    {
+        $targetProvider = !empty($provider) && $provider !== 'all' ? Str::slug($provider, '_') : null;
+
+        if (Schema::hasTable('ott_content_cache')) {
+            $q = DB::table('ott_content_cache');
+            if ($targetProvider) {
+                $q->where('platform', strtoupper($targetProvider))->orWhere('platform', $targetProvider);
+            }
+            $q->delete();
+        }
+
+        if (Schema::hasTable('ott_contents')) {
+            $q2 = DB::table('ott_contents');
+            if ($targetProvider) {
+                $q2->where('platform_id', $targetProvider);
+            }
+            $q2->delete();
+        }
+
+        Cache::forget('catalog_home_base');
+        Cache::forget('ott_tasks_overview');
+        Cache::forget('ott_downloading_tasks');
+        if ($targetProvider) {
+            Cache::forget("ott_catalog_{$targetProvider}");
+        }
+
+        Log::info("Caché OTT purgada completamente para proveedor: " . ($targetProvider ?: 'todos'));
+        return true;
+    }
+
+    protected function queryRemoteProviderApi(string $query, string $provider): array
+    {
+        $tmdbPlugin = Plugin::where('slug', 'themoviedb')->first();
+        $apiKey = $tmdbPlugin?->settings['api_key'] ?? $tmdbPlugin?->default_settings['api_key'] ?? '';
+        $language = $tmdbPlugin?->settings['language'] ?? 'es-ES';
+
+        if (!empty($apiKey) && !str_starts_with($apiKey, 'tmdb_live_key')) {
+            try {
+                $resp = Http::timeout($this->timeout)->get('https://api.themoviedb.org/3/search/multi', [
+                    'api_key' => $apiKey,
+                    'query' => $query,
+                    'language' => $language,
+                    'include_adult' => false,
+                ]);
+
+                if ($resp->successful() && isset($resp['results']) && !empty($resp['results'])) {
+                    return $resp['results'];
+                }
+            } catch (\Throwable $e) {
+                Log::warning("TMDb API query error: " . $e->getMessage());
+            }
+        }
+
+        if (!empty($this->activeUserSession['token'])) {
+            try {
+                $resp = Http::withToken($this->activeUserSession['token'])
+                    ->timeout($this->timeout)
+                    ->get("{$this->netflixApiBaseUrl}search", [
+                        'q' => $query,
+                        'platform' => $provider,
+                    ]);
+
+                if ($resp->successful() && !empty($resp['results'])) {
+                    return $resp['results'];
+                }
+            } catch (\Throwable $e) {
+                Log::warning("External OTT API search failed: " . $e->getMessage());
+            }
+        }
+
+        return $this->getDynamicProviderInventory($query, $provider);
+    }
+    protected function getDynamicProviderInventory(string $query, string $provider): array
+    {
+        $inventory = [
+            'netflix' => [
+                [
+                    'external_id' => 'nflx-80057281',
+                    'title' => 'Stranger Things',
+                    'original_title' => 'Stranger Things',
+                    'type' => 'Serie',
+                    'year' => 2016,
+                    'poster_path' => 'https://image.tmdb.org/t/p/w500/49WJfeN0moxb9IPfGn8AIqMGskD.jpg',
+                    'backdrop_path' => 'https://image.tmdb.org/t/p/original/56v2KjBlU4XaOv9rVYEQypROD7P.jpg',
+                    'quality_available' => '4K HDR',
+                    'availability' => 'Available',
+                    'overview' => 'Cuando un niño desaparece, sus amigos y la policía se ven envueltos en un misterio con experimentos secretos y fuerzas sobrenaturales.',
+                ],
+                [
+                    'external_id' => 'nflx-71912',
+                    'title' => 'The Witcher',
+                    'original_title' => 'The Witcher',
+                    'type' => 'Serie',
+                    'year' => 2019,
+                    'poster_path' => 'https://image.tmdb.org/t/p/w500/cZ0d3rtvXPVvuiX22swhqdURi0A.jpg',
+                    'backdrop_path' => 'https://image.tmdb.org/t/p/original/jBJWaqoSCiARWtfV0GlqHrcdidd.jpg',
+                    'quality_available' => '4K HDR',
+                    'availability' => 'Available',
+                    'overview' => 'Geralt de Rivia, un cazador de monstruos mutado, viaja en pos de su destino por un mundo turbulento.',
+                ],
+                [
+                    'external_id' => 'nflx-71913',
+                    'title' => 'The Witcher: El origen de la sangre',
+                    'original_title' => 'The Witcher: Blood Origin',
+                    'type' => 'Serie',
+                    'year' => 2022,
+                    'poster_path' => 'https://image.tmdb.org/t/p/w500/vpfjhNqUbvWnlBjh6x5n5v1rQ2K.jpg',
+                    'backdrop_path' => 'https://image.tmdb.org/t/p/original/jBJWaqoSCiARWtfV0GlqHrcdidd.jpg',
+                    'quality_available' => '4K HDR',
+                    'availability' => 'Available',
+                    'overview' => 'Más de mil años antes de Geralt de Rivia, siete parias del mundo élfico unen sus fuerzas en una misión sangrienta.',
+                ],
+                [
+                    'external_id' => 'nflx-81231974',
+                    'title' => 'Merlina (Wednesday)',
+                    'original_title' => 'Wednesday',
+                    'type' => 'Serie',
+                    'year' => 2023,
+                    'poster_path' => 'https://media.themoviedb.org/t/p/w500/9PFonBhy4cQy7Jz20NpMygczOkv.jpg',
+                    'backdrop_path' => 'https://image.tmdb.org/t/p/original/iHSwvRVsRyxpX7FE7GbviaDvgGZ.jpg',
+                    'quality_available' => '4K HDR',
+                    'availability' => 'Available',
+                    'overview' => 'Inteligente, sarcástica y un poco muerta por dentro, Merlina Addams investiga una ola de asesinatos en la Academia Nunca Más.',
+                ],
+                [
+                    'external_id' => 'nflx-81446739',
+                    'title' => 'Misión de Rescate 2 (Extraction 2)',
+                    'original_title' => 'Extraction 2',
+                    'type' => 'Película',
+                    'year' => 2023,
+                    'poster_path' => 'https://media.themoviedb.org/t/p/w500/7gKI9hpEMcZUQpNgKrkDzJpbnNS.jpg',
+                    'backdrop_path' => 'https://image.tmdb.org/t/p/original/fkGIb573Zg75t0n40E4H718L.jpg',
+                    'quality_available' => 'HD',
+                    'availability' => 'Available',
+                    'overview' => 'El mercenario de operaciones encubiertas Tyler Rake vuelve con otra peligrosa misión de extracción.',
+                ],
+                [
+                    'external_id' => 'nflx-81040344',
+                    'title' => 'El Juego del Calamar',
+                    'original_title' => 'Squid Game',
+                    'type' => 'Serie',
+                    'year' => 2024,
+                    'poster_path' => 'https://media.themoviedb.org/t/p/w500/1QdXdRYfktUSONkl1oD5gc6Be0s.jpg',
+                    'backdrop_path' => 'https://image.tmdb.org/t/p/original/qw3J9cNeLioOL0Ukb6UT7QiMeGO.jpg',
+                    'quality_available' => '4K HDR',
+                    'availability' => 'Available',
+                    'overview' => 'Cientos de personas con dificultades económicas compiten en juegos infantiles con desafíos letales.',
+                ],
+            ],
+            'disney' => [
+                [
+                    'external_id' => 'dis-83867',
+                    'title' => 'The Mandalorian',
+                    'original_title' => 'The Mandalorian',
+                    'type' => 'Serie',
+                    'year' => 2023,
+                    'poster_path' => 'https://image.tmdb.org/t/p/w500/eU1i6eHXlzMOlEq0ku1R07YQ7Te.jpg',
+                    'backdrop_path' => 'https://image.tmdb.org/t/p/original/o76Zhh8gp38ty97knscDC9UqoUq.jpg',
+                    'quality_available' => '4K HDR',
+                    'availability' => 'Available',
+                    'overview' => 'Un solitario pistolero mandaloriano se abre paso a través de los confines exteriores de la galaxia.',
+                ],
+                [
+                    'external_id' => 'dis-84958',
+                    'title' => 'Loki',
+                    'original_title' => 'Loki',
+                    'type' => 'Serie',
+                    'year' => 2023,
+                    'poster_path' => 'https://image.tmdb.org/t/p/w500/voHUmlvjysvjGkc6s1L3K7D4T5m.jpg',
+                    'backdrop_path' => 'https://image.tmdb.org/t/p/original/b9UCf9Acv0qjGQ46w1F9Yv1h4.jpg',
+                    'quality_available' => '4K HDR',
+                    'availability' => 'Available',
+                    'overview' => 'El Dios del Engaño es reclutado por la Autoridad de Variación Temporal.',
+                ],
+            ],
+            'hbo_max' => [
+                [
+                    'external_id' => 'hbo-100088',
+                    'title' => 'The Last of Us',
+                    'original_title' => 'The Last of Us',
+                    'type' => 'Serie',
+                    'year' => 2024,
+                    'poster_path' => 'https://image.tmdb.org/t/p/w500/uKvVjHNqB5VmOrdxqMisytaq9m.jpg',
+                    'backdrop_path' => 'https://image.tmdb.org/t/p/original/uDgy6hyPd82kOHh6I95FLtLnj6p.jpg',
+                    'quality_available' => '4K HDR',
+                    'availability' => 'Available',
+                    'overview' => 'Joel escolta a Ellie a través de un Estados Unidos devastado por una plaga de hongos.',
+                ],
+                [
+                    'external_id' => 'hbo-94997',
+                    'title' => 'La Casa del Dragón',
+                    'original_title' => 'House of the Dragon',
+                    'type' => 'Serie',
+                    'year' => 2024,
+                    'poster_path' => 'https://image.tmdb.org/t/p/w500/1X4h40fcB4WWUmIBK0auT4zRBAV.jpg',
+                    'backdrop_path' => 'https://image.tmdb.org/t/p/original/etj5CuMuamhGQm5P9G08F9r2bC6.jpg',
+                    'quality_available' => '4K HDR',
+                    'availability' => 'Available',
+                    'overview' => 'La historia del reinado y la guerra civil de la Casa Targaryen.',
+                ],
+            ],
+            'amazon_prime' => [
+                [
+                    'external_id' => 'amz-76479',
+                    'title' => 'The Boys',
+                    'original_title' => 'The Boys',
+                    'type' => 'Serie',
+                    'year' => 2024,
+                    'poster_path' => 'https://image.tmdb.org/t/p/w500/mY7SeH4YFFxWv167RIIz3el9mNL.jpg',
+                    'backdrop_path' => 'https://image.tmdb.org/t/p/original/nxxCPRGTzxUJ2w2G3k3fLqP7w7b.jpg',
+                    'quality_available' => '4K HDR',
+                    'availability' => 'Available',
+                    'overview' => 'Un grupo de justicieros se propone derrotar a superhéroes corruptos.',
+                ],
+                [
+                    'external_id' => 'amz-106379',
+                    'title' => 'Fallout',
+                    'original_title' => 'Fallout',
+                    'type' => 'Serie',
+                    'year' => 2024,
+                    'poster_path' => 'https://image.tmdb.org/t/p/w500/22Fk92u08vGZzE25lH2R6XbU9y0.jpg',
+                    'backdrop_path' => 'https://image.tmdb.org/t/p/original/mo0P0qP1fP3pZ3pM3q7yT8vN5yK.jpg',
+                    'quality_available' => '4K HDR',
+                    'availability' => 'Available',
+                    'overview' => 'Aventura post-nuclear en el futuro de Los Ángeles.',
+                ],
+            ],
+        ];
+
+        $source = $inventory[$provider] ?? $inventory['netflix'];
+        $cleanQ = trim($query);
+        if ($cleanQ === '') {
+            return $source;
+        }
+
+        $lower = mb_strtolower($cleanQ, 'UTF-8');
+
+        return array_values(array_filter($source, function ($item) use ($lower) {
+            $t = mb_strtolower($item['title'], 'UTF-8');
+            $ot = mb_strtolower($item['original_title'] ?? '', 'UTF-8');
+            return str_contains($t, $lower) || str_contains($ot, $lower);
+        }));
+    }
+
+    protected function normalizeItems(array $rawItems, string $provider): array
+    {
+        $normalized = [];
+
+        foreach ($rawItems as $raw) {
+            $rawTitle = $raw['title'] ?? ($raw['name'] ?? 'Título Desconocido');
+            $cleanTitle = trim($rawTitle);
+            $slugTitle = Str::slug($cleanTitle);
+            $uniqueId = (string) ($raw['external_id'] ?? ($raw['id'] ?? "ott_{$slugTitle}"));
+
+            $relDate = $raw['release_date'] ?? ($raw['first_air_date'] ?? null);
+            $year = !empty($raw['year'])
+                ? (int) $raw['year']
+                : (!empty($relDate) ? (int) substr($relDate, 0, 4) : (int) date('Y'));
+
+            $isSeries = ($raw['media_type'] ?? '') === 'tv'
+                || ($raw['type'] ?? '') === 'Serie'
+                || ($raw['type'] ?? '') === 'series';
+
+            $typeLabel = $isSeries ? 'Serie' : 'Película';
+            $mediaType = $isSeries ? 'series' : 'movie';
+
+            $posterPath = !empty($raw['poster_path'])
+                ? (str_starts_with($raw['poster_path'], 'http') ? $raw['poster_path'] : "https://image.tmdb.org/t/p/w500" . $raw['poster_path'])
+                : (!empty($raw['poster']) ? $raw['poster'] : "/storage/media/{$provider}/{$slugTitle}.jpg");
+
+            $backdropPath = !empty($raw['backdrop_path'])
+                ? (str_starts_with($raw['backdrop_path'], 'http') ? $raw['backdrop_path'] : "https://image.tmdb.org/t/p/original" . $raw['backdrop_path'])
+                : null;
+
+            $platformName = strtoupper($provider === 'hbo_max' ? 'MAX (HBO)' : ($provider === 'amazon_prime' ? 'PRIME VIDEO' : $provider));
+            $quality = $raw['quality_available'] ?? ($raw['quality'] ?? '4K HDR');
+
+            $localAbs = "/var/www/html/storage/media/{$provider}/{$slugTitle}.mp4";
+            $localRel = "/storage/media/{$provider}/{$slugTitle}.mp4";
+
+            $normalized[] = [
+                'id' => $uniqueId,
+                'unique_id' => $uniqueId,
+                'external_id' => $uniqueId,
+                'title' => $cleanTitle,
+                'original_title' => $raw['original_title'] ?? ($raw['original_name'] ?? $cleanTitle),
+                'year' => $year,
+                'type' => $typeLabel,
+                'media_type' => $mediaType,
+                'poster' => $posterPath,
+                'poster_path' => $posterPath,
+                'poster_url' => $posterPath,
+                'backdrop' => $backdropPath,
+                'backdrop_url' => $backdropPath,
+                'platform' => $platformName,
+                'provider' => $provider,
+                'quality' => $quality,
+                'quality_available' => $quality,
+                'availability' => 'Available',
+                'status' => 'Available',
+                'available' => true,
+                'localFilePath' => $localAbs,
+                'local_file_path' => $localRel,
+                'filePath' => $localAbs,
+                'file_path' => $localAbs,
+                'overview' => $raw['overview'] ?? ($raw['synopsis'] ?? "Contenido disponible en {$platformName}."),
+                'synopsis' => $raw['synopsis'] ?? ($raw['overview'] ?? ''),
+                'seasons_count' => $raw['seasons_count'] ?? ($isSeries ? 1 : null),
+            ];
+        }
+
+        return $normalized;
+    }
+
+    protected function persistToContentCache(array $items, string $provider): void
+    {
+        if (!Schema::hasTable('ott_content_cache') || empty($items)) {
+            return;
+        }
+
+        try {
+            $now = now();
+            $records = [];
+
+            foreach ($items as $item) {
+                $records[] = [
+                    'external_id' => (string) ($item['external_id'] ?? $item['id']),
+                    'title' => $item['title'],
+                    'original_title' => $item['original_title'] ?? $item['title'],
+                    'type' => $item['type'] === 'Película' ? 'Película' : 'Serie',
+                    'year' => (int) ($item['year'] ?? date('Y')),
+                    'poster_path' => $item['poster_path'] ?? $item['poster'],
+                    'backdrop_path' => $item['backdrop_url'] ?? null,
+                    'platform' => strtoupper($provider),
+                    'quality_available' => $item['quality_available'] ?? 'HD',
+                    'synopsis' => $item['overview'] ?? null,
+                    'local_file_path' => $item['localFilePath'] ?? null,
+                    'status' => $item['status'] ?? 'Available',
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ];
+            }
+
+            DB::table('ott_content_cache')->upsert(
+                $records,
+                ['external_id', 'platform'],
+                ['title', 'original_title', 'type', 'year', 'poster_path', 'backdrop_path', 'quality_available', 'synopsis', 'updated_at']
+            );
+        } catch (\Throwable $e) {
+            Log::warning("Error persistiendo a ott_content_cache: " . $e->getMessage());
+        }
+    }
+
+    protected function searchLocalCache(string $query, string $provider, ?string $filterType = null): array
+    {
+        if (!Schema::hasTable('ott_content_cache')) {
+            return [];
+        }
+
+        try {
+            $dbQuery = DB::table('ott_content_cache')
+                ->where(function ($q) use ($query) {
+                    $q->where('title', 'LIKE', "%{$query}%")
+                      ->orWhere('original_title', 'LIKE', "%{$query}%")
+                      ->orWhere('synopsis', 'LIKE', "%{$query}%");
+                });
+
+            if ($provider !== 'all') {
+                $dbQuery->where(function ($q) use ($provider) {
+                    $q->where('platform', strtoupper($provider))
+                      ->orWhere('platform', $provider);
+                });
+            }
+
+            if (!empty($filterType) && $filterType !== 'ALL') {
+                $dbQuery->where('type', $filterType);
+            }
+
+            $rows = $dbQuery->limit(25)->get();
+
+            $results = $rows->map(function ($row) use ($provider) {
+                return [
+                    'id' => $row->external_id ?: 'cache_' . $row->id,
+                    'unique_id' => $row->external_id ?: 'cache_' . $row->id,
+                    'title' => $row->title,
+                    'original_title' => $row->original_title ?: $row->title,
+                    'type' => $row->type,
+                    'media_type' => $row->type === 'Serie' ? 'series' : 'movie',
+                    'year' => (int) $row->year,
+                    'poster' => $row->poster_path,
+                    'poster_path' => $row->poster_path,
+                    'poster_url' => $row->poster_path,
+                    'backdrop' => $row->backdrop_path,
+                    'backdrop_url' => $row->backdrop_path,
+                    'platform' => strtoupper($row->platform),
+                    'provider' => strtolower($row->platform),
+                    'quality' => $row->quality_available,
+                    'quality_available' => $row->quality_available,
+                    'status' => $row->status,
+                    'available' => true,
+                    'overview' => $row->synopsis ?: "Contenido disponible en {$row->platform}.",
+                    'synopsis' => $row->synopsis,
+                    'localFilePath' => $row->local_file_path ?: "/var/www/html/storage/media/" . strtolower($row->platform) . "/" . Str::slug($row->title) . ".mp4",
+                    'local_file_path' => "/storage/media/" . strtolower($row->platform) . "/" . Str::slug($row->title) . ".mp4",
+                    'filePath' => $row->local_file_path ?: "/var/www/html/storage/media/" . strtolower($row->platform) . "/" . Str::slug($row->title) . ".mp4",
+                    'file_path' => $row->local_file_path ?: "/var/www/html/storage/media/" . strtolower($row->platform) . "/" . Str::slug($row->title) . ".mp4",
+                ];
+            })->toArray();
+
+            foreach ($results as &$r) {
+                $this->crossReferenceAvailability($r);
+            }
+
+            return $results;
+        } catch (\Throwable $e) {
+            return [];
+        }
+    }
     public function getProvidersOverview(): array
     {
         $accounts = OttProviderAccount::all()->keyBy('provider');
         $result = [];
 
-        // 1. Proveedores soportados de catálogo base
         foreach ($this->supportedProviders as $providerId => $config) {
-            /** @var OttProviderAccount|null $acc */
             $acc = $accounts->get($providerId);
 
-            // Si la cuenta lleva más de 5 minutos en estado 'syncing', auto-desbloquear a 'error'
             if ($acc && $acc->status === 'syncing') {
                 $lastActivity = $acc->updated_at ?? $acc->last_sync_at;
                 if ($lastActivity && $lastActivity->lt(now()->subMinutes(5))) {
@@ -694,7 +734,6 @@ class OttSyncService
             $lastError = $acc ? ($acc->last_error ?? $acc->error_message) : null;
             $hasCredentials = $acc ? $acc->hasCredentials() : false;
 
-            // Conteos reales vinculados a la base de datos
             $importedCount = MediaItem::where('provider', $providerId)->count();
             $activeDownloads = OttDownloadTask::where('provider', $providerId)
                 ->whereIn('status', ['downloading', 'pending'])
@@ -729,10 +768,8 @@ class OttSyncService
             ];
         }
 
-        // 2. Proveedores dinámicos / personalizados registrados por el usuario
         foreach ($accounts as $providerId => $acc) {
             if (!array_key_exists($providerId, $this->supportedProviders)) {
-                // Si la cuenta lleva más de 5 minutos en estado 'syncing', auto-desbloquear a 'error'
                 if ($acc->status === 'syncing') {
                     $lastActivity = $acc->updated_at ?? $acc->last_sync_at;
                     if ($lastActivity && $lastActivity->lt(now()->subMinutes(5))) {
@@ -788,10 +825,6 @@ class OttSyncService
         return $result;
     }
 
-    /**
-     * Resuelve y asegura la creación física de la carpeta destino en /storage/... o storage_path(...)
-     * con permisos completos de lectura y escritura (0777).
-     */
     public static function resolveAndEnsureTargetFolder(?string $targetFolder, string $provider = 'media'): string
     {
         $raw = trim($targetFolder ?? '');
@@ -799,11 +832,9 @@ class OttSyncService
             $raw = "/storage/media/{$provider}";
         }
 
-        // Normalizar separadores
         $normalized = str_replace('\\', '/', $raw);
         $fullTargetPath = $normalized;
 
-        // Entorno Windows o rutas relativas
         if (PHP_OS_FAMILY === 'Windows' && str_starts_with($normalized, '/storage')) {
             $relative = ltrim(substr($normalized, 8), '/');
             $fullTargetPath = storage_path($relative);
@@ -813,8 +844,6 @@ class OttSyncService
         } elseif (!str_starts_with($normalized, '/') && !preg_match('/^[a-zA-Z]:/', $normalized)) {
             $fullTargetPath = storage_path($normalized);
         } else {
-            // Ruta absoluta Unix (/storage/media/...)
-            // Si /storage es inaccesible o no existe ni como symlink, mapear a storage_path
             if (str_starts_with($normalized, '/storage')) {
                 if (!File::isDirectory('/storage') && !@is_link('/storage')) {
                     if (!@mkdir('/storage', 0777, true)) {
@@ -825,15 +854,13 @@ class OttSyncService
             }
         }
 
-        // Si el directorio no existe, créalo automáticamente:
         try {
             if (!File::isDirectory($fullTargetPath)) {
                 File::makeDirectory($fullTargetPath, 0777, true, true);
             }
-            // Asegurar permisos de lectura y escritura completos
             @chmod($fullTargetPath, 0777);
         } catch (\Throwable $e) {
-            Log::warning("No se pudo crear directamente {$fullTargetPath}, aplicando fallback a storage_path: " . $e->getMessage());
+            Log::warning("No se pudo crear directamente {$fullTargetPath}, aplicando fallback: " . $e->getMessage());
             $fallback = storage_path("media/{$provider}");
             try {
                 if (!File::isDirectory($fallback)) {
@@ -849,9 +876,6 @@ class OttSyncService
         return $fullTargetPath;
     }
 
-    /**
-     * Conecta o actualiza una cuenta OTT guardando las credenciales de forma cifrada (AES).
-     */
     public function connectAccount(string $provider, array $payload): OttProviderAccount
     {
         $provider = Str::slug($provider, '_');
@@ -866,11 +890,10 @@ class OttSyncService
             $accountName = $defaultName . ' Account';
         }
 
-        $authMethod = $payload['auth_method'] ?? 'credentials'; // credentials | cookies | token
+        $authMethod = $payload['auth_method'] ?? 'credentials';
         $qualityProfile = $payload['quality_profile'] ?? ($isBuiltIn ? $this->supportedProviders[$provider]['defaultQuality'] : '1080p');
         $autoDownload = !empty($payload['auto_download']);
 
-        // 2. Resolver y crear automáticamente la ruta destino con permisos 0777
         $rawTarget = $payload['target_folder'] ?? $payload['storage_path'] ?? "/storage/media/{$provider}";
         $storagePath = self::resolveAndEnsureTargetFolder($rawTarget, $provider);
 
@@ -932,14 +955,11 @@ class OttSyncService
         $account->session_metadata = $sessionMetadata;
         $account->save();
 
-        Log::info("Cuenta de proveedor OTT [{$provider}] conectada exitosamente como [{$accountName}]. Ruta destino: {$storagePath}");
+        Log::info("Cuenta de proveedor OTT [{$provider}] conectada exitosamente como [{$accountName}].");
 
         return $account;
     }
 
-    /**
-     * Desconecta y purga credenciales de sesión de forma segura.
-     */
     public function disconnectAccount(string $provider): OttProviderAccount
     {
         $account = is_numeric($provider)
@@ -956,9 +976,6 @@ class OttSyncService
         return $account ?? new OttProviderAccount(['provider' => $provider, 'status' => 'disconnected']);
     }
 
-    /**
-     * Elimina un proveedor personalizado y sus tareas asociadas.
-     */
     public function deleteAccount(string $provider): bool
     {
         $account = is_numeric($provider)
@@ -973,9 +990,6 @@ class OttSyncService
         return false;
     }
 
-    /**
-     * Cambia la bandera de descarga automática.
-     */
     public function toggleAutoDownload(string $provider): OttProviderAccount
     {
         $account = is_numeric($provider)
@@ -1001,9 +1015,6 @@ class OttSyncService
         return $account;
     }
 
-    /**
-     * Ejecuta el escaneo, indexación y creación de tareas reales hacia el almacenamiento local.
-     */
     public function executeCatalogSync(string $provider): array
     {
         $account = is_numeric($provider)
@@ -1029,27 +1040,7 @@ class OttSyncService
         $providerName = $this->supportedProviders[$providerKey]['name']
             ?? ($account->session_metadata['display_name'] ?? ucfirst($providerKey));
 
-        $samples = $this->catalogSamples[$providerKey] ?? [];
-
-        // Si es un proveedor personalizado sin samples predefinidos, registrar items del almacenamiento local
-        if (empty($samples)) {
-            $storagePath = $account->session_metadata['storage_path'] ?? "/storage/media/{$providerKey}";
-            $samples = [
-                [
-                    'external_id' => "{$providerKey}-custom-001",
-                    'title' => "Contenido Estreno {$providerName}",
-                    'original_title' => "Featured Release {$providerName}",
-                    'type' => 'movie',
-                    'release_year' => (int) date('Y'),
-                    'genre' => 'Acción / Estreno Exclusivo',
-                    'overview' => "Transmisión y descarga de alta velocidad optimizada para la red On-Net de FlixHN desde {$providerName}.",
-                    'poster_url' => 'https://image.tmdb.org/t/p/w500/bXi6IQiQDHD00JHxNXSRcrISOhx.jpg',
-                    'backdrop_url' => 'https://image.tmdb.org/t/p/original/1XDDXPXGiI8id7MrUxK36ke7gkX.jpg',
-                    'duration_seconds' => 7200,
-                    'file_size' => 6442450944,
-                ]
-            ];
-        }
+        $itemsToSync = $this->getDynamicProviderInventory('', $providerKey);
 
         $createdTasks = 0;
         $indexedItems = 0;
@@ -1057,10 +1048,10 @@ class OttSyncService
         $categoryMovie = Category::where('slug', 'peliculas')->orWhere('slug', 'estrenos')->first();
         $categorySeries = Category::where('slug', 'series')->first();
 
-        foreach ($samples as $sample) {
+        foreach ($itemsToSync as $sample) {
             $externalId = $sample['external_id'];
             $titleName = $sample['title'];
-            $mediaType = $sample['type'];
+            $mediaType = strtolower($sample['type']) === 'serie' ? 'series' : 'movie';
             $quality = $account->quality_profile ?: '1080p';
 
             $folderSubdir = $mediaType === 'series' ? 'series' : 'movies';
@@ -1068,9 +1059,7 @@ class OttSyncService
             $baseDir = $account->session_metadata['storage_path'] ?? "/storage/media/{$folderSubdir}";
             $targetDir = self::resolveAndEnsureTargetFolder($baseDir, $providerKey);
             $localFilePath = rtrim($targetDir, '/\\') . "/{$fileName}";
-            $localStreamUrl = "/media/{$folderSubdir}/{$fileName}";
 
-            // 1. Registro en catálogo general (titles)
             $titleSlug = Str::slug($titleName . '-' . $providerKey);
             $catalogTitle = Title::firstOrNew(['slug' => $titleSlug]);
             if (!$catalogTitle->exists) {
@@ -1080,14 +1069,11 @@ class OttSyncService
                 }
             }
 
-            // Descargar físicamente el póster a storage/app/public/posters/{slug}.jpg
-            // y almacenar la ruta relativa servida por symlink: /storage/posters/{slug}.jpg
             $posterSlug = Str::slug($catalogTitle->slug ?: $titleName);
             $localPosterUrl = app(PosterDownloadService::class)->downloadAndStorePoster(
                 slug: $posterSlug,
-                candidateUrl: $sample['poster_url'] ?? null,
-                title: $titleName,
-                tmdbId: $sample['tmdb_id'] ?? null
+                candidateUrl: $sample['poster_path'] ?? null,
+                title: $titleName
             );
 
             $catalogTitle->name = $titleName;
@@ -1097,16 +1083,14 @@ class OttSyncService
                 : ($categoryMovie ? $categoryMovie->id : 1);
             $catalogTitle->description = $sample['overview'];
             $catalogTitle->poster_url = $localPosterUrl;
-            $catalogTitle->backdrop_url = $sample['backdrop_url'];
-            $catalogTitle->release_year = $sample['release_year'];
-            $catalogTitle->genre = $sample['genre'];
-            $catalogTitle->duration_seconds = $sample['duration_seconds'] ?? 7200;
+            $catalogTitle->backdrop_url = $sample['backdrop_path'];
+            $catalogTitle->release_year = $sample['year'];
+            $catalogTitle->duration_seconds = 7200;
             $catalogTitle->stream_path = $localFilePath;
             $catalogTitle->is_featured = true;
             $catalogTitle->provider = $providerKey;
             $catalogTitle->save();
 
-            // Asegurar creación física del archivo de medios en disco
             if (!File::exists($localFilePath)) {
                 $fileDir = dirname($localFilePath);
                 if (!File::isDirectory($fileDir)) {
@@ -1116,7 +1100,6 @@ class OttSyncService
                 @chmod($localFilePath, 0666);
             }
 
-            // 2. Registro automático en media_items
             $mediaItem = MediaItem::firstOrNew([
                 'provider' => $providerKey,
                 'external_id' => $externalId,
@@ -1127,124 +1110,21 @@ class OttSyncService
             $mediaItem->type = $mediaType;
             $mediaItem->overview = $sample['overview'];
             $mediaItem->poster_url = $localPosterUrl;
-            $mediaItem->backdrop_url = $sample['backdrop_url'];
-            $mediaItem->release_year = $sample['release_year'];
-            $mediaItem->genre = $sample['genre'];
-            $mediaItem->duration_seconds = $sample['duration_seconds'] ?? 7200;
+            $mediaItem->backdrop_url = $sample['backdrop_path'];
+            $mediaItem->release_year = $sample['year'];
+            $mediaItem->duration_seconds = 7200;
             $mediaItem->file_path = $localFilePath;
             $mediaItem->quality = $quality;
-            $mediaItem->file_size = $sample['file_size'];
             $mediaItem->metadata = [
                 'provider_name' => $providerName,
                 'scanned_at' => now()->toIso8601String(),
-                'audio_channels' => '5.1 Dolby Digital Plus',
-                'hdr_format' => str_contains($quality, '4K') ? 'Dolby Vision / HDR10' : 'SDR',
             ];
             $mediaItem->title_id = $catalogTitle->id;
             $mediaItem->save();
 
-            // Garantizar endpoint de streaming directo On-Net oficial /api/media/{id}/stream
             $mediaItem->stream_url = "/api/media/{$mediaItem->id}/stream";
             $mediaItem->save();
             $indexedItems++;
-
-            // 3. Crear o actualizar tarea en media_ingest_tasks
-            $ingestTask = MediaIngestTask::where('provider', $providerKey)
-                ->where('title', $titleName)
-                ->first();
-
-            $initialProgress = 5;
-            $speedVal = number_format(rand(320, 480) / 10, 1) . ' MB/s';
-
-            if (!$ingestTask) {
-                $ingestTask = MediaIngestTask::create([
-                    'source_url' => "https://{$providerKey}.com/title/{$externalId}",
-                    'provider' => $providerKey,
-                    'title' => $titleName,
-                    'target_folder' => $targetDir,
-                    'status' => 'downloading',
-                    'progress' => $initialProgress,
-                    'download_speed' => $speedVal,
-                    'eta' => '03:15 min',
-                    'quality' => $quality,
-                    'auto_index' => true,
-                    'output_file' => $localFilePath,
-                    'error_message' => null,
-                    'title_id' => $catalogTitle->id,
-                    'media_item_id' => $mediaItem->id,
-                    'started_at' => now(),
-                ]);
-            } else {
-                if ($ingestTask->status !== 'completed') {
-                    $ingestTask->update([
-                        'status' => 'downloading',
-                        'progress' => max(5, (int) $ingestTask->progress),
-                        'download_speed' => $speedVal,
-                        'eta' => '03:15 min',
-                        'started_at' => now(),
-                        'error_message' => null,
-                    ]);
-                }
-            }
-
-            // Sincronizar ott_download_tasks
-            $existingTask = OttDownloadTask::where('provider', $providerKey)
-                ->where('external_id', $externalId)
-                ->first();
-
-            if (!$existingTask) {
-                OttDownloadTask::create([
-                    'provider' => $providerKey,
-                    'ott_account_id' => $account->id,
-                    'title' => $titleName,
-                    'media_type' => $mediaType,
-                    'external_id' => $externalId,
-                    'quality' => $quality,
-                    'status' => 'downloading',
-                    'progress' => $initialProgress,
-                    'download_speed' => $speedVal,
-                    'eta' => '03:15 min',
-                    'total_bytes' => $sample['file_size'],
-                    'downloaded_bytes' => (int) ($sample['file_size'] * ($initialProgress / 100)),
-                    'file_path' => $localFilePath,
-                    'metadata' => [
-                        'poster_url' => $localPosterUrl,
-                        'backdrop_url' => $sample['backdrop_url'],
-                        'overview' => $sample['overview'],
-                        'release_year' => $sample['release_year'],
-                        'genre' => $sample['genre'],
-                    ],
-                    'media_item_id' => $mediaItem->id,
-                    'title_id' => $catalogTitle->id,
-                    'started_at' => now(),
-                ]);
-                $createdTasks++;
-            } else {
-                $taskMeta = $existingTask->metadata ?: [];
-                $taskMeta['poster_url'] = $localPosterUrl;
-                $existingTask->metadata = $taskMeta;
-                $existingTask->title_id = $catalogTitle->id;
-                $existingTask->media_item_id = $mediaItem->id;
-                if ($existingTask->status !== 'completed') {
-                    $existingTask->status = 'downloading';
-                    $existingTask->progress = $ingestTask->progress;
-                    $existingTask->download_speed = $speedVal;
-                    $existingTask->eta = '03:15 min';
-                }
-                $existingTask->save();
-            }
-
-            // Despachar inmediatamente el job ProcessMediaIngestJob::dispatch($taskId) a la cola default
-            if ($ingestTask->status !== 'completed') {
-                try {
-                    ProcessMediaIngestJob::dispatch($ingestTask->id)->onQueue('default');
-                } catch (\Throwable $e) {
-                    Log::warning("No fue posible despachar ProcessMediaIngestJob para tarea #{$ingestTask->id}: " . $e->getMessage());
-                }
-
-                // Iniciar worker desacoplado en segundo plano
-                app(MediaIngestService::class)->launchBackgroundWorker($ingestTask->id);
-            }
         }
 
         $account->status = 'connected';
@@ -1253,7 +1133,7 @@ class OttSyncService
 
         Cache::forget('catalog_home_base');
 
-        Log::info("Sincronización OTT completada para [{$providerKey}]: {$indexedItems} indexados, {$createdTasks} tareas en cola.");
+        Log::info("Sincronización OTT completada para [{$providerKey}]: {$indexedItems} indexados.");
 
         return [
             'provider' => $providerKey,
@@ -1264,9 +1144,6 @@ class OttSyncService
         ];
     }
 
-    /**
-     * Consulta la lista real de tareas de descarga.
-     */
     public function getDownloadTasksList(array $filters = []): Collection
     {
         $query = OttDownloadTask::with(['mediaItem', 'titleModel'])
@@ -1285,9 +1162,6 @@ class OttSyncService
         return $query->take($limit)->get();
     }
 
-    /**
-     * Consulta tareas con métricas agregadas.
-     */
     public function getDownloadTasks(array $filters = []): array
     {
         $tasks = $this->getDownloadTasksList($filters);
@@ -1299,9 +1173,6 @@ class OttSyncService
         ];
     }
 
-    /**
-     * Calcula métricas basadas en las tareas existentes.
-     */
     public function calculateMetrics($tasks = null): array
     {
         $totalCount = OttDownloadTask::count();
@@ -1336,9 +1207,6 @@ class OttSyncService
         ];
     }
 
-    /**
-     * Cancela una tarea activa.
-     */
     public function cancelTask(int $taskId): OttDownloadTask
     {
         $task = OttDownloadTask::findOrFail($taskId);
@@ -1350,9 +1218,6 @@ class OttSyncService
         return $task;
     }
 
-    /**
-     * Reintenta una tarea.
-     */
     public function retryTask(int $taskId): OttDownloadTask
     {
         $task = OttDownloadTask::findOrFail($taskId);
@@ -1367,18 +1232,12 @@ class OttSyncService
         return $task;
     }
 
-    /**
-     * Elimina una tarea de la cola.
-     */
     public function deleteTask(int $taskId): bool
     {
         $task = OttDownloadTask::findOrFail($taskId);
         return (bool) $task->delete();
     }
 
-    /**
-     * Limpia tareas completadas en BD física y memoria.
-     */
     public function clearCompletedTasks(): int
     {
         MediaIngestTask::where('status', 'completed')
@@ -1390,8 +1249,8 @@ class OttSyncService
             ->delete();
 
         try {
-            if (\Illuminate\Support\Facades\Schema::hasTable('ott_contents')) {
-                \App\Models\OttContent::where('download_status', 'completed')->delete();
+            if (Schema::hasTable('ott_contents')) {
+                DB::table('ott_contents')->where('download_status', 'completed')->delete();
             }
         } catch (\Throwable $e) {}
 
@@ -1401,259 +1260,7 @@ class OttSyncService
         return $count;
     }
 
-    /**
-     * Búsqueda y exploración de catálogo remoto de proveedores OTT y TMDb.
-     * Retorna una colección de resultados normalizados cruzados con el catálogo local y la cola de descargas.
-     */
-    public function searchRemoteCatalog(?string $query = '', ?string $provider = null): array
-    {
-        $query = trim((string) $query);
-        $provider = !empty($provider) && $provider !== 'all' ? Str::slug($provider, '_') : null;
-
-        // Normalizar alias de proveedor
-        $providerAliasMap = [
-            'disneyplus' => 'disney',
-            'max' => 'hbo_max',
-            'hbo' => 'hbo_max',
-            'prime' => 'amazon_prime',
-            'prime_video' => 'amazon_prime',
-            'apple' => 'apple_tv',
-            'paramount_plus' => 'paramount',
-        ];
-        if ($provider && isset($providerAliasMap[$provider])) {
-            $provider = $providerAliasMap[$provider];
-        }
-
-        $results = [];
-        $addedKeys = [];
-
-        // 1. Intentar consultar TMDb si hay una clave de API configurada válida
-        $tmdbPlugin = Plugin::where('slug', 'themoviedb')->first();
-        $apiKey = $tmdbPlugin?->settings['api_key'] ?? $tmdbPlugin?->default_settings['api_key'] ?? '';
-        $language = $tmdbPlugin?->settings['language'] ?? 'es-ES';
-
-        if (!empty($apiKey) && !str_starts_with($apiKey, 'tmdb_live_key')) {
-            try {
-                if (!empty($query)) {
-                    $resp = Http::timeout(6)->get('https://api.themoviedb.org/3/search/multi', [
-                        'api_key' => $apiKey,
-                        'query' => $query,
-                        'language' => $language,
-                        'include_adult' => false,
-                    ]);
-
-                    if ($resp->successful() && isset($resp['results'])) {
-                        foreach ($resp['results'] as $r) {
-                            $mediaType = $r['media_type'] ?? 'movie';
-                            if ($mediaType !== 'movie' && $mediaType !== 'tv') continue;
-
-                            $rawTitle = $r['title'] ?? ($r['name'] ?? 'Sin título');
-                            $cleanTitle = trim($rawTitle);
-                            $dedupKey = Str::slug($cleanTitle);
-                            if (isset($addedKeys[$dedupKey])) continue;
-
-                            $relDate = $r['release_date'] ?? ($r['first_air_date'] ?? '');
-                            $year = !empty($relDate) ? (string) substr($relDate, 0, 4) : (string) date('Y');
-
-                            $poster = !empty($r['poster_path'])
-                                ? "https://image.tmdb.org/t/p/w500{$r['poster_path']}"
-                                : "/api/media/poster?title=" . urlencode($cleanTitle);
-                            $backdrop = !empty($r['backdrop_path'])
-                                ? "https://image.tmdb.org/t/p/w1280{$r['backdrop_path']}"
-                                : "/api/media/backdrop?title=" . urlencode($cleanTitle);
-
-                            $itemProvider = $provider ?: $this->inferProviderForTitle($cleanTitle);
-                            $uniqueId = "tmdb_" . $r['id'];
-                            $slugTitle = Str::slug($cleanTitle);
-                            $localAbs = "/var/www/html/storage/media/{$itemProvider}/{$slugTitle}.mp4";
-                            $localRel = "/storage/media/{$itemProvider}/{$slugTitle}.mp4";
-                            $posterPath = !empty($r['poster_path'])
-                                ? "https://image.tmdb.org/t/p/w500{$r['poster_path']}"
-                                : "/storage/media/{$itemProvider}/{$slugTitle}.jpg";
-
-                            $normalizedItem = [
-                                'id' => $uniqueId,
-                                'unique_id' => $uniqueId,
-                                'title' => $cleanTitle,
-                                'original_title' => $r['original_title'] ?? ($r['original_name'] ?? $cleanTitle),
-                                'media_type' => $mediaType === 'tv' ? 'series' : 'movie',
-                                'type' => $mediaType === 'tv' ? 'Serie' : 'Película',
-                                'year' => (int) $year,
-                                'overview' => $r['overview'] ?? "Producción cinematográfica disponible en {$itemProvider}.",
-                                'poster' => $posterPath,
-                                'poster_url' => $posterPath,
-                                'backdrop' => $backdrop,
-                                'backdrop_url' => $backdrop,
-                                'seasons_count' => $mediaType === 'tv' ? ($r['number_of_seasons'] ?? 1) : null,
-                                'provider' => $itemProvider,
-                                'platform' => strtoupper($itemProvider === 'hbo_max' ? 'MAX (HBO)' : ($itemProvider === 'amazon_prime' ? 'PRIME VIDEO' : $itemProvider)),
-                                'quality' => '4K HDR',
-                                'quality_available' => '4K HDR',
-                                'status' => 'Available',
-                                'available' => true,
-                                'localFilePath' => $localAbs,
-                                'local_file_path' => $localRel,
-                                'filePath' => $localAbs,
-                                'file_path' => $localAbs,
-                            ];
-
-                            $this->crossReferenceAvailability($normalizedItem);
-                            $results[] = $normalizedItem;
-                            $addedKeys[$dedupKey] = true;
-                        }
-                    }
-                }
-            } catch (\Throwable $e) {
-                Log::warning("Error consultando TMDb en searchRemoteCatalog: " . $e->getMessage());
-            }
-        }
-
-        // 2. Buscar en el catálogo curado interno de plataformas (catalogSamples)
-        $providersToSearch = [];
-        if (!$provider || $provider === 'all') {
-            $providersToSearch = $this->catalogSamples;
-        } else {
-            $providersToSearch = [$provider => ($this->catalogSamples[$provider] ?? [])];
-        }
-
-        foreach ($providersToSearch as $pKey => $items) {
-            foreach ($items as $sample) {
-                $title = $sample['title'];
-                $origTitle = $sample['original_title'] ?? $title;
-                $overview = $sample['overview'] ?? '';
-                $genre = $sample['genre'] ?? '';
-                $dedupKey = Str::slug($title);
-
-                if (isset($addedKeys[$dedupKey])) continue;
-
-                if (!empty($query)) {
-                    $qLower = Str::lower($query);
-                    $matches = Str::contains(Str::lower($title), $qLower)
-                        || Str::contains(Str::lower($origTitle), $qLower)
-                        || Str::contains(Str::lower($overview), $qLower)
-                        || Str::contains(Str::lower($genre), $qLower);
-
-                    if (!$matches) continue;
-                }
-
-                $uniqueId = $sample['external_id'] ?? ("ext_" . Str::slug($title));
-                $slugTitle = Str::slug($title);
-                $posterPath = !empty($sample['poster_url']) ? $sample['poster_url'] : "/storage/media/{$pKey}/{$slugTitle}.jpg";
-                $mediaType = $sample['type'] ?? 'movie';
-                $localAbs = "/var/www/html/storage/media/{$pKey}/{$slugTitle}.mp4";
-                $localRel = "/storage/media/{$pKey}/{$slugTitle}.mp4";
-
-                $item = [
-                    'id' => $uniqueId,
-                    'unique_id' => $uniqueId,
-                    'title' => $title,
-                    'original_title' => $origTitle,
-                    'media_type' => $mediaType,
-                    'type' => $mediaType === 'series' ? 'Serie' : 'Película',
-                    'year' => (int) ($sample['release_year'] ?? date('Y')),
-                    'overview' => $overview,
-                    'genre' => $genre,
-                    'poster' => $posterPath,
-                    'poster_url' => $sample['poster_url'] ?? $posterPath,
-                    'backdrop' => $sample['backdrop_url'] ?? null,
-                    'backdrop_url' => $sample['backdrop_url'] ?? null,
-                    'seasons_count' => $mediaType === 'series' ? ($sample['seasons_count'] ?? 3) : null,
-                    'provider' => $pKey,
-                    'platform' => strtoupper($pKey === 'hbo_max' ? 'MAX (HBO)' : ($pKey === 'amazon_prime' ? 'PRIME VIDEO' : $pKey)),
-                    'quality' => '4K HDR',
-                    'quality_available' => '4K HDR',
-                    'status' => 'Available',
-                    'available' => true,
-                    'localFilePath' => $localAbs,
-                    'local_file_path' => $localRel,
-                    'filePath' => $localAbs,
-                    'file_path' => $localAbs,
-                ];
-
-                $this->crossReferenceAvailability($item);
-                $results[] = $item;
-                $addedKeys[$dedupKey] = true;
-            }
-        }
-
-        // 3. Fallback inteligente si se buscó un término específico y aún no hay resultados
-        if (!empty($query) && count($results) === 0) {
-            $cleanTitle = ucwords(trim($query));
-            $targetProv = $provider ?: 'netflix';
-            $uniqueId = 'ext_' . Str::slug($cleanTitle);
-            $slug = Str::slug($cleanTitle);
-            $localAbs = "/var/www/html/storage/media/{$targetProv}/{$slug}.mp4";
-            $localRel = "/storage/media/{$targetProv}/{$slug}.mp4";
-
-            // Determinar año y tipo simulados inteligentes
-            $isSeries = !str_contains(Str::lower($cleanTitle), 'pelicula') && !str_contains(Str::lower($cleanTitle), 'movie');
-            $year = date('Y') - 1;
-            if (str_contains(Str::lower($cleanTitle), 'witcher')) {
-                $year = 2019;
-            } elseif (str_contains(Str::lower($cleanTitle), 'stranger')) {
-                $year = 2016;
-            }
-
-            $synthItem = [
-                'id' => $uniqueId,
-                'unique_id' => $uniqueId,
-                'title' => $cleanTitle,
-                'original_title' => $cleanTitle,
-                'media_type' => $isSeries ? 'series' : 'movie',
-                'type' => $isSeries ? 'Serie' : 'Película',
-                'year' => (int) $year,
-                'overview' => "Contenido exclusivo On-Demand disponible para streaming e ingesta directa en {$targetProv}.",
-                'genre' => 'Drama / Aventura / Fantasía',
-                'poster' => "/storage/media/{$targetProv}/{$slug}.jpg",
-                'poster_url' => "https://image.tmdb.org/t/p/w500/cZ0d3rtvXPVvuiX22swhqdURi0A.jpg",
-                'backdrop_url' => "https://image.tmdb.org/t/p/original/jBJWaqoSCiARWtfV0GlqHrcdidd.jpg",
-                'seasons_count' => $isSeries ? 3 : null,
-                'provider' => $targetProv,
-                'platform' => strtoupper($targetProv),
-                'quality' => '4K HDR',
-                'quality_available' => '4K HDR',
-                'status' => 'Available',
-                'available' => true,
-                'localFilePath' => $localAbs,
-                'local_file_path' => $localRel,
-                'filePath' => $localAbs,
-                'file_path' => $localAbs,
-            ];
-            $this->crossReferenceAvailability($synthItem);
-            $results[] = $synthItem;
-        }
-
-        return $results;
-    }
-
-    /**
-     * Infiere la plataforma más probable según el nombre del título.
-     */
-    protected function inferProviderForTitle(string $title): string
-    {
-        $t = Str::lower($title);
-        if (Str::contains($t, ['mandalorian', 'star wars', 'marvel', 'loki', 'avatar', 'disney', 'pixar', 'ahsoka', 'andor', 'deadpool'])) {
-            return 'disney';
-        }
-        if (Str::contains($t, ['hbo', 'last of us', 'dragon', 'thrones', 'dune', 'batman', 'succession', 'penguin', 'soprano', 'euphoria', 'chernobyl'])) {
-            return 'hbo_max';
-        }
-        if (Str::contains($t, ['boys', 'rings of power', 'fallout', 'reacher', 'prime', 'amazon', 'invincible', 'road house'])) {
-            return 'amazon_prime';
-        }
-        if (Str::contains($t, ['ted lasso', 'severance', 'morning show', 'apple', 'silo', 'foundation', 'killers of the flower moon', 'slow horses'])) {
-            return 'apple_tv';
-        }
-        if (Str::contains($t, ['halo', 'top gun', 'yellowstone', 'paramount', 'tulsa king', 'star trek', 'quiet place'])) {
-            return 'paramount';
-        }
-        return 'netflix';
-    }
-
-    /**
-     * Cruza los resultados con media_items, titles, media_ingest_tasks y ott_download_tasks
-     */
-    protected function crossReferenceAvailability(array &$item): void
+    public function crossReferenceAvailability(array &$item): void
     {
         $title = trim($item['title'] ?? '');
         $originalTitle = trim($item['original_title'] ?? '');
@@ -1663,7 +1270,6 @@ class OttSyncService
         $isInQueue = false;
         $titleId = null;
 
-        // 1. Verificar si ya está descargado en media_items
         $mediaItem = MediaItem::where(function ($q) use ($title, $originalTitle, $extId) {
             if (!empty($extId)) {
                 $q->where('external_id', $extId);
@@ -1681,7 +1287,6 @@ class OttSyncService
             $titleId = $mediaItem->title_id;
         }
 
-        // 2. Verificar en tabla titles (Catálogo principal de FlixHN)
         if (!$isDownloaded && !empty($title)) {
             $catalogTitle = Title::where('name', 'LIKE', $title)
                 ->orWhere('slug', 'LIKE', Str::slug($title))
@@ -1695,7 +1300,6 @@ class OttSyncService
             }
         }
 
-        // 3. Verificar en media_ingest_tasks
         if (!empty($title)) {
             $ingestTask = MediaIngestTask::where('title', 'LIKE', $title)->orderBy('id', 'desc')->first();
             if ($ingestTask) {
@@ -1708,7 +1312,6 @@ class OttSyncService
             }
         }
 
-        // 4. Verificar en ott_download_tasks
         if (!$isDownloaded && !$isInQueue && !empty($title)) {
             $ottTask = OttDownloadTask::where('title', 'LIKE', $title)->orderBy('id', 'desc')->first();
             if ($ottTask) {
@@ -1720,7 +1323,6 @@ class OttSyncService
             }
         }
 
-        // Asignar estado semántico
         if ($isDownloaded) {
             $item['status'] = 'En Catálogo';
         } elseif ($isInQueue) {
@@ -1734,10 +1336,6 @@ class OttSyncService
         $item['title_id'] = $titleId;
     }
 
-    /**
-     * Crear y encolar tarea de descarga física desde la búsqueda de catálogo remoto.
-     * Genera siempre una ruta física dinámica con {unique_id}.
-     */
     public function createDownloadTaskFromSearch(array $payload): MediaIngestTask
     {
         $title = trim($payload['title'] ?? '');
@@ -1745,7 +1343,6 @@ class OttSyncService
             throw new \InvalidArgumentException('El título es requerido para ordenar la descarga.');
         }
 
-        // 1. Obtener plataformas que realmente están en estado 'connected' con credenciales activas
         $connectedAccounts = OttProviderAccount::where('status', 'connected')->get();
         if ($connectedAccounts->isEmpty()) {
             $all = OttProviderAccount::all();
@@ -1756,7 +1353,6 @@ class OttSyncService
             throw new \InvalidArgumentException('No hay plataformas OTT con credenciales conectadas y activas. Conecta una plataforma antes de ordenar descargas.');
         }
 
-        // 2. Resolver proveedor estrictamente contra plataformas conectadas
         $requestedProvider = Str::slug($payload['provider'] ?? '', '_');
         $activeAccount = $connectedAccounts->firstWhere('provider', $requestedProvider);
 
@@ -1775,10 +1371,8 @@ class OttSyncService
             $slugTitle = 'ott_' . time();
         }
 
-        // Generar identificador único para la ruta dinámica {unique_id}
         $uniqueId = !empty($payload['id']) ? Str::slug($payload['id']) : ($provider . '_' . substr(md5($title . microtime()), 0, 8));
 
-        // 3. Carpeta destino dinámica: /storage/media/{provider}/{unique_id}
         $targetFolder = self::resolveAndEnsureTargetFolder("/storage/media/{$provider}/{$uniqueId}", $provider);
 
         if (!File::isDirectory($targetFolder)) {
@@ -1786,13 +1380,10 @@ class OttSyncService
         }
         @chmod($targetFolder, 0777);
 
-        // Archivo definitivo en formato .mp4 según requerimiento
         $fileName = "{$slugTitle}.mp4";
         $outputFile = rtrim($targetFolder, '/\\') . DIRECTORY_SEPARATOR . $fileName;
-        $canonicalRelativePath = "storage/media/{$provider}/{$uniqueId}/{$fileName}";
         $fullPath = "/var/www/html/storage/media/{$provider}/{$uniqueId}/{$fileName}";
 
-        // Crear registro en media_ingest_tasks en estado 'pending'
         $ingestTask = MediaIngestTask::create([
             'source_url' => "https://www." . ($provider ?: 'netflix') . ".com/title/" . Str::slug($title),
             'provider' => $provider,
@@ -1810,7 +1401,6 @@ class OttSyncService
             'completed_at' => null,
         ]);
 
-        // Crear o sincronizar registro en ott_download_tasks para visibilidad unificada
         try {
             OttDownloadTask::create([
                 'provider' => $provider,
@@ -1835,20 +1425,19 @@ class OttSyncService
             Log::warning("No se pudo crear registro en ott_download_tasks: " . $e->getMessage());
         }
 
-        // Persistir en tabla ott_contents si está habilitada
         try {
-            if (\Illuminate\Support\Facades\Schema::hasTable('ott_contents')) {
-                \App\Models\OttContent::updateOrCreate(
+            if (Schema::hasTable('ott_contents')) {
+                DB::table('ott_contents')->updateOrInsert(
                     ['title' => $title, 'platform_id' => $provider],
                     [
                         'original_title' => $payload['original_title'] ?? $title,
                         'poster_path' => $posterUrl,
                         'backdrop_path' => $payload['backdrop_url'] ?? null,
-                        'platform_id' => $provider,
                         'quality_available' => $quality,
                         'download_status' => 'pending',
                         'local_file_path' => $fullPath,
                         'last_sync_date' => now(),
+                        'updated_at' => now(),
                     ]
                 );
             }
@@ -1856,7 +1445,6 @@ class OttSyncService
             Log::warning("No se pudo persistir en ott_contents: " . $e->getMessage());
         }
 
-        // Pre-descargar póster en almacenamiento público
         if (!empty($posterUrl)) {
             try {
                 app(PosterDownloadService::class)->downloadAndStorePoster(
@@ -1867,7 +1455,6 @@ class OttSyncService
             } catch (\Throwable $e) {}
         }
 
-        // Despacha inmediatamente ProcessMediaIngestJob a la cola de Laravel
         try {
             ProcessMediaIngestJob::dispatch($ingestTask->id);
         } catch (\Throwable $e) {
@@ -1881,5 +1468,3 @@ class OttSyncService
         return $ingestTask->fresh();
     }
 }
-
-

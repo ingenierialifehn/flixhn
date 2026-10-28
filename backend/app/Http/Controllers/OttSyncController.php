@@ -31,11 +31,16 @@ class OttSyncController extends Controller
             $providers = $this->ottService->getProvidersOverview();
             $tasks = $this->ottService->getDownloadTasksList()->toArray();
             
-            // Catálogo inicial curado de 22 resultados con localFilePath exacto garantizado
             $query = trim((string) ($request->query('q') ?: $request->query('query', '')));
-            $results = $this->ottService->searchRemoteCatalog($query, $request->query('provider') ?: 'all');
+            $provider = $request->query('provider') ?: 'all';
+            $type = $request->query('type');
 
-            // Asegurar que cada resultado cuente con localFilePath para evitar "filePath is not defined"
+            if (!empty($query)) {
+                $results = $this->ottService->search($query, $provider, $type);
+            } else {
+                $results = $this->ottService->getAvailableCatalog($provider, $type);
+            }
+
             $results = $this->normalizeResultsForFrontend($results);
 
             if ($request->wantsJson() || $request->is('api/*')) {
@@ -51,9 +56,8 @@ class OttSyncController extends Controller
         } catch (\Throwable $e) {
             Log::error('Error en OttSyncController@index: ' . $e->getMessage());
 
-            // Fallback consistente y seguro en caso de contingencia
-            $results = $this->getFallbackMockResults();
-            $providers = [];
+            $results = [];
+            $providers = $this->ottService->getProvidersOverview();
             $tasks = [];
 
             if ($request->wantsJson() || $request->is('api/*')) {
@@ -81,11 +85,8 @@ class OttSyncController extends Controller
     {
         try {
             $query = trim((string) ($request->query('q') ?: $request->query('query', '')));
-            $results = $this->ottService->searchRemoteCatalog($query, $provider);
-
-            if (empty($results) && !empty($query)) {
-                $results = $this->getMockResultsForQuery($query, $provider);
-            }
+            $type = $request->query('type');
+            $results = $this->ottService->search($query, $provider, $type);
 
             $normalized = $this->normalizeResultsForFrontend($results);
 
@@ -101,7 +102,7 @@ class OttSyncController extends Controller
             return response()->json($normalized);
         } catch (\Throwable $e) {
             Log::error("Error en OttSyncController@searchProvider [{$provider}]: " . $e->getMessage());
-            return response()->json($this->getFallbackMockResults($provider), 200);
+            return response()->json([]);
         }
     }
 
@@ -114,12 +115,13 @@ class OttSyncController extends Controller
     {
         try {
             $query = trim((string) ($request->query('q') ?: $request->query('query', '')));
-            $provider = $request->query('provider') ?: $request->query('platform');
+            $provider = $request->query('provider') ?: $request->query('platform', 'all');
+            $type = $request->query('type');
 
-            $results = $this->ottService->searchRemoteCatalog($query, $provider);
-
-            if (empty($results) && !empty($query)) {
-                $results = $this->getMockResultsForQuery($query, $provider ?: 'netflix');
+            if (!empty($query)) {
+                $results = $this->ottService->search($query, $provider, $type);
+            } else {
+                $results = $this->ottService->getAvailableCatalog($provider, $type);
             }
 
             $normalized = $this->normalizeResultsForFrontend($results);
@@ -135,13 +137,35 @@ class OttSyncController extends Controller
             return response()->json($normalized);
         } catch (\Throwable $e) {
             Log::error('Error en OttSyncController@search: ' . $e->getMessage());
-            return response()->json($this->getFallbackMockResults(), 200);
+            return response()->json([]);
+        }
+    }
+
+    /**
+     * DELETE /api/v1/ott/cache
+     * POST /api/admin/ott-providers/clear-cache
+     * Purga la caché y contenido local para evitar que items borrados sigan apareciendo.
+     */
+    public function clearCache(Request $request): JsonResponse
+    {
+        try {
+            $provider = $request->input('platform') ?: $request->input('provider', 'all');
+            $this->ottService->clearCache($provider);
+
+            return response()->json([
+                'success' => true,
+                'message' => "Caché de [{$provider}] purgada exitosamente. Sin datos huérfanos.",
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al purgar caché: ' . $e->getMessage(),
+            ], 500);
         }
     }
 
     /**
      * Normaliza los resultados asegurando la existencia de localFilePath, filePath y poster
-     * para que ningún componente frontend (React, Blade, Vue 3 o Alpine.js) falle con "filePath is not defined".
      */
     protected function normalizeResultsForFrontend(array $items): array
     {
@@ -153,23 +177,21 @@ class OttSyncController extends Controller
             $slug = Str::slug($title);
             $uniqueId = $item['unique_id'] ?? ($item['id'] ?? "ott_{$slug}");
 
-            // Ruta física absoluta en contenedor Linux / Docker y ruta relativa URL
             $localFilePath = $item['localFilePath'] 
                 ?? $item['local_file_path'] 
                 ?? $item['filePath'] 
                 ?? "/var/www/html/storage/media/{$provider}/{$slug}.mp4";
 
-            // Si es relativa, proveer la variante absoluta requerida
             if (!str_starts_with($localFilePath, '/var/www/html') && str_starts_with($localFilePath, '/storage/')) {
                 $localFilePath = '/var/www/html' . $localFilePath;
             }
 
             $relativeLocalPath = '/storage/media/' . $provider . '/' . $slug . '.mp4';
-
-            // Poster accesible
             $poster = $item['poster'] ?? ($item['poster_url'] ?? "/storage/media/{$provider}/{$slug}.jpg");
 
             $normalized[] = array_merge($item, [
+                'id' => $uniqueId,
+                'unique_id' => $uniqueId,
                 'title' => $title,
                 'poster' => $poster,
                 'poster_url' => $item['poster_url'] ?? $poster,
@@ -180,193 +202,15 @@ class OttSyncController extends Controller
                 'provider' => $provider,
                 'quality' => $item['quality'] ?? '4K HDR',
                 'quality_available' => $item['quality_available'] ?? ($item['quality'] ?? '4K HDR'),
-                // Claves críticas solicitadas por el Frontend
                 'localFilePath' => $localFilePath,
                 'local_file_path' => $relativeLocalPath,
                 'filePath' => $localFilePath,
                 'file_path' => $localFilePath,
+                'status' => $item['status'] ?? 'Available',
+                'available' => true,
             ]);
         }
 
         return $normalized;
-    }
-
-    /**
-     * Mocks inteligentes específicos si la base de datos o API externa no devuelve registros.
-     */
-    protected function getMockResultsForQuery(string $query, ?string $provider = 'netflix'): array
-    {
-        $q = Str::lower($query);
-        $prov = $provider ?: 'netflix';
-
-        if (Str::contains($q, 'witcher')) {
-            return [
-                [
-                    'title' => 'The Witcher',
-                    'original_title' => 'The Witcher',
-                    'poster' => '/storage/media/netflix/witcher.jpg',
-                    'poster_url' => 'https://image.tmdb.org/t/p/w500/cZ0d3rtvXPVvuiX22swhqdURi0A.jpg',
-                    'backdrop_url' => 'https://image.tmdb.org/t/p/original/jBJWaqoSCiARWtfV0GlqHrcdidd.jpg',
-                    'year' => 2019,
-                    'type' => 'Serie',
-                    'media_type' => 'series',
-                    'platform' => 'NETFLIX',
-                    'provider' => 'netflix',
-                    'quality' => '4K HDR',
-                    'quality_available' => '4K HDR',
-                    'localFilePath' => '/var/www/html/storage/media/netflix/witcher.mp4',
-                    'local_file_path' => '/storage/media/netflix/witcher.mp4',
-                    'filePath' => '/var/www/html/storage/media/netflix/witcher.mp4',
-                    'file_path' => '/var/www/html/storage/media/netflix/witcher.mp4',
-                    'overview' => 'Geralt de Rivia, un cazador de monstruos mutado, viaja en pos de su destino por un mundo turbulento donde las personas a menudo son más bestiales que las fieras.',
-                    'seasons_count' => 3,
-                    'status' => 'En Catálogo',
-                    'is_already_downloaded' => true,
-                    'available' => true,
-                ],
-                [
-                    'title' => 'The Witcher: El origen de la sangre',
-                    'original_title' => 'The Witcher: Blood Origin',
-                    'poster' => '/storage/media/netflix/witcher-blood-origin.jpg',
-                    'poster_url' => 'https://image.tmdb.org/t/p/w500/vpfjhNqUbvWnlBjh6x5n5v1rQ2K.jpg',
-                    'backdrop_url' => 'https://image.tmdb.org/t/p/original/jBJWaqoSCiARWtfV0GlqHrcdidd.jpg',
-                    'year' => 2022,
-                    'type' => 'Serie',
-                    'media_type' => 'series',
-                    'platform' => 'NETFLIX',
-                    'provider' => 'netflix',
-                    'quality' => '4K HDR',
-                    'quality_available' => '4K HDR',
-                    'localFilePath' => '/var/www/html/storage/media/netflix/witcher_blood_origin.mp4',
-                    'local_file_path' => '/storage/media/netflix/witcher_blood_origin.mp4',
-                    'filePath' => '/var/www/html/storage/media/netflix/witcher_blood_origin.mp4',
-                    'file_path' => '/var/www/html/storage/media/netflix/witcher_blood_origin.mp4',
-                    'overview' => 'Más de mil años antes de Geralt de Rivia, siete parias del mundo élfico unen sus fuerzas en una misión sangrienta.',
-                    'seasons_count' => 1,
-                    'status' => 'Available',
-                    'is_already_downloaded' => false,
-                    'available' => true,
-                ],
-                [
-                    'title' => 'The Witcher: La pesadilla del lobo',
-                    'original_title' => 'The Witcher: Nightmare of the Wolf',
-                    'poster' => '/storage/media/netflix/witcher-nightmare-wolf.jpg',
-                    'poster_url' => 'https://image.tmdb.org/t/p/w500/52A2k9YI0a5VwE1Gz3iY9R1X.jpg',
-                    'backdrop_url' => 'https://image.tmdb.org/t/p/original/jBJWaqoSCiARWtfV0GlqHrcdidd.jpg',
-                    'year' => 2021,
-                    'type' => 'Película',
-                    'media_type' => 'movie',
-                    'platform' => 'NETFLIX',
-                    'provider' => 'netflix',
-                    'quality' => '4K HDR',
-                    'quality_available' => '4K HDR',
-                    'localFilePath' => '/var/www/html/storage/media/netflix/the_witcher_nightmare_of_the_wolf.mp4',
-                    'local_file_path' => '/storage/media/netflix/the_witcher_nightmare_of_the_wolf.mp4',
-                    'filePath' => '/var/www/html/storage/media/netflix/the_witcher_nightmare_of_the_wolf.mp4',
-                    'file_path' => '/var/www/html/storage/media/netflix/the_witcher_nightmare_of_the_wolf.mp4',
-                    'overview' => 'Huyendo de la pobreza para hacerse brujo, Vesemir mata monstruos por dinero y gloria.',
-                    'status' => 'Available',
-                    'is_already_downloaded' => false,
-                    'available' => true,
-                ],
-            ];
-        }
-
-        if (Str::contains($q, 'stranger')) {
-            return [
-                [
-                    'title' => 'Stranger Things',
-                    'original_title' => 'Stranger Things',
-                    'poster' => '/storage/media/netflix/strangers-things.jpg',
-                    'poster_url' => 'https://image.tmdb.org/t/p/w500/49WJfeN0moxb9IPfGn8AIqMGskD.jpg',
-                    'backdrop_url' => 'https://image.tmdb.org/t/p/original/56v2KjBlU4XaOv9rVYEQypROD7P.jpg',
-                    'year' => 2016,
-                    'type' => 'Serie',
-                    'media_type' => 'series',
-                    'platform' => 'NETFLIX',
-                    'provider' => 'netflix',
-                    'quality' => 'HD',
-                    'quality_available' => 'HD',
-                    'localFilePath' => '/var/www/html/storage/media/netflix/strangers-things.mp4',
-                    'local_file_path' => '/storage/media/netflix/strangers-things.mp4',
-                    'filePath' => '/var/www/html/storage/media/netflix/strangers-things.mp4',
-                    'file_path' => '/var/www/html/storage/media/netflix/strangers-things.mp4',
-                    'overview' => 'Cuando un niño desaparece, sus amigos, la familia y la policía se ven envueltos en un misterio que involucra experimentos ultrasecretos del gobierno.',
-                    'seasons_count' => 4,
-                    'status' => 'En Catálogo',
-                    'is_already_downloaded' => true,
-                    'available' => true,
-                ],
-            ];
-        }
-
-        $clean = ucwords(trim($query));
-        $slug = Str::slug($clean);
-        return [
-            [
-                'title' => $clean,
-                'original_title' => $clean,
-                'poster' => "/storage/media/{$prov}/{$slug}.jpg",
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/cZ0d3rtvXPVvuiX22swhqdURi0A.jpg',
-                'year' => (int) date('Y'),
-                'type' => 'Película',
-                'media_type' => 'movie',
-                'platform' => strtoupper($prov),
-                'provider' => $prov,
-                'quality' => '4K HDR',
-                'quality_available' => '4K HDR',
-                'localFilePath' => "/var/www/html/storage/media/{$prov}/{$slug}.mp4",
-                'local_file_path' => "/storage/media/{$prov}/{$slug}.mp4",
-                'filePath' => "/var/www/html/storage/media/{$prov}/{$slug}.mp4",
-                'file_path' => "/var/www/html/storage/media/{$prov}/{$slug}.mp4",
-                'overview' => "Contenido On-Demand disponible en {$prov}.",
-                'status' => 'Available',
-                'is_already_downloaded' => false,
-                'available' => true,
-            ],
-        ];
-    }
-
-    /**
-     * Muestras de respaldo consistentes estáticas por si no hay conexión externa ni base de datos.
-     */
-    protected function getFallbackMockResults(?string $provider = null): array
-    {
-        return [
-            [
-                'title' => 'The Witcher',
-                'poster' => '/storage/media/netflix/witcher.jpg',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/cZ0d3rtvXPVvuiX22swhqdURi0A.jpg',
-                'year' => 2019,
-                'type' => 'Serie',
-                'platform' => 'NETFLIX',
-                'provider' => 'netflix',
-                'quality' => '4K HDR',
-                'localFilePath' => '/var/www/html/storage/media/netflix/witcher.mp4',
-                'local_file_path' => '/storage/media/netflix/witcher.mp4',
-                'filePath' => '/var/www/html/storage/media/netflix/witcher.mp4',
-                'file_path' => '/var/www/html/storage/media/netflix/witcher.mp4',
-                'status' => 'En Catálogo',
-                'is_already_downloaded' => true,
-                'available' => true,
-            ],
-            [
-                'title' => 'Stranger Things',
-                'poster' => '/storage/media/netflix/strangers-things.jpg',
-                'poster_url' => 'https://image.tmdb.org/t/p/w500/49WJfeN0moxb9IPfGn8AIqMGskD.jpg',
-                'year' => 2016,
-                'type' => 'Serie',
-                'platform' => 'NETFLIX',
-                'provider' => 'netflix',
-                'quality' => 'HD',
-                'localFilePath' => '/var/www/html/storage/media/netflix/strangers-things.mp4',
-                'local_file_path' => '/storage/media/netflix/strangers-things.mp4',
-                'filePath' => '/var/www/html/storage/media/netflix/strangers-things.mp4',
-                'file_path' => '/var/www/html/storage/media/netflix/strangers-things.mp4',
-                'status' => 'En Catálogo',
-                'is_already_downloaded' => true,
-                'available' => true,
-            ],
-        ];
     }
 }

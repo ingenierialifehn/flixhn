@@ -221,6 +221,18 @@
                     </div>
                 </template>
             </div>
+
+            <!-- Estado Vacío Dinámico cuando no hay resultados -->
+            <div x-show="!loading && results.length === 0" class="py-16 text-center bg-slate-900/40 rounded-2xl border border-dashed border-slate-800">
+                <i class="fa-solid fa-film text-4xl text-slate-600 mb-3 block"></i>
+                <h3 class="text-base font-bold text-slate-300">No se encontraron coincidencias reales</h3>
+                <p class="text-xs text-slate-500 mt-1 max-w-sm mx-auto" x-show="searchQuery.trim() !== ''">
+                    El título "<span class="text-rose-400 font-semibold" x-text="searchQuery"></span>" no existe en la cuenta de streaming conectada actualmente.
+                </p>
+                <p class="text-xs text-slate-500 mt-1 max-w-sm mx-auto" x-show="searchQuery.trim() === ''">
+                    Catálogo vacío o limpio. Utiliza el buscador para explorar contenido en vivo.
+                </p>
+            </div>
         </section>
 
         <!-- ========================================== -->
@@ -243,6 +255,22 @@
                                 @click="searchQuery = ''; performSearch()"
                                 class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
                             <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
+
+                    <!-- Filtro por Tipo -->
+                    <div class="flex items-center gap-2">
+                        <select x-model="selectedType" @change="performSearch()"
+                                class="bg-slate-950 border border-slate-800 text-xs rounded-xl px-3 py-2 text-slate-300 outline-none focus:border-rose-500">
+                            <option value="ALL">Todos los Tipos</option>
+                            <option value="Serie">Series</option>
+                            <option value="Película">Películas</option>
+                        </select>
+                        <button type="button"
+                                @click="clearCacheAndReload()"
+                                class="px-3 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 flex items-center gap-1.5 transition cursor-pointer">
+                            <i class="fa-solid fa-broom" :class="isClearing ? 'fa-spin' : ''"></i>
+                            <span>Limpiar Caché</span>
                         </button>
                     </div>
 
@@ -630,14 +658,16 @@
         function ottSyncApp() {
             return {
                 activeTab: 'search',
-                searchQuery: 'the witcher',
+                searchQuery: '',
                 selectedProvider: 'netflix',
+                selectedType: 'ALL',
                 loading: false,
                 refreshing: false,
+                isClearing: false,
                 playerOpen: false,
                 queueFilter: 'all',
 
-                // Datos iniciales inyectados de Blade o fallback
+                // Datos iniciales inyectados de Blade
                 providers: {!! json_encode($providers ?? []) !!},
                 results: {!! json_encode($results ?? []) !!},
                 queueTasks: JSON.parse(localStorage.getItem('flixgrab_queue_tasks') || '[]'),
@@ -652,57 +682,30 @@
                 init() {
                     window.flixApp = this;
 
-                    // Si no vinieron proveedores desde Blade, inicializar los 6 oficiales
+                    // Si no vinieron proveedores desde Blade, inicializar
                     if (!this.providers || this.providers.length === 0) {
-                        this.providers = [
-                            { provider: 'netflix', name: 'Netflix', brand: 'Netflix Originals', color: '#E50914', status: 'connected', description: 'Catálogo de series y películas globales.', auto_download: true },
-                            { provider: 'disney', name: 'Disney+', brand: 'Disney, Pixar, Marvel', color: '#0063E5', status: 'connected', description: 'Producciones exclusivas de Marvel y Star Wars.', auto_download: false },
-                            { provider: 'hbo_max', name: 'Max (HBO)', brand: 'Warner Bros & DC', color: '#5822b4', status: 'connected', description: 'Series de prestigio HBO y cine Warner Bros.', auto_download: true },
-                            { provider: 'amazon_prime', name: 'Amazon Prime', brand: 'Prime Video & MGM', color: '#00A8E1', status: 'connected', description: 'Producciones originales y taquilleras.', auto_download: false },
-                            { provider: 'apple_tv', name: 'Apple TV+', brand: 'Apple Originals', color: '#999999', status: 'connected', description: 'Estrenos cinematográficos galardonados en 4K.', auto_download: false },
-                            { provider: 'paramount', name: 'Paramount+', brand: 'Paramount & CBS', color: '#0064FF', status: 'disconnected', description: 'Blockbusters y series de montaña.', auto_download: false }
-                        ];
+                        this.refreshProviders();
                     }
 
-                    // Si no vinieron resultados desde Blade, ejecutar búsqueda inicial
-                    if (!this.results || this.results.length === 0) {
-                        this.performSearch();
-                    }
-
-                    // Inicializar tareas iniciales en cola si está vacía
-                    if (this.queueTasks.length === 0) {
-                        this.queueTasks = [
-                            {
-                                id: 101,
-                                title: 'The Witcher',
-                                platform: 'NETFLIX',
-                                provider: 'netflix',
-                                poster: '/storage/media/netflix/witcher.jpg',
-                                poster_url: 'https://image.tmdb.org/t/p/w500/cZ0d3rtvXPVvuiX22swhqdURi0A.jpg',
-                                quality: '4K HDR',
-                                status: 'completed',
-                                progress: 100,
-                                speed: '18.4 MB/s',
-                                localFilePath: '/var/www/html/storage/media/netflix/witcher.mp4'
-                            },
-                            {
-                                id: 102,
-                                title: 'Stranger Things',
-                                platform: 'NETFLIX',
-                                provider: 'netflix',
-                                poster: '/storage/media/netflix/strangers-things.jpg',
-                                poster_url: 'https://image.tmdb.org/t/p/w500/49WJfeN0moxb9IPfGn8AIqMGskD.jpg',
-                                quality: 'HD',
-                                status: 'completed',
-                                progress: 100,
-                                speed: '14.1 MB/s',
-                                localFilePath: '/var/www/html/storage/media/netflix/strangers-things.mp4'
-                            }
-                        ];
+                    // Tareas reales de cola desde la base de datos
+                    const initialTasks = {!! json_encode($tasks ?? []) !!};
+                    if ((!this.queueTasks || this.queueTasks.length === 0) && Array.isArray(initialTasks) && initialTasks.length > 0) {
+                        this.queueTasks = initialTasks.map(t => ({
+                            id: t.id,
+                            title: t.title,
+                            platform: (t.provider || 'netflix').toUpperCase(),
+                            provider: t.provider || 'netflix',
+                            poster: t.metadata?.poster_url || `/storage/media/${t.provider || 'netflix'}/${(t.title || 'media').toLowerCase().replace(/[^a-z0-9]/g, '_')}.jpg`,
+                            poster_url: t.metadata?.poster_url,
+                            quality: t.quality || '4K HDR',
+                            status: t.status || 'downloading',
+                            progress: t.progress || 0,
+                            speed: t.download_speed || '0.0 MB/s',
+                            localFilePath: t.file_path
+                        }));
                         this.persistQueue();
                     }
 
-                    // Listener para eventos externos
                     window.addEventListener('flixgrab:play', (e) => {
                         if (e.detail?.filePath) {
                             this.playVideo(e.detail.filePath);
@@ -721,91 +724,60 @@
                     this.loading = true;
 
                     try {
-                        const url = `/api/v1/${prov}/search?q=${encodeURIComponent(q)}`;
+                        const params = new URLSearchParams({
+                            q: q,
+                            platform: prov,
+                            type: this.selectedType
+                        });
+
+                        const url = `/api/v1/${prov}/search?${params.toString()}`;
                         const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
 
                         if (res.ok) {
                             const data = await res.json();
-                            const list = Array.isArray(data) ? data : (data.results || []);
-                            if (list.length > 0) {
-                                this.results = list;
-                                console.log('[FlixGrab] Resultados obtenidos vía API:', this.results);
-                                return;
-                            }
+                            this.results = Array.isArray(data) ? data : (data.results || []);
+                            console.log('[FlixGrab] Resultados obtenidos vía API:', this.results);
+                            return;
+                        } else {
+                            this.results = [];
                         }
                     } catch (err) {
-                        console.warn('[FlixGrab] Error consultando API, usando fallback local inteligente:', err);
+                        console.warn('[FlixGrab] Error consultando API:', err);
+                        this.results = [];
                     } finally {
                         this.loading = false;
                     }
+                },
 
-                    // Fallback estático consistente si la API está desacoplada
-                    this.results = this.generateFallbackResults(q, prov);
+                async clearCacheAndReload() {
+                    if (this.isClearing) return;
+                    this.isClearing = true;
+                    try {
+                        const prov = this.selectedProvider !== 'all' ? this.selectedProvider : 'all';
+                        await fetch('/api/v1/ott/cache', {
+                            method: 'DELETE',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Accept': 'application/json',
+                                'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                            },
+                            body: JSON.stringify({ platform: prov })
+                        });
+                        localStorage.removeItem('flixgrab_queue_tasks');
+                        this.queueTasks = [];
+                        this.searchQuery = '';
+                        this.results = [];
+                        await this.performSearch();
+                        alert(`Caché de [${prov.toUpperCase()}] purgada exitosamente. Estado limpio sin datos huérfanos.`);
+                    } catch (e) {
+                        console.error('Error al limpiar caché:', e);
+                    } finally {
+                        this.isClearing = false;
+                    }
                 },
 
                 generateFallbackResults(query, prov) {
-                    const q = (query || '').toLowerCase();
-                    const list = [
-                        {
-                            title: 'The Witcher',
-                            poster: '/storage/media/netflix/witcher.jpg',
-                            poster_url: 'https://image.tmdb.org/t/p/w500/cZ0d3rtvXPVvuiX22swhqdURi0A.jpg',
-                            year: 2019,
-                            type: 'Serie',
-                            platform: 'NETFLIX',
-                            provider: 'netflix',
-                            quality: '4K HDR',
-                            status: 'En Catálogo',
-                            is_already_downloaded: true,
-                            overview: 'Geralt de Rivia, un cazador de monstruos mutado, viaja en pos de su destino por un mundo turbulento.',
-                            localFilePath: '/var/www/html/storage/media/netflix/witcher.mp4'
-                        },
-                        {
-                            title: 'Stranger Things',
-                            poster: '/storage/media/netflix/strangers-things.jpg',
-                            poster_url: 'https://image.tmdb.org/t/p/w500/49WJfeN0moxb9IPfGn8AIqMGskD.jpg',
-                            year: 2016,
-                            type: 'Serie',
-                            platform: 'NETFLIX',
-                            provider: 'netflix',
-                            quality: 'HD',
-                            status: 'En Catálogo',
-                            is_already_downloaded: true,
-                            overview: 'Cuando un niño desaparece, sus amigos y la policía se ven envueltos en un misterio gubernamental.',
-                            localFilePath: '/var/www/html/storage/media/netflix/strangers-things.mp4'
-                        },
-                        {
-                            title: 'Merlina (Wednesday)',
-                            poster: '/storage/media/netflix/wednesday.jpg',
-                            poster_url: 'https://media.themoviedb.org/t/p/w500/9PFonBhy4cQy7Jz20NpMygczOkv.jpg',
-                            year: 2023,
-                            type: 'Serie',
-                            platform: 'NETFLIX',
-                            provider: 'netflix',
-                            quality: '4K HDR',
-                            status: 'Available',
-                            is_already_downloaded: false,
-                            overview: 'Inteligente y sarcástica, Merlina Addams investiga una ola de asesinatos en la Academia Nunca Más.',
-                            localFilePath: '/var/www/html/storage/media/netflix/merlina_wednesday.mp4'
-                        },
-                        {
-                            title: 'El Juego del Calamar',
-                            poster: '/storage/media/netflix/squid-game.jpg',
-                            poster_url: 'https://media.themoviedb.org/t/p/w500/1QdXdRYfktUSONkl1oD5gc6Be0s.jpg',
-                            year: 2024,
-                            type: 'Serie',
-                            platform: 'NETFLIX',
-                            provider: 'netflix',
-                            quality: '4K HDR',
-                            status: 'Available',
-                            is_already_downloaded: false,
-                            overview: 'Cientos de personas con dificultades económicas compiten en juegos infantiles con desenlaces letales.',
-                            localFilePath: '/var/www/html/storage/media/netflix/el_juego_del_calamar.mp4'
-                        }
-                    ];
-
-                    if (!q) return list;
-                    return list.filter(item => item.title.toLowerCase().includes(q));
+                    return [];
                 },
 
                 playVideo(filePath) {
