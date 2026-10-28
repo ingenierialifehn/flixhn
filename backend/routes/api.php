@@ -23,6 +23,7 @@ use App\Http\Controllers\ApiKeyAdminController;
 use App\Http\Controllers\MetadataManagerController;
 use App\Http\Controllers\AnalyticsAdminController;
 use App\Http\Controllers\OttProviderController;
+use App\Http\Controllers\OttSyncController;
 use App\Http\Controllers\FilesystemAdminController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\PasswordResetController;
@@ -313,9 +314,9 @@ Route::post('/telemetry/stop', [DeviceSessionController::class, 'stopPlayback'])
 |--------------------------------------------------------------------------
 */
 Route::prefix('v1')->group(function () {
-    Route::get('/search', [OttProviderController::class, 'search']);
-    Route::get('/netflix/search', [OttProviderController::class, 'searchNetflix']);
-    Route::get('/{provider}/search', [OttProviderController::class, 'searchProvider']);
+    Route::get('/search', [OttSyncController::class, 'search']);
+    Route::get('/netflix/search', [OttSyncController::class, 'searchNetflix']);
+    Route::get('/{provider}/search', [OttSyncController::class, 'searchProvider']);
     Route::middleware(AuthenticateApiKey::class)->group(function () {
         Route::get('/ping', [ApiKeyAdminController::class, 'ping']);
         Route::get('/titles', [TitleController::class, 'index']);

@@ -17,3 +17,8 @@ Route::match(['get', 'head'], '/storage/{path}', [MediaStreamController::class, 
 // Streaming directo a nivel web para clientes
 Route::match(['get', 'head'], '/media/{id}/stream', [MediaStreamController::class, 'stream']);
 Route::match(['get', 'head'], '/stream/{id}', [MediaStreamController::class, 'stream']);
+
+// Módulo FlixGrab OTT Sync (Vista Blade integrada + API Web)
+Route::get('/admin/ott-sync', [\App\Http\Controllers\OttSyncController::class, 'index'])->name('admin.ott-sync');
+Route::get('/ott-sync', [\App\Http\Controllers\OttSyncController::class, 'index'])->name('ott-sync');
+

@@ -425,13 +425,16 @@ export default function OttSyncManagement({
     const assignedProvider = task.provider || 'netflix';
     const uniqueId = task.unique_id || task.id || 'ott_' + Date.now();
     const slug = (task.title || 'media').toLowerCase().replace(/[^a-z0-9]/g, '_');
-    const dynamicFilePath = task.file_path || task.local_file_path || `/var/www/html/storage/media/${assignedProvider}/${uniqueId}/${slug}.mp4`;
+    const dynamicFilePath = task.localFilePath || task.filePath || task.file_path || task.local_file_path || `/var/www/html/storage/media/${assignedProvider}/${uniqueId}/${slug}.mp4`;
     const streamUrl = `/api/media/stream?path=${encodeURIComponent(dynamicFilePath)}&title=${encodeURIComponent(task.title)}`;
 
     setActivePlayerMedia({
       title: task.title,
       original_title: task.original_title || task.title,
       filePath: dynamicFilePath,
+      localFilePath: dynamicFilePath,
+      local_file_path: dynamicFilePath,
+      file_path: dynamicFilePath,
       streamUrl: streamUrl,
       poster: task.poster_url || task.poster,
       provider: assignedProvider,
@@ -1509,7 +1512,7 @@ export default function OttSyncManagement({
                     const posterUrl = task.poster_url || 'https://images.unsplash.com/photo-1594909122845-11baa439b7bf?w=500';
                     const uniqueId = task.unique_id || task.id || 'ott_' + Date.now();
                     const slug = (task.title || 'media').toLowerCase().replace(/[^a-z0-9]/g, '_');
-                    const filePath = task.file_path || task.local_file_path || `/var/www/html/storage/media/${task.provider || 'netflix'}/${uniqueId}/${slug}.mp4`;
+                    const filePath = task.localFilePath || task.filePath || task.file_path || task.local_file_path || `/var/www/html/storage/media/${task.provider || 'netflix'}/${uniqueId}/${slug}.mp4`;
                     const progressNum = typeof task.progress === 'number' ? task.progress : parseFloat(task.progress) || 0;
 
                     return (

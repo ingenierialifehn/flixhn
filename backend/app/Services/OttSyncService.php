@@ -101,7 +101,7 @@ class OttSyncService
                 'title' => 'Stranger Things',
                 'original_title' => 'Stranger Things',
                 'type' => 'series',
-                'release_year' => 2024,
+                'release_year' => 2016,
                 'seasons_count' => 4,
                 'genre' => 'Ciencia Ficción / Misterio',
                 'overview' => 'Cuando un niño desaparece, sus amigos, la familia y la policía se ven envueltos en un misterio que involucra experimentos ultrasecretos, fuerzas sobrenaturales terroríficas y una niña muy extraña.',
@@ -169,7 +169,7 @@ class OttSyncService
                 'title' => 'The Witcher',
                 'original_title' => 'The Witcher',
                 'type' => 'series',
-                'release_year' => 2023,
+                'release_year' => 2019,
                 'seasons_count' => 3,
                 'genre' => 'Fantasía / Acción',
                 'overview' => 'Geralt de Rivia, un cazador de monstruos mutado, viaja en pos de su destino por un mundo turbulento donde las personas a menudo son más bestiales que las fieras.',
@@ -1464,6 +1464,12 @@ class OttSyncService
 
                             $itemProvider = $provider ?: $this->inferProviderForTitle($cleanTitle);
                             $uniqueId = "tmdb_" . $r['id'];
+                            $slugTitle = Str::slug($cleanTitle);
+                            $localAbs = "/var/www/html/storage/media/{$itemProvider}/{$slugTitle}.mp4";
+                            $localRel = "/storage/media/{$itemProvider}/{$slugTitle}.mp4";
+                            $posterPath = !empty($r['poster_path'])
+                                ? "https://image.tmdb.org/t/p/w500{$r['poster_path']}"
+                                : "/storage/media/{$itemProvider}/{$slugTitle}.jpg";
 
                             $normalizedItem = [
                                 'id' => $uniqueId,
@@ -1472,10 +1478,10 @@ class OttSyncService
                                 'original_title' => $r['original_title'] ?? ($r['original_name'] ?? $cleanTitle),
                                 'media_type' => $mediaType === 'tv' ? 'series' : 'movie',
                                 'type' => $mediaType === 'tv' ? 'Serie' : 'Película',
-                                'year' => $year,
+                                'year' => (int) $year,
                                 'overview' => $r['overview'] ?? "Producción cinematográfica disponible en {$itemProvider}.",
-                                'poster' => $poster,
-                                'poster_url' => $poster,
+                                'poster' => $posterPath,
+                                'poster_url' => $posterPath,
                                 'backdrop' => $backdrop,
                                 'backdrop_url' => $backdrop,
                                 'seasons_count' => $mediaType === 'tv' ? ($r['number_of_seasons'] ?? 1) : null,
@@ -1485,7 +1491,10 @@ class OttSyncService
                                 'quality_available' => '4K HDR',
                                 'status' => 'Available',
                                 'available' => true,
-                                'local_file_path' => "/storage/media/{$itemProvider}/{$uniqueId}/" . Str::slug($cleanTitle) . ".mp4",
+                                'localFilePath' => $localAbs,
+                                'local_file_path' => $localRel,
+                                'filePath' => $localAbs,
+                                'file_path' => $localAbs,
                             ];
 
                             $this->crossReferenceAvailability($normalizedItem);
@@ -1528,8 +1537,11 @@ class OttSyncService
                 }
 
                 $uniqueId = $sample['external_id'] ?? ("ext_" . Str::slug($title));
-                $poster = $sample['poster_url'] ?? ("/api/media/poster?title=" . urlencode($title));
+                $slugTitle = Str::slug($title);
+                $posterPath = !empty($sample['poster_url']) ? $sample['poster_url'] : "/storage/media/{$pKey}/{$slugTitle}.jpg";
                 $mediaType = $sample['type'] ?? 'movie';
+                $localAbs = "/var/www/html/storage/media/{$pKey}/{$slugTitle}.mp4";
+                $localRel = "/storage/media/{$pKey}/{$slugTitle}.mp4";
 
                 $item = [
                     'id' => $uniqueId,
@@ -1538,11 +1550,11 @@ class OttSyncService
                     'original_title' => $origTitle,
                     'media_type' => $mediaType,
                     'type' => $mediaType === 'series' ? 'Serie' : 'Película',
-                    'year' => (string) ($sample['release_year'] ?? date('Y')),
+                    'year' => (int) ($sample['release_year'] ?? date('Y')),
                     'overview' => $overview,
                     'genre' => $genre,
-                    'poster' => $poster,
-                    'poster_url' => $poster,
+                    'poster' => $posterPath,
+                    'poster_url' => $sample['poster_url'] ?? $posterPath,
                     'backdrop' => $sample['backdrop_url'] ?? null,
                     'backdrop_url' => $sample['backdrop_url'] ?? null,
                     'seasons_count' => $mediaType === 'series' ? ($sample['seasons_count'] ?? 3) : null,
@@ -1552,7 +1564,10 @@ class OttSyncService
                     'quality_available' => '4K HDR',
                     'status' => 'Available',
                     'available' => true,
-                    'local_file_path' => "/storage/media/{$pKey}/{$uniqueId}/" . Str::slug($title) . ".mp4",
+                    'localFilePath' => $localAbs,
+                    'local_file_path' => $localRel,
+                    'filePath' => $localAbs,
+                    'file_path' => $localAbs,
                 ];
 
                 $this->crossReferenceAvailability($item);
@@ -1567,6 +1582,8 @@ class OttSyncService
             $targetProv = $provider ?: 'netflix';
             $uniqueId = 'ext_' . Str::slug($cleanTitle);
             $slug = Str::slug($cleanTitle);
+            $localAbs = "/var/www/html/storage/media/{$targetProv}/{$slug}.mp4";
+            $localRel = "/storage/media/{$targetProv}/{$slug}.mp4";
 
             // Determinar año y tipo simulados inteligentes
             $isSeries = !str_contains(Str::lower($cleanTitle), 'pelicula') && !str_contains(Str::lower($cleanTitle), 'movie');
@@ -1584,7 +1601,7 @@ class OttSyncService
                 'original_title' => $cleanTitle,
                 'media_type' => $isSeries ? 'series' : 'movie',
                 'type' => $isSeries ? 'Serie' : 'Película',
-                'year' => (string) $year,
+                'year' => (int) $year,
                 'overview' => "Contenido exclusivo On-Demand disponible para streaming e ingesta directa en {$targetProv}.",
                 'genre' => 'Drama / Aventura / Fantasía',
                 'poster' => "/storage/media/{$targetProv}/{$slug}.jpg",
@@ -1597,7 +1614,10 @@ class OttSyncService
                 'quality_available' => '4K HDR',
                 'status' => 'Available',
                 'available' => true,
-                'local_file_path' => "/storage/media/{$targetProv}/{$uniqueId}/{$slug}.mp4",
+                'localFilePath' => $localAbs,
+                'local_file_path' => $localRel,
+                'filePath' => $localAbs,
+                'file_path' => $localAbs,
             ];
             $this->crossReferenceAvailability($synthItem);
             $results[] = $synthItem;

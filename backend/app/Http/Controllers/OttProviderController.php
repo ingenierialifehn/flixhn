@@ -344,6 +344,13 @@ class OttProviderController extends Controller
             $query = trim((string) ($request->query('q') ?: $request->query('query', '')));
             $results = $this->ottService->searchRemoteCatalog($query, $provider);
 
+            if (empty($results) && !empty($query)) {
+                $results = app(OttSyncController::class)->searchProvider($request, $provider)->getData(true);
+                if (isset($results['results'])) {
+                    $results = $results['results'];
+                }
+            }
+
             // Asegurar formato compatible con array directo o envuelto
             if ($request->query('format') === 'wrapped') {
                 return response()->json([
@@ -373,6 +380,13 @@ class OttProviderController extends Controller
             $provider = $request->query('provider') ?: $request->query('platform');
 
             $results = $this->ottService->searchRemoteCatalog($query, $provider);
+
+            if (empty($results) && !empty($query)) {
+                $results = app(OttSyncController::class)->search($request)->getData(true);
+                if (isset($results['results'])) {
+                    $results = $results['results'];
+                }
+            }
 
             // Si se solicita formato envuelto
             if ($request->query('format') === 'wrapped') {

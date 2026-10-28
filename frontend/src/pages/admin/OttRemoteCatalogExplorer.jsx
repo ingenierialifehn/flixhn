@@ -51,7 +51,9 @@ export const generateSimulatedResults = (query = '', provider = 'all') => {
         quality_available: '4K HDR',
         overview: 'Geralt de Rivia, un cazador de monstruos mutado, viaja en pos de su destino por un mundo turbulento donde las personas a menudo son más bestiales que las fieras.',
         seasons_count: 3,
-        local_file_path: '/storage/media/netflix/nflx-71912/the_witcher.mp4',
+        localFilePath: '/var/www/html/storage/media/netflix/witcher.mp4',
+        filePath: '/var/www/html/storage/media/netflix/witcher.mp4',
+        local_file_path: '/storage/media/netflix/witcher.mp4',
       },
       {
         id: 'nflx-bloodorigin',
@@ -118,7 +120,9 @@ export const generateSimulatedResults = (query = '', provider = 'all') => {
         quality_available: 'HD',
         overview: 'Cuando un niño desaparece, sus amigos, la familia y la policía se ven envueltos en un misterio que involucra experimentos ultrasecretos del gobierno y fuerzas paranormales.',
         seasons_count: 4,
-        local_file_path: '/storage/media/netflix/nflx-66732/stranger_things.mp4',
+        localFilePath: '/var/www/html/storage/media/netflix/strangers-things.mp4',
+        filePath: '/var/www/html/storage/media/netflix/strangers-things.mp4',
+        local_file_path: '/storage/media/netflix/strangers-things.mp4',
       },
     ];
   }
@@ -128,6 +132,7 @@ export const generateSimulatedResults = (query = '', provider = 'all') => {
   const isMovie = q.includes('movie') || q.includes('pelicula');
   const uid = `${targetProv}-${Date.now().toString().slice(-6)}`;
   const slug = (q || 'media').replace(/[^a-z0-9]/g, '_');
+  const targetAbsPath = `/var/www/html/storage/media/${targetProv}/${slug}.mp4`;
 
   return [
     {
@@ -149,6 +154,8 @@ export const generateSimulatedResults = (query = '', provider = 'all') => {
       quality_available: '4K HDR',
       overview: `Producción cinematográfica de alta calidad disponible en ${platformName}. Sincronización instantánea a almacenamiento On-Net.`,
       seasons_count: isMovie ? null : 2,
+      localFilePath: targetAbsPath,
+      filePath: targetAbsPath,
       local_file_path: `/storage/media/${targetProv}/${uid}/${slug}.mp4`,
     },
   ];
@@ -459,18 +466,27 @@ export default function OttRemoteCatalogExplorer({
   const [activePlayerMedia, setActivePlayerMedia] = useState(null);
 
   const handleOpenPlayer = useCallback((item) => {
+    if (!item) {
+      console.warn('[FlixGrab] handleOpenPlayer invocado con item no definido');
+      return;
+    }
     const assignedProvider = resolveTargetProvider(item);
     const uniqueId = item.unique_id || item.id || `ott_${Date.now()}`;
     const slug = (item.title || 'media').toLowerCase().replace(/[^a-z0-9]/g, '_');
-    const dynamicFilePath = item.local_file_path || item.file_path || `/var/www/html/storage/media/${assignedProvider}/${uniqueId}/${slug}.mp4`;
-    const streamUrl = `/api/media/stream?path=${encodeURIComponent(dynamicFilePath)}&title=${encodeURIComponent(item.title)}`;
+    const dynamicFilePath = item.localFilePath || item.filePath || item.local_file_path || item.file_path || `/var/www/html/storage/media/${assignedProvider}/${uniqueId}/${slug}.mp4`;
+    const streamUrl = `/api/media/stream?path=${encodeURIComponent(dynamicFilePath)}&title=${encodeURIComponent(item.title || 'FlixHN')}`;
+
+    console.log('[FlixGrab] Clic en reproducir para:', dynamicFilePath, { item });
 
     setActivePlayerMedia({
       title: item.title,
       original_title: item.original_title || item.title,
       filePath: dynamicFilePath,
+      localFilePath: dynamicFilePath,
+      local_file_path: dynamicFilePath,
+      file_path: dynamicFilePath,
       streamUrl: streamUrl,
-      poster: item.poster_url || item.poster,
+      poster: item.poster || item.poster_url,
       provider: assignedProvider,
       quality: item.quality || item.quality_available || '4K HDR On-Net',
       year: item.year || item.release_year,
@@ -921,9 +937,17 @@ export default function OttRemoteCatalogExplorer({
             const isInQueue = item.is_in_queue || (activeMatch && activeMatch.status === 'pending');
             const progressVal = activeMatch?.progress !== undefined ? activeMatch.progress : 25.4;
 
+            // Clave crítica: Resolver filePath para reproducción On-Net local
+            const assignedProvider = resolveTargetProvider(item);
+            const uniqueId = item.unique_id || item.id || `ott_${Date.now()}`;
+            const slug = (item.title || 'media').toLowerCase().replace(/[^a-z0-9]/g, '_');
+            const filePath = item.localFilePath || item.filePath || item.local_file_path || item.file_path || `/var/www/html/storage/media/${assignedProvider}/${uniqueId}/${slug}.mp4`;
+
             return (
               <div
                 key={item.id || item.title}
+                data-title={item.title}
+                data-filepath={filePath}
                 className="bg-[#141414] border border-zinc-800/90 hover:border-zinc-700 rounded-xl p-3 flex flex-col justify-between transition-all duration-200 group shadow-lg hover:shadow-black/70 relative overflow-hidden"
               >
                 <div>
