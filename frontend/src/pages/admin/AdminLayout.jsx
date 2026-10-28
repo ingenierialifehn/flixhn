@@ -106,6 +106,16 @@ const TAB_CONFIG = {
     icon: CloudDownload,
     description: 'Conexión e indexación automatizada de cuentas OTT (Netflix, Disney+, HBO Max) y almacenamiento perimetral On-Net.',
   },
+  'ott-queue': {
+    title: 'Cola de Descarga e Ingesta On-Net — FlixGrab Engine',
+    icon: DownloadCloud,
+    description: 'Monitoreo en tiempo real de medios en ingesta perimetral, velocidad de descarga de fibra óptica y almacenamiento local On-Net.',
+  },
+  ott_queue: {
+    title: 'Cola de Descarga e Ingesta On-Net — FlixGrab Engine',
+    icon: DownloadCloud,
+    description: 'Monitoreo en tiempo real de medios en ingesta perimetral, velocidad de descarga de fibra óptica y almacenamiento local On-Net.',
+  },
   plugins: {
     title: 'Plugins y Extensiones del Servidor',
     icon: Puzzle,
@@ -161,6 +171,7 @@ const getTabFromPath = (pathname) => {
   if (pathname === '/admin/devices') return 'devices';
   if (pathname === '/admin/downloads' || pathname === '/admin/ingest') return 'downloads';
   if (pathname === '/admin/ott-sync' || pathname === '/admin/ott_sync') return 'ott-sync';
+  if (pathname === '/admin/ott-queue' || pathname === '/admin/ott_queue') return 'ott-queue';
   if (pathname === '/admin/plugins') return 'plugins';
   if (pathname === '/admin/apikeys' || pathname === '/admin/api_keys') return 'apikeys';
   if (pathname === '/admin/metadata') return 'metadata';
@@ -464,14 +475,18 @@ const AdminLayout = ({ onBackToBrowse }) => {
               )}
 
               {(activeTab === 'ott_sync' || activeTab === 'ott-sync') && (
-                <OttSyncManagement />
+                <OttSyncManagement initialView="dashboard" />
+              )}
+
+              {(activeTab === 'ott_queue' || activeTab === 'ott-queue') && (
+                <OttSyncManagement initialView="queue" />
               )}
 
               {(activeTab === 'downloads' || activeTab === 'ingest') && (
                 <IngestManagement />
               )}
 
-              {activeTab !== 'dashboard' && activeTab !== 'library' && activeTab !== 'catalog' && activeTab !== 'users' && activeTab !== 'network' && activeTab !== 'livetv' && activeTab !== 'transcoding' && activeTab !== 'database' && activeTab !== 'backup' && activeTab !== 'backups' && activeTab !== 'tasks' && activeTab !== 'scheduled_tasks' && activeTab !== 'logs' && activeTab !== 'devices' && activeTab !== 'downloads' && activeTab !== 'ingest' && activeTab !== 'ott_sync' && activeTab !== 'ott-sync' && activeTab !== 'plugins' && activeTab !== 'apikeys' && activeTab !== 'api_keys' && activeTab !== 'metadata' && activeTab !== 'stats' && activeTab !== 'statistics' && (
+              {activeTab !== 'dashboard' && activeTab !== 'library' && activeTab !== 'catalog' && activeTab !== 'users' && activeTab !== 'network' && activeTab !== 'livetv' && activeTab !== 'transcoding' && activeTab !== 'database' && activeTab !== 'backup' && activeTab !== 'backups' && activeTab !== 'tasks' && activeTab !== 'scheduled_tasks' && activeTab !== 'logs' && activeTab !== 'devices' && activeTab !== 'downloads' && activeTab !== 'ingest' && activeTab !== 'ott_sync' && activeTab !== 'ott-sync' && activeTab !== 'ott_queue' && activeTab !== 'ott-queue' && activeTab !== 'plugins' && activeTab !== 'apikeys' && activeTab !== 'api_keys' && activeTab !== 'metadata' && activeTab !== 'stats' && activeTab !== 'statistics' && (
                 <PlaceholderView
                   title={currentTabInfo.title}
                   description={currentTabInfo.description}

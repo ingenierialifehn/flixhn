@@ -310,7 +310,11 @@ Route::post('/telemetry/stop', [DeviceSessionController::class, 'stopPlayback'])
 | API v1 - Integración de Terceros mediante API Key (Radarr, Sonarr, Home Assistant, etc.)
 |--------------------------------------------------------------------------
 */
-Route::middleware(AuthenticateApiKey::class)->prefix('v1')->group(function () {
-    Route::get('/ping', [ApiKeyAdminController::class, 'ping']);
-    Route::get('/titles', [TitleController::class, 'index']);
+Route::prefix('v1')->group(function () {
+    Route::get('/search', [OttProviderController::class, 'search']);
+    Route::middleware(AuthenticateApiKey::class)->group(function () {
+        Route::get('/ping', [ApiKeyAdminController::class, 'ping']);
+        Route::get('/titles', [TitleController::class, 'index']);
+    });
 });
+

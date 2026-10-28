@@ -44,6 +44,7 @@ const MENU_GROUPS = [
       { id: 'devices', path: '/admin/devices', label: 'Dispositivos Conectados', icon: MonitorSmartphone },
       { id: 'downloads', path: '/admin/downloads', label: 'Descargas', icon: DownloadCloud },
       { id: 'ott-sync', path: '/admin/ott-sync', label: 'Sincronización OTT', icon: CloudDownload },
+      { id: 'ott-queue', path: '/admin/ott-queue', label: 'Cola de Ingesta On-Net', icon: DownloadCloud, isFeatured: true },
     ],
   },
   {
@@ -70,6 +71,7 @@ const AdminSidebar = ({
   const isItemActive = (item) => {
     if (activeTab === item.id) return true;
     if (item.id === 'ott-sync' && (activeTab === 'ott-sync' || activeTab === 'ott_sync')) return true;
+    if (item.id === 'ott-queue' && (activeTab === 'ott-queue' || activeTab === 'ott_queue')) return true;
     if (item.id === 'downloads' && (activeTab === 'downloads' || activeTab === 'ingest')) return true;
     if (item.id === 'library' && (activeTab === 'catalog' || activeTab === 'library')) return true;
     if (item.id === 'tasks' && (activeTab === 'scheduled_tasks' || activeTab === 'tasks')) return true;
@@ -209,6 +211,8 @@ const AdminSidebar = ({
                       isActive
                         ? 'bg-[#E50914]/15 text-[#E50914] font-semibold shadow-sm ' +
                           (isCollapsed ? 'ring-1 ring-[#E50914]/40' : 'border-l-2 border-[#E50914] pl-2.5')
+                        : item.isFeatured
+                        ? 'text-zinc-300 hover:text-white bg-zinc-900/60 hover:bg-zinc-800/80 border border-zinc-800/80'
                         : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/60'
                     }`}
                   >
@@ -219,11 +223,16 @@ const AdminSidebar = ({
                         } ${
                           isActive
                             ? 'text-[#E50914]'
+                            : item.isFeatured
+                            ? 'text-red-400 group-hover:text-red-300'
                             : 'text-zinc-400 group-hover:text-zinc-200'
                         }`}
                       />
                       {isCollapsed && item.id === 'devices' && activeDevicesCount > 0 && (
                         <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-500 rounded-full ring-2 ring-[#181818] animate-pulse" />
+                      )}
+                      {isCollapsed && item.isFeatured && (
+                        <span className="absolute -top-1 -right-1 w-2 h-2 bg-[#E50914] rounded-full ring-2 ring-[#181818]" />
                       )}
                     </div>
                     {!isCollapsed && (
@@ -233,6 +242,11 @@ const AdminSidebar = ({
                           <span className="ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                             {activeDevicesCount}
+                          </span>
+                        )}
+                        {item.isFeatured && (
+                          <span className="ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-mono font-bold uppercase tracking-wider bg-red-600/20 text-red-400 border border-red-500/30">
+                            On-Net
                           </span>
                         )}
                       </>

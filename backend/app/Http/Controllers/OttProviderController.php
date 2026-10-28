@@ -333,7 +333,7 @@ class OttProviderController extends Controller
     {
         try {
             $query = trim($request->query('query', $request->query('q', '')));
-            $provider = $request->query('provider');
+            $provider = $request->query('provider', $request->query('platform'));
 
             $results = $this->ottService->searchRemoteCatalog($query, $provider);
 
