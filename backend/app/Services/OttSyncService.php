@@ -98,106 +98,72 @@ class OttSyncService
     ];
 
     /**
-     * Conexión Real a Netflix Graph API v1.x
+     * Método principal para buscar contenido REAL en Netflix Graph API v1.x
      */
-    public static function searchNetflixReal($query, $clientId = null, $refreshToken = null)
+    public static function searchNetflixGraphAPI($query, $clientId, $refreshToken)
     {
         if (empty(trim((string) $query))) {
-            return []; // Si está vacío no busca nada real
+            return [];
         }
 
         $ch = null;
         try {
-            // 1. Obtener un Access Token válido desde el Refresh Token (OAuth2 Flow)
-            $accessTokenResponse = self::getAccessToken($clientId, $refreshToken);
-            
-            $accessToken = is_array($accessTokenResponse) 
-                ? ($accessTokenResponse['access_token'] ?? null) 
-                : $accessTokenResponse;
+            // 1. Obtener Access Token válido desde Refresh Token OAuth2 Flow de Netflix Graph API
+            $accessTokenResponse = self::getAccessTokenFromRefresh(
+                'https://accounts.netflix.com/oauth/token',
+                [
+                    'grant_type'    => 'refresh_token',
+                    'client_id'     => $clientId ?? '',
+                    'refresh_token' => $refreshToken ?? '',
+                ]
+            );
 
-            if (empty($accessToken)) {
-                throw new \Exception("Refresh token inválido o expirado.");
+            if (!$accessTokenResponse || empty($accessTokenResponse['access_token'])) {
+                throw new \Exception("Refresh token inválido o expirado. Intenta reconectar en la sección de cuentas.");
             }
 
-            // 2. Llamar a la API de Búsqueda Real con el access_token y query del usuario:
-            $searchUrl = self::$base_url . '/titles/search'; 
-            
+            // 2. Llamar a endpoint específico para búsqueda: /v1/titles/search?q={query}
+            $searchUrl = self::$base_url . '/titles/search';
+
             $ch = curl_init();
             curl_setopt_array($ch, [
-                CURLOPT_URL => $searchUrl,
+                CURLOPT_URL            => $searchUrl,
                 CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_POST => true, // El endpoint usa POST para búsqueda simple
-                CURLOPT_POSTFIELDS => http_build_query(['query' => trim($query)]), // Envía lo que escribió el usuario
-                CURLOPT_TIMEOUT => 10,
-                CURLOPT_SSL_VERIFYPEER => true,
-                CURLOPT_HTTPHEADER => [
-                    'Authorization: Bearer ' . $accessToken,
-                    'Content-Type: application/x-www-form-urlencoded', 
-                    'Accept: application/json' // Formato de respuesta JSON oficial Netflix Graph API v1.0.x (o similar)
+                CURLOPT_POST           => true,
+                CURLOPT_POSTFIELDS     => http_build_query(['query' => trim((string) $query)]),
+                CURLOPT_HTTPHEADER     => [
+                    'Authorization: Bearer ' . ($accessTokenResponse['access_token'] ?? ''),
+                    'Content-Type: application/x-www-form-urlencoded',
+                    'Accept: application/json',
                 ],
+                CURLOPT_TIMEOUT        => 30,
             ]);
-            
-            $response = curl_exec($ch);
+
+            $execResult = curl_exec($ch);
             $responseCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            
-            if ($responseCode === 200 && $response) { // Si la petición fue exitosa
-                $decoded = json_decode($response, true);
-                $rawItems = $decoded['data'] ?? ($decoded['items'] ?? ($decoded['results'] ?? []));
-                if (!is_array($rawItems) && is_array($decoded)) {
-                    $rawItems = array_is_list($decoded) ? $decoded : [];
-                }
 
-                $normalizedItems = [];
-                foreach ($rawItems as $item) {
-                    if (!is_array($item)) continue;
-                    $title = $item['title'] ?? ($item['name'] ?? 'Título Desconocido');
-                    $slugTitle = Str::slug($title);
-                    
-                    $posterUrl = $item['poster_url'] 
-                        ?? ($item['poster'] 
-                        ?? ($item['poster_path'] 
-                        ?? ($item['boxart']['url'] 
-                        ?? ($item['boxart'] 
-                        ?? ($item['image'] 
-                        ?? "/storage/media/netflix/{$slugTitle}.jpg")))));
+            if ($responseCode === 200 && $execResult) {
+                $jsonData = json_decode($execResult, true);
+                $rawItems = isset($jsonData['data'])
+                    ? array_slice(array_values($jsonData['data']), 0, 10)
+                    : (is_array($jsonData) && array_is_list($jsonData) ? array_slice($jsonData, 0, 10) : []);
 
-                    $type = $item['type'] ?? ($item['media_type'] ?? 'Película');
-                    if (in_array(strtolower($type), ['series', 'show', 'tv', 'serie'])) {
-                        $type = 'Serie';
-                    } else {
-                        $type = 'Película';
-                    }
-
-                    $year = (int) ($item['year'] ?? ($item['releaseYear'] ?? ($item['release_date'] ? substr($item['release_date'], 0, 4) : date('Y'))));
-                    $localPath = $item['local_file_path'] ?? ("/storage/media/netflix/{$slugTitle}.mp4");
-
-                    $normalizedItems[] = [
-                        'id' => (string) ($item['id'] ?? ($item['titleId'] ?? uniqid('nflx_'))),
-                        'title' => $title,
-                        'year' => $year,
-                        'type' => $type,
-                        'poster_url' => $posterUrl,
-                        'poster_path' => $posterUrl,
-                        'poster' => $posterUrl,
-                        'platform' => 'NETFLIX',
-                        'quality_available' => $item['quality_available'] ?? '4K HDR',
-                        'local_file_path' => $localPath,
-                        'filePath' => $localPath,
-                        'file_path' => '/var/www/html' . (str_starts_with($localPath, '/') ? $localPath : '/' . $localPath),
-                    ];
-                }
-
-                return $normalizedItems;
-             
+                return self::normalizeGraphApiItems($rawItems);
             } else {
                 throw new \Exception("Error HTTP al buscar en Netflix API: {$responseCode}");
             }
-            
+
         } catch (\Exception $e) {
-             // Fallback inteligente si falla la conexión real o la API no responde aún (ej. pruebas iniciales):
-             // Devolver un resultado vacío con mensaje claro para el usuario sin inventar datos falsos.
-             Log::warning("Netflix Graph API Search Error: " . $e->getMessage());
-             return ['fallback_message' => 'Cargando catálogo dinámico...', 'items' => []]; 
+            // Fallback inteligente si falla la conexión real (ej. primeras pruebas o tokens rotos):
+            // Devolver un resultado vacío o consultar el catálogo real conectado sin inventar datos falsos.
+            Log::warning("Netflix Graph API Search: " . $e->getMessage());
+
+            $localResults = self::searchLocalConnectedCatalog($query);
+            if (!empty($localResults)) {
+                return $localResults;
+            }
+
+            return ['fallback_message' => 'Cargando catálogo dinámico...', 'items' => []];
         } finally {
             if ($ch) {
                 curl_close($ch);
@@ -208,53 +174,161 @@ class OttSyncService
     /**
      * Método auxiliar para obtener Access Token desde Refresh Token OAuth2 de Netflix Graph API v1.x
      */
-    private static function getAccessToken($clientId, $refreshToken)
+    private static function getAccessTokenFromRefresh($tokenUrl, $params)
     {
-        // URL oficial del endpoint de token refresh según documentación gráfica de Netflix:
-        // https://api.netflix.com/v1/tokens/refresh (o similar dependiendo versión)
-        $tokenUrl = 'https://accounts.netflix.com/oauth/token'; 
+        $ch = null;
+        try {
+            $ch = curl_init();
+            curl_setopt_array($ch, [
+                CURLOPT_URL            => $tokenUrl . '/v1',
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_POST           => true,
+                CURLOPT_POSTFIELDS     => http_build_query($params),
+                CURLOPT_HTTPHEADER     => [
+                    'Content-Type' => 'application/x-www-form-urlencoded',
+                ],
+                CURLOPT_SSL_VERIFYPEER => false,
+                CURLOPT_TIMEOUT        => 30,
+            ]);
 
-        $ch = curl_init();
-        
-        curl_setopt_array($ch, [
-            CURLOPT_URL => $tokenUrl . '/v1', 
-            CURLOPT_RETURNTRANSFER => true, 
-            CURLOPT_TIMEOUT => 8,
-            CURLOPT_POST => true, // POST con parámetros para refrescar acceso
-            CURLOPT_POSTFIELDS => http_build_query([ // Parámetros requeridos por el flujo OAuth2 estándar de Netflix Graph API v1.x:
-                'grant_type' => 'refresh_token',
-                'client_id'   => $clientId ?? '',        // ID del cliente desde DB o config
-                'refresh_token'=> $refreshToken ?? ''     // Token actual que expira pronto si es necesario rotar después
-            ]),
-            CURLOPT_HTTPHEADER => [
-                'Content-Type' => 'application/x-www-form-urlencoded'
-            ],
-            CURLOPT_SSL_VERIFYPEER => true, // Verifica certificado SSL real
-        ]);
+            $execResult = curl_exec($ch);
+            $responseCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
 
-        $response = curl_exec($ch);
-        $responseCode = curl_getinfo($ch, CURLINFO_HTTP_CODE); 
-
-        if ($responseCode === 200 && $response) { // Si el token se refrescó correctamente
-            $decoded = json_decode($response, true);
-            curl_close($ch);
-            return $decoded['access_token'] ?? $decoded; // Devuelve el access token o respuesta
-        } else {
-            curl_close($ch);
-            throw new \Exception("Error HTTP al obtener Access Token desde Netflix API OAuth2: {$responseCode}"); 
+            if ($responseCode === 200 || $responseCode === 401) {
+                $jsonData = json_decode($execResult, true);
+                return isset($jsonData['access_token']) ? ['access_token' => $jsonData['access_token']] : [];
+            } else {
+                throw new \Exception("Error HTTP al obtener Access Token desde Netflix API OAuth2: {$responseCode}");
+            }
+        } catch (\Exception $e) {
+            throw new \Exception("Fallback en obtención de token: " . $e->getMessage());
+        } finally {
+            if ($ch) {
+                curl_close($ch);
+            }
         }
     }
 
     /**
      * Alias compatible de búsqueda en tiempo real
      */
+    public static function searchNetflixReal($query, $clientId = null, $refreshToken = null)
+    {
+        return self::searchNetflixGraphAPI($query, $clientId, $refreshToken);
+    }
+
     public static function searchRealTime($query, $clientId = null, $refreshToken = null): array
     {
-        $res = self::searchNetflixReal($query, $clientId, $refreshToken);
+        $res = self::searchNetflixGraphAPI($query, $clientId, $refreshToken);
         if (isset($res['items']) && is_array($res['items'])) {
             return $res['items'];
         }
         return is_array($res) ? $res : [];
+    }
+
+    /**
+     * Normaliza items devueltos por la Graph API
+     */
+    public static function normalizeGraphApiItems(array $rawItems): array
+    {
+        $normalized = [];
+        foreach ($rawItems as $item) {
+            if (!is_array($item)) continue;
+            $title = $item['title'] ?? ($item['name'] ?? 'Título Desconocido');
+            $slugTitle = Str::slug($title);
+
+            $posterUrl = $item['poster_url']
+                ?? ($item['poster']
+                ?? ($item['poster_path']
+                ?? ($item['boxart']['url']
+                ?? ($item['boxart']
+                ?? ($item['image']
+                ?? "/storage/media/netflix/{$slugTitle}.jpg")))));
+
+            $type = $item['type'] ?? ($item['media_type'] ?? 'Película');
+            $type = in_array(strtolower($type), ['series', 'show', 'tv', 'serie']) ? 'Serie' : 'Película';
+            $year = (int) ($item['year'] ?? ($item['releaseYear'] ?? ($item['release_date'] ? substr($item['release_date'], 0, 4) : date('Y'))));
+            $localPath = $item['local_file_path'] ?? ("/storage/media/netflix/{$slugTitle}.mp4");
+
+            $normalized[] = [
+                'id'                => (string) ($item['id'] ?? ($item['titleId'] ?? uniqid('nflx_'))),
+                'title'             => $title,
+                'year'              => $year,
+                'type'              => $type,
+                'poster_url'        => $posterUrl,
+                'poster_path'       => $posterUrl,
+                'poster'            => $posterUrl,
+                'platform'          => 'NETFLIX',
+                'quality_available' => $item['quality_available'] ?? '4K HDR',
+                'local_file_path'   => $localPath,
+                'filePath'          => $localPath,
+            ];
+        }
+        return $normalized;
+    }
+
+    /**
+     * Búsqueda en catálogo conectado real en base de datos
+     */
+    public static function searchLocalConnectedCatalog(string $query): array
+    {
+        $cleanQ = trim($query);
+        if ($cleanQ === '') {
+            return [];
+        }
+
+        $titles = DB::table('titles')
+            ->where('provider', 'netflix')
+            ->where(function ($q) use ($cleanQ) {
+                $q->where('name', 'like', "%{$cleanQ}%")
+                  ->orWhere('description', 'like', "%{$cleanQ}%");
+            })
+            ->get();
+
+        if ($titles->isEmpty()) {
+            $media = DB::table('media_items')
+                ->where('provider', 'netflix')
+                ->where('title', 'like', "%{$cleanQ}%")
+                ->get();
+
+            if ($media->isEmpty()) {
+                return [];
+            }
+
+            return $media->map(function ($m) {
+                $slugTitle = Str::slug($m->title);
+                return [
+                    'id'                => (string) $m->id,
+                    'title'             => $m->title,
+                    'type'              => $m->type ?? 'Película',
+                    'year'              => (int) ($m->year ?? date('Y')),
+                    'poster_url'        => $m->poster_url ?? "/storage/media/netflix/{$slugTitle}.jpg",
+                    'poster_path'       => $m->poster_url ?? "/storage/media/netflix/{$slugTitle}.jpg",
+                    'poster'            => $m->poster_url ?? "/storage/media/netflix/{$slugTitle}.jpg",
+                    'platform'          => 'NETFLIX',
+                    'quality_available' => $m->quality_available ?? '4K HDR',
+                    'local_file_path'   => $m->file_path ?? "/storage/media/netflix/{$slugTitle}.mp4",
+                    'filePath'          => $m->file_path ?? "/storage/media/netflix/{$slugTitle}.mp4",
+                ];
+            })->all();
+        }
+
+        return $titles->map(function ($t) {
+            $slugTitle = Str::slug($t->name);
+            return [
+                'id'                => (string) $t->id,
+                'title'             => $t->name,
+                'type'              => ucfirst($t->type ?? 'Película'),
+                'year'              => (int) ($t->release_year ?? date('Y')),
+                'poster_url'        => $t->poster_url ?? "/storage/media/netflix/{$slugTitle}.jpg",
+                'poster_path'       => $t->poster_url ?? "/storage/media/netflix/{$slugTitle}.jpg",
+                'poster'            => $t->poster_url ?? "/storage/media/netflix/{$slugTitle}.jpg",
+                'platform'          => 'NETFLIX',
+                'quality_available' => '4K HDR',
+                'local_file_path'   => $t->stream_path ?? "/storage/media/netflix/{$slugTitle}.mp4",
+                'filePath'          => $t->stream_path ?? "/storage/media/netflix/{$slugTitle}.mp4",
+            ];
+        })->all();
     }
 
     public function __construct(?array $credentials = null, ?string $provider = 'netflix')
@@ -528,174 +602,44 @@ class OttSyncService
     }
     protected function getDynamicProviderInventory(string $query, string $provider): array
     {
-        $inventory = [
-            'netflix' => [
-                [
-                    'external_id' => 'nflx-80057281',
-                    'title' => 'Stranger Things',
-                    'original_title' => 'Stranger Things',
-                    'type' => 'Serie',
-                    'year' => 2016,
-                    'poster_path' => 'https://image.tmdb.org/t/p/w500/49WJfeN0moxb9IPfGn8AIqMGskD.jpg',
-                    'backdrop_path' => 'https://image.tmdb.org/t/p/original/56v2KjBlU4XaOv9rVYEQypROD7P.jpg',
-                    'quality_available' => '4K HDR',
-                    'availability' => 'Available',
-                    'overview' => 'Cuando un niño desaparece, sus amigos y la policía se ven envueltos en un misterio con experimentos secretos y fuerzas sobrenaturales.',
-                ],
-                [
-                    'external_id' => 'nflx-71912',
-                    'title' => 'The Witcher',
-                    'original_title' => 'The Witcher',
-                    'type' => 'Serie',
-                    'year' => 2019,
-                    'poster_path' => 'https://image.tmdb.org/t/p/w500/cZ0d3rtvXPVvuiX22swhqdURi0A.jpg',
-                    'backdrop_path' => 'https://image.tmdb.org/t/p/original/jBJWaqoSCiARWtfV0GlqHrcdidd.jpg',
-                    'quality_available' => '4K HDR',
-                    'availability' => 'Available',
-                    'overview' => 'Geralt de Rivia, un cazador de monstruos mutado, viaja en pos de su destino por un mundo turbulento.',
-                ],
-                [
-                    'external_id' => 'nflx-71913',
-                    'title' => 'The Witcher: El origen de la sangre',
-                    'original_title' => 'The Witcher: Blood Origin',
-                    'type' => 'Serie',
-                    'year' => 2022,
-                    'poster_path' => 'https://image.tmdb.org/t/p/w500/vpfjhNqUbvWnlBjh6x5n5v1rQ2K.jpg',
-                    'backdrop_path' => 'https://image.tmdb.org/t/p/original/jBJWaqoSCiARWtfV0GlqHrcdidd.jpg',
-                    'quality_available' => '4K HDR',
-                    'availability' => 'Available',
-                    'overview' => 'Más de mil años antes de Geralt de Rivia, siete parias del mundo élfico unen sus fuerzas en una misión sangrienta.',
-                ],
-                [
-                    'external_id' => 'nflx-81231974',
-                    'title' => 'Merlina (Wednesday)',
-                    'original_title' => 'Wednesday',
-                    'type' => 'Serie',
-                    'year' => 2023,
-                    'poster_path' => 'https://media.themoviedb.org/t/p/w500/9PFonBhy4cQy7Jz20NpMygczOkv.jpg',
-                    'backdrop_path' => 'https://image.tmdb.org/t/p/original/iHSwvRVsRyxpX7FE7GbviaDvgGZ.jpg',
-                    'quality_available' => '4K HDR',
-                    'availability' => 'Available',
-                    'overview' => 'Inteligente, sarcástica y un poco muerta por dentro, Merlina Addams investiga una ola de asesinatos en la Academia Nunca Más.',
-                ],
-                [
-                    'external_id' => 'nflx-81446739',
-                    'title' => 'Misión de Rescate 2 (Extraction 2)',
-                    'original_title' => 'Extraction 2',
-                    'type' => 'Película',
-                    'year' => 2023,
-                    'poster_path' => 'https://media.themoviedb.org/t/p/w500/7gKI9hpEMcZUQpNgKrkDzJpbnNS.jpg',
-                    'backdrop_path' => 'https://image.tmdb.org/t/p/original/fkGIb573Zg75t0n40E4H718L.jpg',
-                    'quality_available' => 'HD',
-                    'availability' => 'Available',
-                    'overview' => 'El mercenario de operaciones encubiertas Tyler Rake vuelve con otra peligrosa misión de extracción.',
-                ],
-                [
-                    'external_id' => 'nflx-81040344',
-                    'title' => 'El Juego del Calamar',
-                    'original_title' => 'Squid Game',
-                    'type' => 'Serie',
-                    'year' => 2024,
-                    'poster_path' => 'https://media.themoviedb.org/t/p/w500/1QdXdRYfktUSONkl1oD5gc6Be0s.jpg',
-                    'backdrop_path' => 'https://image.tmdb.org/t/p/original/qw3J9cNeLioOL0Ukb6UT7QiMeGO.jpg',
-                    'quality_available' => '4K HDR',
-                    'availability' => 'Available',
-                    'overview' => 'Cientos de personas con dificultades económicas compiten en juegos infantiles con desafíos letales.',
-                ],
-            ],
-            'disney' => [
-                [
-                    'external_id' => 'dis-83867',
-                    'title' => 'The Mandalorian',
-                    'original_title' => 'The Mandalorian',
-                    'type' => 'Serie',
-                    'year' => 2023,
-                    'poster_path' => 'https://image.tmdb.org/t/p/w500/eU1i6eHXlzMOlEq0ku1R07YQ7Te.jpg',
-                    'backdrop_path' => 'https://image.tmdb.org/t/p/original/o76Zhh8gp38ty97knscDC9UqoUq.jpg',
-                    'quality_available' => '4K HDR',
-                    'availability' => 'Available',
-                    'overview' => 'Un solitario pistolero mandaloriano se abre paso a través de los confines exteriores de la galaxia.',
-                ],
-                [
-                    'external_id' => 'dis-84958',
-                    'title' => 'Loki',
-                    'original_title' => 'Loki',
-                    'type' => 'Serie',
-                    'year' => 2023,
-                    'poster_path' => 'https://image.tmdb.org/t/p/w500/voHUmlvjysvjGkc6s1L3K7D4T5m.jpg',
-                    'backdrop_path' => 'https://image.tmdb.org/t/p/original/b9UCf9Acv0qjGQ46w1F9Yv1h4.jpg',
-                    'quality_available' => '4K HDR',
-                    'availability' => 'Available',
-                    'overview' => 'El Dios del Engaño es reclutado por la Autoridad de Variación Temporal.',
-                ],
-            ],
-            'hbo_max' => [
-                [
-                    'external_id' => 'hbo-100088',
-                    'title' => 'The Last of Us',
-                    'original_title' => 'The Last of Us',
-                    'type' => 'Serie',
-                    'year' => 2024,
-                    'poster_path' => 'https://image.tmdb.org/t/p/w500/uKvVjHNqB5VmOrdxqMisytaq9m.jpg',
-                    'backdrop_path' => 'https://image.tmdb.org/t/p/original/uDgy6hyPd82kOHh6I95FLtLnj6p.jpg',
-                    'quality_available' => '4K HDR',
-                    'availability' => 'Available',
-                    'overview' => 'Joel escolta a Ellie a través de un Estados Unidos devastado por una plaga de hongos.',
-                ],
-                [
-                    'external_id' => 'hbo-94997',
-                    'title' => 'La Casa del Dragón',
-                    'original_title' => 'House of the Dragon',
-                    'type' => 'Serie',
-                    'year' => 2024,
-                    'poster_path' => 'https://image.tmdb.org/t/p/w500/1X4h40fcB4WWUmIBK0auT4zRBAV.jpg',
-                    'backdrop_path' => 'https://image.tmdb.org/t/p/original/etj5CuMuamhGQm5P9G08F9r2bC6.jpg',
-                    'quality_available' => '4K HDR',
-                    'availability' => 'Available',
-                    'overview' => 'La historia del reinado y la guerra civil de la Casa Targaryen.',
-                ],
-            ],
-            'amazon_prime' => [
-                [
-                    'external_id' => 'amz-76479',
-                    'title' => 'The Boys',
-                    'original_title' => 'The Boys',
-                    'type' => 'Serie',
-                    'year' => 2024,
-                    'poster_path' => 'https://image.tmdb.org/t/p/w500/mY7SeH4YFFxWv167RIIz3el9mNL.jpg',
-                    'backdrop_path' => 'https://image.tmdb.org/t/p/original/nxxCPRGTzxUJ2w2G3k3fLqP7w7b.jpg',
-                    'quality_available' => '4K HDR',
-                    'availability' => 'Available',
-                    'overview' => 'Un grupo de justicieros se propone derrotar a superhéroes corruptos.',
-                ],
-                [
-                    'external_id' => 'amz-106379',
-                    'title' => 'Fallout',
-                    'original_title' => 'Fallout',
-                    'type' => 'Serie',
-                    'year' => 2024,
-                    'poster_path' => 'https://image.tmdb.org/t/p/w500/22Fk92u08vGZzE25lH2R6XbU9y0.jpg',
-                    'backdrop_path' => 'https://image.tmdb.org/t/p/original/mo0P0qP1fP3pZ3pM3q7yT8vN5yK.jpg',
-                    'quality_available' => '4K HDR',
-                    'availability' => 'Available',
-                    'overview' => 'Aventura post-nuclear en el futuro de Los Ángeles.',
-                ],
-            ],
-        ];
-
-        $source = $inventory[$provider] ?? $inventory['netflix'];
         $cleanQ = trim($query);
-        if ($cleanQ === '') {
-            return $source;
+        $providerKey = strtolower($provider);
+
+        $dbQuery = DB::table('titles')
+            ->where(function ($q) use ($providerKey) {
+                if ($providerKey !== 'all') {
+                    $q->where('provider', $providerKey);
+                }
+            });
+
+        if ($cleanQ !== '') {
+            $dbQuery->where(function ($q) use ($cleanQ) {
+                $q->where('name', 'like', "%{$cleanQ}%")
+                  ->orWhere('description', 'like', "%{$cleanQ}%");
+            });
         }
 
-        $lower = mb_strtolower($cleanQ, 'UTF-8');
+        $titles = $dbQuery->limit(20)->get();
 
-        return array_values(array_filter($source, function ($item) use ($lower) {
-            $t = mb_strtolower($item['title'], 'UTF-8');
-            $ot = mb_strtolower($item['original_title'] ?? '', 'UTF-8');
-            return str_contains($t, $lower) || str_contains($ot, $lower);
-        }));
+        if ($titles->isNotEmpty()) {
+            return $titles->map(function ($t) use ($providerKey) {
+                return [
+                    'external_id'       => 'db-' . $t->id,
+                    'title'             => $t->name,
+                    'original_title'    => $t->sort_title ?: $t->name,
+                    'type'              => ucfirst($t->type ?? 'Película'),
+                    'year'              => (int) ($t->release_year ?? date('Y')),
+                    'poster_path'       => $t->poster_url ?: '/images/default-poster.jpg',
+                    'backdrop_path'     => $t->backdrop_url ?: '',
+                    'quality_available' => '4K HDR',
+                    'availability'      => 'Available',
+                    'overview'          => $t->description ?? '',
+                    'local_file_path'   => $t->stream_path ?? '',
+                ];
+            })->all();
+        }
+
+        return [];
     }
 
     protected function normalizeItems(array $rawItems, string $provider): array

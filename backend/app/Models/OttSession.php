@@ -32,4 +32,12 @@ class OttSession extends Model
     {
         return $this->belongsTo(User::class);
     }
+
+    public function getUserNameAttribute(): ?string
+    {
+        return $this->attributes['user_name'] 
+            ?? ($this->session_metadata['user_name'] 
+            ?? ($this->user?->name 
+            ?? 'Usuario Netflix'));
+    }
 }
