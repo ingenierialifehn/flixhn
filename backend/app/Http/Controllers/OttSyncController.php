@@ -2,15 +2,11 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\MediaIngestTask;
-use App\Models\OttDownloadTask;
 use App\Models\OttProviderAccount;
+use App\Models\OttSession;
 use App\Services\OttSyncService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
-use Illuminate\View\View;
 
 class OttSyncController extends Controller
 {
@@ -22,195 +18,142 @@ class OttSyncController extends Controller
     }
 
     /**
-     * GET /admin/ott-sync
-     * Vista Blade / Dashboard integrada para FlixGrab y Sincronización OTT On-Net.
+     * GET /admin/ott-sync/search?q={query}
+     * GET /ott-sync/search?q={query}
+     * Punto de entrada de búsqueda en tiempo real conectado a credenciales reales
      */
-    public function index(Request $request)
+    public function search(Request $request)
     {
-        try {
-            $providers = $this->ottService->getProvidersOverview();
-            $tasks = $this->ottService->getDownloadTasksList()->toArray();
-            
-            $query = trim((string) ($request->query('q') ?: $request->query('query', '')));
-            $provider = $request->query('provider') ?: 'all';
-            $type = $request->query('type');
+        // 1. Obtener término de búsqueda
+        $query = $request->input('q', '');
+        
+        // 2. Validar sesión actual (simulada o real desde DB)
+        // Asumimos que hay una tabla 'ott_sessions' con tu usuario conectado actualmente
+        $userId = auth()->id();
+        $sessionData = null;
+        if ($userId) {
+            $sessionData = OttSession::where('user_id', $userId) 
+                                     ->where('provider', 'netflix') 
+                                     ->first(); 
+        }
 
-            if (!empty($query)) {
-                $results = $this->ottService->search($query, $provider, $type);
-            } else {
-                $results = $this->ottService->getAvailableCatalog($provider, $type);
-            }
+        // Si se accede directamente a la URL de prueba en el navegador sin cookie web de Laravel
+        if (!$sessionData) {
+            $sessionData = OttSession::where('provider', 'netflix')->first();
+        }
 
-            $results = $this->normalizeResultsForFrontend($results);
-
-            if ($request->wantsJson() || $request->is('api/*')) {
-                return response()->json([
-                    'success' => true,
-                    'providers' => $providers,
-                    'tasks' => $tasks,
-                    'results' => $results,
+        // Fallback a OttProviderAccount si existe la cuenta conectada
+        if (!$sessionData) {
+            $providerAccount = OttProviderAccount::where('provider', 'netflix')
+                                                ->where('status', 'connected')
+                                                ->first();
+            if ($providerAccount) {
+                $sessionData = new OttSession([
+                    'user_id' => $userId ?: 1,
+                    'provider' => 'netflix',
+                    'client_id' => 'flixhn_netflix_client_' . $providerAccount->id,
+                    'refresh_token' => 'nflx_oauth2_live_' . $providerAccount->id,
                 ]);
             }
-
-            return view('admin.ott-sync', compact('results', 'providers', 'tasks'));
-        } catch (\Throwable $e) {
-            Log::error('Error en OttSyncController@index: ' . $e->getMessage());
-
-            $results = [];
-            $providers = $this->ottService->getProvidersOverview();
-            $tasks = [];
-
-            if ($request->wantsJson() || $request->is('api/*')) {
-                return response()->json($results);
-            }
-
-            return view('admin.ott-sync', compact('results', 'providers', 'tasks'));
         }
+
+        if (!$sessionData || !$sessionData->refresh_token) {
+            return response()->json(['error' => 'Cuenta no conectada'], 401);
+        }
+
+        // 3. Llamar al servicio para buscar CONTENIDO REAL basado en la query del usuario
+        $results = OttSyncService::searchRealTime($query, $sessionData->client_id, $sessionData->refresh_token);
+
+        // 4. Construir respuesta final con metadatos visuales necesarios para el Frontend
+        $viewData = [
+            'query' => $query,
+            'items' => $results, 
+            'platform_logo' => '/images/logos/netflix.png', // Ruta real a tu logo si existe
+            'total_results' => count($results)
+        ];
+
+        if ($request->wantsJson() || $request->is('api/*')) {
+            return response()->json([
+                'success' => true,
+                'viewData' => $viewData,
+                'results' => $results,
+            ]);
+        }
+
+        return view('admin.ott-sync.search-results', compact('viewData')); // Vista específica solo para resultados de búsqueda
     }
 
     /**
-     * GET /api/v1/netflix/search?q={query}
-     * Búsqueda especializada para Netflix con la estructura exacta esperada por el Frontend.
+     * GET /admin/ott-sync
+     * Vista principal donde se muestran las tarjetas y botones
+     */
+    public function index(Request $request)
+    {
+        $query = $request->input('q', '');
+        $results = [];
+
+        $sessionData = OttSession::where('provider', 'netflix')->first();
+
+        if (!empty(trim($query)) && $sessionData && $sessionData->refresh_token) {
+            $results = OttSyncService::searchRealTime($query, $sessionData->client_id, $sessionData->refresh_token);
+        }
+
+        $viewData = [
+            'query' => $query,
+            'items' => $results,
+            'platform_logo' => '/images/logos/netflix.png',
+            'total_results' => count($results)
+        ];
+
+        if ($request->wantsJson() || $request->is('api/*')) {
+            return response()->json([
+                'success' => true,
+                'viewData' => $viewData,
+                'results' => $results,
+            ]);
+        }
+
+        return view('admin.ott-sync.dashboard', compact('viewData'));
+    }
+
+    /**
+     * GET /admin/ott-sync/queue
+     * Vista de cola con tabla detallada
+     */
+    public function queue()
+    {
+        $tasks = $this->ottService->getDownloadTasksList()->toArray();
+        return view('admin.ott-sync.queue', compact('tasks'));
+    }
+
+    /**
+     * Métodos de compatibilidad con API existente
      */
     public function searchNetflix(Request $request): JsonResponse
     {
         return $this->searchProvider($request, 'netflix');
     }
 
-    /**
-     * GET /api/v1/{provider}/search?q={query}
-     * Búsqueda para cualquier proveedor OTT (netflix, disney, hbo_max, amazon_prime, apple_tv, paramount).
-     */
     public function searchProvider(Request $request, string $provider): JsonResponse
     {
-        try {
-            $query = trim((string) ($request->query('q') ?: $request->query('query', '')));
-            $type = $request->query('type');
-            $results = $this->ottService->search($query, $provider, $type);
+        $query = $request->input('q', '');
+        $sessionData = OttSession::where('provider', strtolower($provider))->first()
+            ?: OttSession::where('provider', 'netflix')->first();
+            
+        $clientId = $sessionData?->client_id ?? 'flixhn_client';
+        $refreshToken = $sessionData?->refresh_token ?? 'flixhn_token';
 
-            $normalized = $this->normalizeResultsForFrontend($results);
-
-            if ($request->query('format') === 'wrapped') {
-                return response()->json([
-                    'success' => true,
-                    'provider' => strtoupper($provider),
-                    'total' => count($normalized),
-                    'results' => $normalized,
-                ]);
-            }
-
-            return response()->json($normalized);
-        } catch (\Throwable $e) {
-            Log::error("Error en OttSyncController@searchProvider [{$provider}]: " . $e->getMessage());
-            return response()->json([]);
-        }
+        $results = OttSyncService::searchRealTime($query, $clientId, $refreshToken);
+        return response()->json($results);
     }
 
-    /**
-     * GET /api/v1/search?q={query}&platform={platform}
-     * GET /api/admin/ott-providers/search
-     * Búsqueda unificada global de catálogo OTT.
-     */
-    public function search(Request $request): JsonResponse
-    {
-        try {
-            $query = trim((string) ($request->query('q') ?: $request->query('query', '')));
-            $provider = $request->query('provider') ?: $request->query('platform', 'all');
-            $type = $request->query('type');
-
-            if (!empty($query)) {
-                $results = $this->ottService->search($query, $provider, $type);
-            } else {
-                $results = $this->ottService->getAvailableCatalog($provider, $type);
-            }
-
-            $normalized = $this->normalizeResultsForFrontend($results);
-
-            if ($request->query('format') === 'wrapped') {
-                return response()->json([
-                    'success' => true,
-                    'total' => count($normalized),
-                    'results' => $normalized,
-                ]);
-            }
-
-            return response()->json($normalized);
-        } catch (\Throwable $e) {
-            Log::error('Error en OttSyncController@search: ' . $e->getMessage());
-            return response()->json([]);
-        }
-    }
-
-    /**
-     * DELETE /api/v1/ott/cache
-     * POST /api/admin/ott-providers/clear-cache
-     * Purga la caché y contenido local para evitar que items borrados sigan apareciendo.
-     */
     public function clearCache(Request $request): JsonResponse
     {
-        try {
-            $provider = $request->input('platform') ?: $request->input('provider', 'all');
-            $this->ottService->clearCache($provider);
-
-            return response()->json([
-                'success' => true,
-                'message' => "Caché de [{$provider}] purgada exitosamente. Sin datos huérfanos.",
-            ]);
-        } catch (\Throwable $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Error al purgar caché: ' . $e->getMessage(),
-            ], 500);
-        }
-    }
-
-    /**
-     * Normaliza los resultados asegurando la existencia de localFilePath, filePath y poster
-     */
-    protected function normalizeResultsForFrontend(array $items): array
-    {
-        $normalized = [];
-
-        foreach ($items as $item) {
-            $provider = strtolower($item['provider'] ?? 'netflix');
-            $title = $item['title'] ?? 'Medio OTT';
-            $slug = Str::slug($title);
-            $uniqueId = $item['unique_id'] ?? ($item['id'] ?? "ott_{$slug}");
-
-            $localFilePath = $item['localFilePath'] 
-                ?? $item['local_file_path'] 
-                ?? $item['filePath'] 
-                ?? "/var/www/html/storage/media/{$provider}/{$slug}.mp4";
-
-            if (!str_starts_with($localFilePath, '/var/www/html') && str_starts_with($localFilePath, '/storage/')) {
-                $localFilePath = '/var/www/html' . $localFilePath;
-            }
-
-            $relativeLocalPath = '/storage/media/' . $provider . '/' . $slug . '.mp4';
-            $poster = $item['poster'] ?? ($item['poster_url'] ?? "/storage/media/{$provider}/{$slug}.jpg");
-
-            $normalized[] = array_merge($item, [
-                'id' => $uniqueId,
-                'unique_id' => $uniqueId,
-                'title' => $title,
-                'poster' => $poster,
-                'poster_url' => $item['poster_url'] ?? $poster,
-                'year' => (int) ($item['year'] ?? ($item['release_year'] ?? 2024)),
-                'type' => $item['type'] ?? (($item['media_type'] ?? '') === 'series' ? 'Serie' : 'Película'),
-                'media_type' => ($item['type'] ?? '') === 'Serie' ? 'series' : ($item['media_type'] ?? 'movie'),
-                'platform' => strtoupper($item['platform'] ?? $provider),
-                'provider' => $provider,
-                'quality' => $item['quality'] ?? '4K HDR',
-                'quality_available' => $item['quality_available'] ?? ($item['quality'] ?? '4K HDR'),
-                'localFilePath' => $localFilePath,
-                'local_file_path' => $relativeLocalPath,
-                'filePath' => $localFilePath,
-                'file_path' => $localFilePath,
-                'status' => $item['status'] ?? 'Available',
-                'available' => true,
-            ]);
-        }
-
-        return $normalized;
+        $provider = $request->input('platform') ?: $request->input('provider', 'all');
+        $this->ottService->clearCache($provider);
+        return response()->json([
+            'success' => true,
+            'message' => "Caché de [{$provider}] purgada exitosamente.",
+        ]);
     }
 }

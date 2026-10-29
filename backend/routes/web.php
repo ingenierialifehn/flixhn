@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\MediaStreamController;
+use App\Http\Controllers\OttSyncController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -18,7 +19,15 @@ Route::match(['get', 'head'], '/storage/{path}', [MediaStreamController::class, 
 Route::match(['get', 'head'], '/media/{id}/stream', [MediaStreamController::class, 'stream']);
 Route::match(['get', 'head'], '/stream/{id}', [MediaStreamController::class, 'stream']);
 
-// Módulo FlixGrab OTT Sync (Vista Blade integrada + API Web)
-Route::get('/admin/ott-sync', [\App\Http\Controllers\OttSyncController::class, 'index'])->name('admin.ott-sync');
-Route::get('/ott-sync', [\App\Http\Controllers\OttSyncController::class, 'index'])->name('ott-sync');
+// Módulo FlixGrab OTT Sync (Clean Slate Endpoints)
+Route::prefix('admin/ott-sync')->name('admin.ott-sync.')->group(function () {
+    Route::get('/', [OttSyncController::class, 'index'])->name('index');
+    Route::get('/search', [OttSyncController::class, 'search'])->name('search');
+    Route::get('/queue', [OttSyncController::class, 'queue'])->name('queue');
+});
 
+// Rutas de compatibilidad directa
+Route::get('/admin/ott-sync', [OttSyncController::class, 'index'])->name('admin.ott-sync');
+Route::get('/ott-sync', [OttSyncController::class, 'index'])->name('ott-sync');
+Route::get('/ott-sync/search', [OttSyncController::class, 'search'])->name('ott-sync.search');
+Route::get('/ott-sync/queue', [OttSyncController::class, 'queue'])->name('ott-sync.queue');
