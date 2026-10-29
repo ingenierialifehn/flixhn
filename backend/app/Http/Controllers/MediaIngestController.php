@@ -160,9 +160,10 @@ class MediaIngestController extends Controller
             $task = MediaIngestTask::find($id);
             if (!$task) {
                 return response()->json([
-                    'success' => false,
-                    'message' => 'Tarea no encontrada',
-                ], 404);
+                    'success' => true,
+                    'status' => 'success',
+                    'message' => 'Tarea ya eliminada o inexistente.',
+                ]);
             }
 
             // Si tiene un media_item_id asociado y el archivo físico existe, elimina el registro y el archivo

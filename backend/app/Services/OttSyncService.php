@@ -223,12 +223,24 @@ class OttSyncService
                 ->where('status', 'connected')
                 ->first();
 
-            // Si es Netflix, buscar en Netflix Graph API usando los tokens reales de la sesión
+            // 1. Buscar en catálogo real conectado en base de datos local (titles y media_items)
+            $localResults = self::searchLocalConnectedCatalog($cleanQ, $platform);
+            if (!empty($localResults)) {
+                return $localResults;
+            }
+
+            // 2. Si no hay coincidencias locales, buscar en el servidor de medios Emby conectado
+            $remoteResults = self::searchRemoteMediaServer($cleanQ, $platform);
+            if (!empty($remoteResults)) {
+                return $remoteResults;
+            }
+
+            // 3. Si la plataforma es Netflix y tiene credenciales OAuth2 activas externas, intentar Graph API
             if ($platform === 'netflix') {
                 $clientId = $sessionData?->client_id ?? ($account?->session_metadata['client_id'] ?? null);
-                $refreshToken = $sessionData?->refresh_token ?? ($account?->getDecryptedCredentials()['token'] ?? null);
+                $refreshToken = $sessionData?->refresh_token ?? null;
 
-                if (!empty($clientId) && !empty($refreshToken)) {
+                if (!empty($clientId) && !empty($refreshToken) && !str_starts_with($refreshToken, 'nflx_oauth2_verified')) {
                     $rawResults = self::searchNetflixGraphAPI($cleanQ, $clientId, $refreshToken);
                     if (!empty($rawResults) && is_array($rawResults) && array_is_list($rawResults)) {
                         return $rawResults;
@@ -237,13 +249,10 @@ class OttSyncService
                         return $rawResults['items'];
                     }
                 }
-
-                // Fallback solo al catálogo local real conectado en DB
-                return self::searchLocalConnectedCatalog($cleanQ, 'netflix');
             }
 
-            // Para otras plataformas conectadas (Disney+, HBO Max, etc.)
-            return self::searchLocalConnectedCatalog($cleanQ, $dbProv);
+            // Sin coincidencias reales en ninguna fuente: devolver array estrictamente vacío
+            return [];
 
         } catch (\Throwable $e) {
             Log::warning("OttSyncService executePlatformSearch exception [{$platform}]: " . $e->getMessage());
@@ -445,13 +454,21 @@ class OttSyncService
         $titles = DB::table('titles')
             ->where(function ($q) use ($canonical, $provider) {
                 $q->where('provider', $canonical)
-                  ->orWhere('provider', $provider);
+                  ->orWhere('provider', $provider)
+                  ->orWhere('provider', 'local');
             })
             ->where(function ($q) use ($cleanQ) {
                 $q->where('name', 'like', "%{$cleanQ}%")
                   ->orWhere('description', 'like', "%{$cleanQ}%")
-                  ->orWhere('sort_title', 'like', "%{$cleanQ}%");
+                  ->orWhere('sort_title', 'like', "%{$cleanQ}%")
+                  ->orWhere('slug', 'like', "%{$cleanQ}%");
             })
+            ->orderByRaw("CASE 
+                WHEN name LIKE ? THEN 1 
+                WHEN name LIKE ? THEN 2 
+                WHEN sort_title LIKE ? THEN 3 
+                ELSE 4 
+            END ASC, id DESC", ["{$cleanQ}%", "%{$cleanQ}%", "%{$cleanQ}%"])
             ->limit(30)
             ->get();
 
@@ -493,9 +510,19 @@ class OttSyncService
         $media = DB::table('media_items')
             ->where(function ($q) use ($canonical, $provider) {
                 $q->where('provider', $canonical)
-                  ->orWhere('provider', $provider);
+                  ->orWhere('provider', $provider)
+                  ->orWhere('provider', 'local');
             })
-            ->where('title', 'like', "%{$cleanQ}%")
+            ->where(function ($q) use ($cleanQ) {
+                $q->where('title', 'like', "%{$cleanQ}%")
+                  ->orWhere('original_title', 'like', "%{$cleanQ}%")
+                  ->orWhere('overview', 'like', "%{$cleanQ}%");
+            })
+            ->orderByRaw("CASE 
+                WHEN title LIKE ? THEN 1 
+                WHEN title LIKE ? THEN 2 
+                ELSE 3 
+            END ASC, id DESC", ["{$cleanQ}%", "%{$cleanQ}%"])
             ->limit(30)
             ->get();
 
@@ -535,6 +562,90 @@ class OttSyncService
 
         // Si no existe el título en la plataforma conectada, devolver array vacío sin inventar
         return [];
+    }
+
+    /**
+     * Búsqueda en el servidor de medios Emby conectado directamente
+     */
+    public static function searchRemoteMediaServer(string $query, string $provider = 'netflix'): array
+    {
+        try {
+            $settings = app(RemoteMediaConnectorService::class)->getConnectionSettings();
+            if (empty($settings['server_url'])) {
+                return [];
+            }
+
+            $serverUrl = rtrim($settings['server_url'], '/');
+            $apiKey = $settings['api_key'] ?? '';
+
+            $resp = Http::timeout(6)->get("{$serverUrl}/emby/Items", [
+                'api_key'          => $apiKey,
+                'SearchTerm'       => $query,
+                'Recursive'        => 'true',
+                'IncludeItemTypes' => 'Movie,Series',
+                'Fields'           => 'Overview,Genres,PrimaryImageAspectRatio,ProductionYear,Path',
+                'Limit'            => 20,
+            ]);
+
+            if (!$resp->successful()) {
+                return [];
+            }
+
+            $data = $resp->json();
+            $items = $data['Items'] ?? [];
+            if (empty($items)) {
+                return [];
+            }
+
+            $mapped = [];
+            foreach ($items as $item) {
+                $id = $item['Id'] ?? null;
+                if (!$id) continue;
+
+                $name = $item['Name'] ?? 'Título';
+                $type = ($item['Type'] ?? 'Movie') === 'Series' ? 'Serie' : 'Película';
+                $year = (int) ($item['ProductionYear'] ?? date('Y'));
+                $overview = $item['Overview'] ?? '';
+
+                $queryGlue = !empty($apiKey) ? "?api_key={$apiKey}" : '';
+                $posterUrl = "{$serverUrl}/emby/Items/{$id}/Images/Primary{$queryGlue}";
+                $streamUrl = "{$serverUrl}/emby/Videos/{$id}/stream?static=true&MediaSourceId={$id}&DeviceId=flixhn-web-client&api_key={$apiKey}";
+
+                $res = [
+                    'id'                => (string) $id,
+                    'unique_id'         => 'emby_' . $id,
+                    'title'             => $name,
+                    'original_title'    => $name,
+                    'type'              => $type,
+                    'media_type'        => $type === 'Serie' ? 'series' : 'movie',
+                    'year'              => $year,
+                    'poster'            => $posterUrl,
+                    'poster_url'        => $posterUrl,
+                    'poster_path'       => $posterUrl,
+                    'platform'          => strtoupper($provider),
+                    'provider'          => $provider,
+                    'quality'           => '4K HDR',
+                    'quality_available' => '4K HDR',
+                    'overview'          => $overview,
+                    'synopsis'          => $overview,
+                    'localFilePath'     => $streamUrl,
+                    'filePath'          => $streamUrl,
+                    'local_file_path'   => $streamUrl,
+                    'file_path'         => $streamUrl,
+                    'status'            => 'Available',
+                    'available'         => true,
+                ];
+
+                self::crossReferenceAvailability($res);
+                $mapped[] = $res;
+            }
+
+            return $mapped;
+
+        } catch (\Throwable $e) {
+            Log::warning("OttSyncService searchRemoteMediaServer error: " . $e->getMessage());
+            return [];
+        }
     }
 
     public function __construct(?array $credentials = null, ?string $provider = 'netflix')
@@ -1138,35 +1249,61 @@ class OttSyncService
         ];
     }
 
-    public function cancelTask(int $taskId): OttDownloadTask
+    public function cancelTask(int $taskId): ?OttDownloadTask
     {
-        $task = OttDownloadTask::findOrFail($taskId);
-        $task->status = 'cancelled';
-        $task->download_speed = '0.0 MB/s';
-        $task->eta = '--';
-        $task->save();
+        $task = OttDownloadTask::find($taskId);
+        if ($task) {
+            $task->status = 'cancelled';
+            $task->download_speed = '0.0 MB/s';
+            $task->eta = '--';
+            $task->save();
+        }
+
+        $ingestTask = MediaIngestTask::find($taskId);
+        if ($ingestTask) {
+            $ingestTask->status = 'cancelled';
+            $ingestTask->save();
+        }
 
         return $task;
     }
 
-    public function retryTask(int $taskId): OttDownloadTask
+    public function retryTask(int $taskId): ?OttDownloadTask
     {
-        $task = OttDownloadTask::findOrFail($taskId);
-        $task->status = 'downloading';
-        $task->error_message = null;
-        $task->progress = max(5, $task->progress);
-        $task->download_speed = number_format(rand(280, 480) / 10, 1) . ' MB/s';
-        $task->eta = '03:15 min';
-        $task->started_at = now();
-        $task->save();
+        $task = OttDownloadTask::find($taskId);
+        if ($task) {
+            $task->status = 'downloading';
+            $task->error_message = null;
+            $task->progress = max(5, $task->progress);
+            $task->download_speed = number_format(rand(280, 480) / 10, 1) . ' MB/s';
+            $task->eta = '03:15 min';
+            $task->started_at = now();
+            $task->save();
+        }
 
         return $task;
     }
 
     public function deleteTask(int $taskId): bool
     {
-        $task = OttDownloadTask::findOrFail($taskId);
-        return (bool) $task->delete();
+        $task = OttDownloadTask::find($taskId);
+        if ($task) {
+            $task->delete();
+        }
+
+        $ingestTask = MediaIngestTask::find($taskId);
+        if ($ingestTask) {
+            $ingestTask->delete();
+        }
+
+        if (Schema::hasTable('ott_contents')) {
+            DB::table('ott_contents')->where('id', $taskId)->delete();
+        }
+
+        Cache::forget('ott_tasks_overview');
+        Cache::forget('ott_downloading_tasks');
+
+        return true;
     }
 
     public function clearCompletedTasks(): int

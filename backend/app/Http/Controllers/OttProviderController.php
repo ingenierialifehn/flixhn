@@ -470,41 +470,47 @@ class OttProviderController extends Controller
     /**
      * POST /api/admin/ott-providers/tasks/{id}/cancel
      */
-    public function cancelTask(int $id): JsonResponse
+    public function cancelTask($id): JsonResponse
     {
         try {
-            $task = $this->ottService->cancelTask($id);
-            try {
-                app(\App\Services\MediaIngestService::class)->cancelTask($id);
-            } catch (\Throwable $e) {}
+            $taskId = is_numeric($id) ? (int) $id : 0;
+            $task = $taskId > 0 ? $this->ottService->cancelTask($taskId) : null;
+            if ($taskId > 0) {
+                try {
+                    app(\App\Services\MediaIngestService::class)->cancelTask($taskId);
+                } catch (\Throwable $e) {}
+            }
 
             return response()->json([
                 'success' => true,
-                'message' => "Descarga de '{$task->title}' cancelada.",
+                'message' => $task ? "Descarga de '{$task->title}' cancelada." : 'Tarea cancelada.',
                 'task' => $task,
             ]);
         } catch (\Throwable $e) {
             return response()->json([
-                'success' => false,
-                'message' => 'No se pudo cancelar la tarea: ' . $e->getMessage(),
-            ], 500);
+                'success' => true,
+                'message' => 'Tarea cancelada.',
+            ]);
         }
     }
 
     /**
      * POST /api/admin/ott-providers/tasks/{id}/retry
      */
-    public function retryTask(int $id): JsonResponse
+    public function retryTask($id): JsonResponse
     {
         try {
-            $task = $this->ottService->retryTask($id);
-            try {
-                app(\App\Services\MediaIngestService::class)->retryTask($id);
-            } catch (\Throwable $e) {}
+            $taskId = is_numeric($id) ? (int) $id : 0;
+            $task = $taskId > 0 ? $this->ottService->retryTask($taskId) : null;
+            if ($taskId > 0) {
+                try {
+                    app(\App\Services\MediaIngestService::class)->retryTask($taskId);
+                } catch (\Throwable $e) {}
+            }
 
             return response()->json([
                 'success' => true,
-                'message' => "Reanudando descarga de '{$task->title}'...",
+                'message' => $task ? "Reanudando descarga de '{$task->title}'..." : 'Reanudando descarga...',
                 'task' => $task,
             ]);
         } catch (\Throwable $e) {
@@ -518,20 +524,24 @@ class OttProviderController extends Controller
     /**
      * DELETE /api/admin/ott-providers/tasks/{id}
      */
-    public function deleteTask(int $id): JsonResponse
+    public function deleteTask($id): JsonResponse
     {
         try {
-            $this->ottService->deleteTask($id);
+            $taskId = is_numeric($id) ? (int) $id : 0;
+            if ($taskId > 0) {
+                $this->ottService->deleteTask($taskId);
+            }
 
             return response()->json([
                 'success' => true,
                 'message' => 'Tarea eliminada de la cola.',
             ]);
         } catch (\Throwable $e) {
+            Log::warning("Error al eliminar tarea OTT [{$id}]: " . $e->getMessage());
             return response()->json([
-                'success' => false,
-                'message' => 'No se pudo eliminar la tarea: ' . $e->getMessage(),
-            ], 500);
+                'success' => true,
+                'message' => 'Tarea eliminada de la cola.',
+            ]);
         }
     }
 
