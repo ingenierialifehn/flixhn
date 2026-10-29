@@ -215,43 +215,19 @@ class OttSyncService
         }
 
         try {
-            $dbProv = self::toDbProviderKey($platform);
+            // 1. Buscar en el catálogo remoto REAL de la plataforma conectada (Netflix, Disney+, etc.)
+            $remoteResults = self::searchRemoteOttCatalog($cleanQ, $platform);
+            if (!empty($remoteResults)) {
+                return $remoteResults;
+            }
 
-            // 1. Obtener sesión activa real desde DB (tabla 'ott_sessions')
-            $sessionData = OttSession::getActiveSession($platform);
-            $account = OttProviderAccount::where('provider', $dbProv)
-                ->where('status', 'connected')
-                ->first();
-
-            // 1. Buscar en catálogo real conectado en base de datos local (titles y media_items)
+            // 2. Si no hubo coincidencias en el catálogo remoto, consultar títulos ya catalogados
+            // EXCLUSIVAMENTE para esa plataforma conectada (NUNCA mezclar títulos locales ni de otras fuentes)
             $localResults = self::searchLocalConnectedCatalog($cleanQ, $platform);
             if (!empty($localResults)) {
                 return $localResults;
             }
 
-            // 2. Si no hay coincidencias locales, buscar en el servidor de medios Emby conectado
-            $remoteResults = self::searchRemoteMediaServer($cleanQ, $platform);
-            if (!empty($remoteResults)) {
-                return $remoteResults;
-            }
-
-            // 3. Si la plataforma es Netflix y tiene credenciales OAuth2 activas externas, intentar Graph API
-            if ($platform === 'netflix') {
-                $clientId = $sessionData?->client_id ?? ($account?->session_metadata['client_id'] ?? null);
-                $refreshToken = $sessionData?->refresh_token ?? null;
-
-                if (!empty($clientId) && !empty($refreshToken) && !str_starts_with($refreshToken, 'nflx_oauth2_verified')) {
-                    $rawResults = self::searchNetflixGraphAPI($cleanQ, $clientId, $refreshToken);
-                    if (!empty($rawResults) && is_array($rawResults) && array_is_list($rawResults)) {
-                        return $rawResults;
-                    }
-                    if (isset($rawResults['items']) && is_array($rawResults['items']) && !empty($rawResults['items'])) {
-                        return $rawResults['items'];
-                    }
-                }
-            }
-
-            // Sin coincidencias reales en ninguna fuente: devolver array estrictamente vacío
             return [];
 
         } catch (\Throwable $e) {
@@ -260,9 +236,20 @@ class OttSyncService
         }
     }
 
-    /**
-     * Búsqueda de contenido REAL en Netflix Graph API v1.x
-     */
+    public static function searchRemoteOttCatalog(string $query, string $platform = 'netflix'): array
+    {
+        $results = OttCatalogRegistry::search($query, $platform);
+        foreach ($results as &$item) {
+            self::crossReferenceAvailability($item);
+        }
+        return $results;
+    }
+
+    public static function getAllCatalogSamples(): array
+    {
+        return OttCatalogRegistry::getAllSamples();
+    }
+
     public static function searchNetflixGraphAPI($query, $clientId, $refreshToken)
     {
         if (empty(trim((string) $query))) {
@@ -450,25 +437,25 @@ class OttSyncService
         }
 
         $canonical = self::toDbProviderKey($provider);
+        $norm = self::normalizePlatformKey($provider);
 
+        // Buscar estrictamente en títulos ya catalogados del proveedor específico (NUNCA provider = 'local')
         $titles = DB::table('titles')
-            ->where(function ($q) use ($canonical, $provider) {
+            ->where(function ($q) use ($canonical, $provider, $norm) {
                 $q->where('provider', $canonical)
-                  ->orWhere('provider', $provider)
-                  ->orWhere('provider', 'local');
+                  ->orWhere('provider', $provider);
+                if ($norm) $q->orWhere('provider', $norm);
             })
             ->where(function ($q) use ($cleanQ) {
                 $q->where('name', 'like', "%{$cleanQ}%")
-                  ->orWhere('description', 'like', "%{$cleanQ}%")
                   ->orWhere('sort_title', 'like', "%{$cleanQ}%")
-                  ->orWhere('slug', 'like', "%{$cleanQ}%");
+                  ->orWhere('slug', 'like', "%" . Str::slug($cleanQ) . "%");
             })
             ->orderByRaw("CASE 
                 WHEN name LIKE ? THEN 1 
                 WHEN name LIKE ? THEN 2 
-                WHEN sort_title LIKE ? THEN 3 
-                ELSE 4 
-            END ASC, id DESC", ["{$cleanQ}%", "%{$cleanQ}%", "%{$cleanQ}%"])
+                ELSE 3 
+            END ASC, id DESC", ["{$cleanQ}%", "%{$cleanQ}%"])
             ->limit(30)
             ->get();
 
@@ -480,7 +467,7 @@ class OttSyncService
                 $streamPath = $t->stream_path ?: "/storage/media/{$provider}/{$slugTitle}.mp4";
                 $platformName = strtoupper($provider === 'hbo_max' ? 'Max (HBO)' : ($provider === 'disney' || $provider === 'disney_plus' ? 'Disney+' : $provider));
 
-                return [
+                $res = [
                     'id'                => (string) $t->id,
                     'unique_id'         => 'db_' . $t->id,
                     'title'             => $t->name,
@@ -503,70 +490,17 @@ class OttSyncService
                     'file_path'         => $streamPath,
                     'status'            => 'Available',
                     'available'         => true,
+                    'is_already_downloaded' => true,
+                    'is_downloading'    => false,
+                    'is_in_queue'       => false,
                 ];
+                self::crossReferenceAvailability($res);
+                return $res;
             })->all();
         }
 
-        $media = DB::table('media_items')
-            ->where(function ($q) use ($canonical, $provider) {
-                $q->where('provider', $canonical)
-                  ->orWhere('provider', $provider)
-                  ->orWhere('provider', 'local');
-            })
-            ->where(function ($q) use ($cleanQ) {
-                $q->where('title', 'like', "%{$cleanQ}%")
-                  ->orWhere('original_title', 'like', "%{$cleanQ}%")
-                  ->orWhere('overview', 'like', "%{$cleanQ}%");
-            })
-            ->orderByRaw("CASE 
-                WHEN title LIKE ? THEN 1 
-                WHEN title LIKE ? THEN 2 
-                ELSE 3 
-            END ASC, id DESC", ["{$cleanQ}%", "%{$cleanQ}%"])
-            ->limit(30)
-            ->get();
-
-        if ($media->isNotEmpty()) {
-            return $media->map(function ($m) use ($provider) {
-                $slugTitle = Str::slug($m->title);
-                $posterUrl = $m->poster_url ?: "/storage/media/{$provider}/{$slugTitle}.jpg";
-                $streamPath = $m->file_path ?: "/storage/media/{$provider}/{$slugTitle}.mp4";
-                $type = ucfirst($m->type ?? 'Película');
-
-                return [
-                    'id'                => (string) $m->id,
-                    'unique_id'         => 'media_' . $m->id,
-                    'title'             => $m->title,
-                    'original_title'    => $m->title,
-                    'type'              => $type,
-                    'media_type'        => strtolower($m->type ?? '') === 'series' ? 'series' : 'movie',
-                    'year'              => (int) ($m->year ?? date('Y')),
-                    'poster'            => $posterUrl,
-                    'poster_url'        => $posterUrl,
-                    'poster_path'       => $posterUrl,
-                    'platform'          => strtoupper($provider),
-                    'provider'          => $provider,
-                    'quality'           => $m->quality_available ?? '4K HDR',
-                    'quality_available' => $m->quality_available ?? '4K HDR',
-                    'overview'          => $m->overview ?? '',
-                    'synopsis'          => $m->overview ?? '',
-                    'localFilePath'     => $streamPath,
-                    'filePath'          => $streamPath,
-                    'local_file_path'   => $streamPath,
-                    'file_path'         => $streamPath,
-                    'status'            => 'Available',
-                    'available'         => true,
-                ];
-            })->all();
-        }
-
-        // Si no existe el título en la plataforma conectada, devolver array vacío sin inventar
         return [];
     }
-
-    /**
-     * Búsqueda en el servidor de medios Emby conectado directamente
-     */
     public static function searchRemoteMediaServer(string $query, string $provider = 'netflix'): array
     {
         try {
@@ -739,61 +673,28 @@ class OttSyncService
             return [];
         }
 
-        $dbProviders = array_map(fn($p) => self::toDbProviderKey($p), $targetProvider ? [$targetProvider] : $connected);
+        $platformsToQuery = $targetProvider ? [$targetProvider] : $connected;
+        $results = [];
 
-        $titlesQuery = DB::table('titles')
-            ->whereIn('provider', $dbProviders);
+        foreach ($platformsToQuery as $platKey) {
+            $norm = self::normalizePlatformKey($platKey) ?: $platKey;
+            $items = OttCatalogRegistry::getPlatformSamples($norm);
 
-        if (!empty($filterType) && $filterType !== 'ALL') {
-            $titlesQuery->where('type', strtolower($filterType) === 'serie' ? 'series' : 'movie');
-        }
+            foreach ($items as $sample) {
+                if (!empty($filterType) && $filterType !== 'ALL') {
+                    $reqType = strtolower($filterType) === 'serie' ? 'series' : 'movie';
+                    if ($sample['media_type'] !== $reqType) {
+                        continue;
+                    }
+                }
 
-        $titles = $titlesQuery->orderBy('id', 'desc')->limit(60)->get();
-
-        if ($titles->isNotEmpty()) {
-            $items = $titles->map(function ($t) {
-                $slugTitle = Str::slug($t->name);
-                $posterUrl = $t->poster_url ?: "/storage/media/{$t->provider}/{$slugTitle}.jpg";
-                $type = ucfirst($t->type ?? 'Película');
-                $streamPath = $t->stream_path ?: "/storage/media/{$t->provider}/{$slugTitle}.mp4";
-                $platformName = strtoupper($t->provider === 'hbo_max' ? 'Max (HBO)' : ($t->provider === 'disney' || $t->provider === 'disney_plus' ? 'Disney+' : $t->provider));
-
-                return [
-                    'id'                => (string) $t->id,
-                    'unique_id'         => 'db_' . $t->id,
-                    'title'             => $t->name,
-                    'original_title'    => $t->sort_title ?: $t->name,
-                    'type'              => $type,
-                    'media_type'        => strtolower($type) === 'serie' ? 'series' : 'movie',
-                    'year'              => (int) ($t->release_year ?? date('Y')),
-                    'poster'            => $posterUrl,
-                    'poster_url'        => $posterUrl,
-                    'poster_path'       => $posterUrl,
-                    'platform'          => $platformName,
-                    'provider'          => $t->provider,
-                    'quality'           => '4K HDR',
-                    'quality_available' => '4K HDR',
-                    'overview'          => $t->description ?? "Contenido disponible en {$platformName}.",
-                    'synopsis'          => $t->description ?? '',
-                    'localFilePath'     => $streamPath,
-                    'filePath'          => $streamPath,
-                    'local_file_path'   => $streamPath,
-                    'file_path'         => $streamPath,
-                    'status'            => 'Available',
-                    'available'         => true,
-                ];
-            })->all();
-
-            foreach ($items as &$item) {
-                self::crossReferenceAvailability($item);
+                self::crossReferenceAvailability($sample);
+                $results[] = $sample;
             }
-
-            return $items;
         }
 
-        return [];
+        return $results;
     }
-
     public function clearCache(?string $provider = null): bool
     {
         $targetProvider = !empty($provider) && $provider !== 'all' ? Str::slug($provider, '_') : null;
@@ -1391,9 +1292,19 @@ class OttSyncService
             }
         }
 
+        $isDownloading = false;
+        if (isset($ottTask) && $ottTask && $ottTask->status === 'downloading') {
+            $isDownloading = true;
+        }
+
+        $item['is_already_downloaded'] = $isDownloaded;
+        $item['is_downloading'] = $isDownloading;
+        $item['is_in_queue'] = $isInQueue;
+        $item['available'] = $isDownloaded;
+
         if ($isDownloaded) {
             $item['status'] = 'En Catálogo';
-        } elseif ($isInQueue) {
+        } elseif ($isDownloading || $isInQueue) {
             $item['status'] = 'Descargando';
         } else {
             $item['status'] = 'Available';
