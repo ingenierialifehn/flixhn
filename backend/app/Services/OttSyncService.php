@@ -236,18 +236,146 @@ class OttSyncService
         }
     }
 
-    public static function searchRemoteOttCatalog(string $query, string $platform = 'netflix'): array
+        public static function resolvePlatformPackageKey(string $platform): string
     {
-        $results = OttCatalogRegistry::search($query, $platform);
-        foreach ($results as &$item) {
-            self::crossReferenceAvailability($item);
-        }
-        return $results;
+        $norm = self::normalizePlatformKey($platform) ?: strtolower(trim($platform));
+        $map = [
+            'netflix'        => 'nfx',
+            'disney'        => 'dnp',
+            'disney_plus'   => 'dnp',
+            'hbo_max'       => 'hbm',
+            'max'           => 'hbm',
+            'amazon_prime'  => 'prv',
+            'prime_video'   => 'prv',
+            'apple_tv'      => 'atp',
+            'apple_tv_plus'  => 'atp',
+            'paramount'      => 'pmt',
+            'paramount_plus' => 'pmt',
+        ];
+        return $map[$norm] ?? 'nfx';
     }
 
-    public static function getAllCatalogSamples(): array
+    public static function resolveCountryForPlatform(string $platform): string
     {
-        return OttCatalogRegistry::getAllSamples();
+        try {
+            $account = OttProviderAccount::where('status', 'connected')
+                ->where('provider', $platform)
+                ->first();
+            if ($account && !empty($account->session_metadata['region'])) {
+                $region = strtoupper((string) $account->session_metadata['region']);
+                if (str_contains($region, 'HN')) return 'HN';
+                if (str_contains($region, 'US')) return 'US';
+                if (str_contains($region, 'ES')) return 'ES';
+                if (str_contains($region, 'MX')) return 'MX';
+            }
+        } catch (\Throwable $e) {}
+        return 'HN';
+    }
+
+
+    public static function searchRemoteOttCatalog(string $query, string $platform = 'netflix'): array
+    {
+        $cleanQ = trim($query);
+        if ($cleanQ === '') {
+            return [];
+        }
+
+        $normPlatform = self::normalizePlatformKey($platform) ?: 'netflix';
+        $pkg = self::resolvePlatformPackageKey($normPlatform);
+        $country = self::resolveCountryForPlatform($normPlatform);
+
+        $gql = 'query GetSearchTitles($country: Country!, $searchFilter: TitleFilter!) { popularTitles(country: $country, filter: $searchFilter, first: 20) { edges { node { id objectId objectType content(country: $country, language: "es") { title originalTitle originalReleaseYear shortDescription posterUrl } } } } }';
+        $items = [];
+
+        try {
+            $resp = Http::timeout(8)
+                ->withHeaders([
+                    'Content-Type' => 'application/json',
+                    'User-Agent'   => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                ])
+                ->post('https://apis.justwatch.com/graphql', [
+                    'query'     => $gql,
+                    'variables' => [
+                        'country'      => $country,
+                        'searchFilter' => [
+                            'searchQuery' => $cleanQ,
+                            'packages'    => [$pkg],
+                        ],
+                    ],
+                ]);
+
+            if (!$resp->successful() && $country !== 'US') {
+                $resp = Http::timeout(8)
+                    ->withHeaders([
+                        'Content-Type' => 'application/json',
+                        'User-Agent'   => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    ])
+                    ->post('https://apis.justwatch.com/graphql', [
+                        'query'     => $gql,
+                        'variables' => [
+                            'country'      => 'US',
+                            'searchFilter' => [
+                                'searchQuery' => $cleanQ,
+                                'packages'    => [$pkg],
+                            ],
+                        ],
+                    ]);
+            }
+
+            if ($resp->successful()) {
+                $edges = data_get($resp->json(), 'data.popularTitles.edges', []);
+                if (is_array($edges)) {
+                    foreach ($edges as $edge) {
+                        $node = $edge['node'] ?? null;
+                        if (!$node) continue;
+
+                        $content = $node['content'] ?? [];
+                        $title = trim((string)($content['title'] ?? ''));
+                        if ($title === '') continue;
+
+                        $origTitle = (string)($content['originalTitle'] ?? $title);
+                        $objectId = (string)($node['objectId'] ?? $node['id'] ?? uniqid());
+                        $objType = strtolower((string)($node['objectType'] ?? 'movie'));
+                        $mediaType = str_contains($objType, 'show') || str_contains($objType, 'series') || $objType === 'tv' ? 'series' : 'movie';
+                        $year = (int)($content['originalReleaseYear'] ?? date('Y'));
+                        $desc = (string)($content['shortDescription'] ?? '');
+
+                        $posterUrl = (string)($content['posterUrl'] ?? '');
+                        $poster = '';
+                        if ($posterUrl !== '') {
+                            $poster = 'https://images.justwatch.com' . str_replace(['{profile}', '.{format}'], ['s592', '.jpg'], $posterUrl);
+                        }
+
+                        $item = [
+                            'id'             => 'ott_' . $normPlatform . '_' . $objectId,
+                            'unique_id'      => 'ott_' . $normPlatform . '_' . $objectId,
+                            'title'          => $title,
+                            'original_title' => $origTitle,
+                            'type'           => $mediaType,
+                            'media_type'     => $mediaType,
+                            'year'           => $year,
+                            'poster'         => $poster,
+                            'poster_url'     => $poster,
+                            'platform'       => $normPlatform,
+                            'provider'       => $normPlatform,
+                            'overview'       => $desc,
+                            'synopsis'       => $desc,
+                            'description'    => $desc,
+                            'status'         => 'remote_catalog',
+                            'available'      => false,
+                            'localFilePath'  => null,
+                        ];
+
+                        self::crossReferenceAvailability($item);
+                        $items[] = $item;
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::warning("OttSyncService searchRemoteOttCatalog exception [{$normPlatform}]: " . $e->getMessage());
+        }
+
+        return $items;
     }
 
     public static function searchNetflixGraphAPI($query, $clientId, $refreshToken)
@@ -668,7 +796,7 @@ class OttSyncService
 
         $targetProvider = self::normalizePlatformKey($provider);
 
-        // Si se solicitó un proveedor específico que NO está conectado en DB, devolver vacío
+        // Si se solicito un proveedor especifico que NO esta conectado en DB, devolver vacio
         if ($targetProvider !== null && !in_array($targetProvider, $connected, true)) {
             return [];
         }
@@ -678,23 +806,100 @@ class OttSyncService
 
         foreach ($platformsToQuery as $platKey) {
             $norm = self::normalizePlatformKey($platKey) ?: $platKey;
-            $items = OttCatalogRegistry::getPlatformSamples($norm);
+            $pkg = self::resolvePlatformPackageKey($norm);
+            $country = self::resolveCountryForPlatform($norm);
 
-            foreach ($items as $sample) {
-                if (!empty($filterType) && $filterType !== 'ALL') {
-                    $reqType = strtolower($filterType) === 'serie' ? 'series' : 'movie';
-                    if ($sample['media_type'] !== $reqType) {
-                        continue;
+            $gql = 'query GetPopularTitles($country: Country!, $filter: TitleFilter!) { popularTitles(country: $country, filter: $filter, first: 24) { edges { node { id objectId objectType content(country: $country, language: "es") { title originalTitle originalReleaseYear shortDescription posterUrl } } } } }';
+
+            try {
+                $resp = Http::timeout(8)
+                    ->withHeaders([
+                        'Content-Type' => 'application/json',
+                        'User-Agent'   => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    ])
+                    ->post('https://apis.justwatch.com/graphql', [
+                        'query'     => $gql,
+                        'variables' => [
+                            'country' => $country,
+                            'filter'  => [
+                                'packages' => [$pkg],
+                            ],
+                        ],
+                    ]);
+
+                $edges = data_get($resp->json(), 'data.popularTitles.edges', []);
+                if (is_array($edges)) {
+                    foreach ($edges as $edge) {
+                        $node = $edge['node'] ?? [];
+                        $content = $node['content'] ?? [];
+                        $title = trim((string)($content['title'] ?? ''));
+                        if ($title === '') continue;
+
+                        $origTitle = (string)($content['originalTitle'] ?? $title);
+                        $objectId = (string)($node['objectId'] ?? $node['id'] ?? uniqid());
+                        $objType = strtolower((string)($node['objectType'] ?? 'movie'));
+                        $isSeries = str_contains($objType, 'show') || str_contains($objType, 'series') || $objType === 'tv';
+                        $mediaType = $isSeries ? 'series' : 'movie';
+
+                        if (!empty($filterType) && $filterType !== 'ALL') {
+                            $reqType = strtolower($filterType) === 'serie' || strtolower($filterType) === 'series' ? 'series' : 'movie';
+                            if ($mediaType !== $reqType) {
+                                continue;
+                            }
+                        }
+
+                        $year = (int)($content['originalReleaseYear'] ?? date('Y'));
+                        $desc = (string)($content['shortDescription'] ?? '');
+
+                        $posterUrl = (string)($content['posterUrl'] ?? '');
+                        $poster = '';
+                        if ($posterUrl !== '') {
+                            $poster = 'https://images.justwatch.com' . str_replace(['{profile}', '.{format}'], ['s592', '.jpg'], $posterUrl);
+                        }
+
+                        $item = [
+                            'id'             => 'ott_' . $norm . '_' . $objectId,
+                            'unique_id'      => 'ott_' . $norm . '_' . $objectId,
+                            'external_id'    => $objectId,
+                            'title'          => $title,
+                            'original_title' => $origTitle,
+                            'type'           => $mediaType,
+                            'media_type'     => $mediaType,
+                            'year'           => $year,
+                            'poster'         => $poster,
+                            'poster_url'     => $poster,
+                            'platform'       => $norm,
+                            'provider'       => $norm,
+                            'overview'       => $desc,
+                            'synopsis'       => $desc,
+                            'description'    => $desc,
+                            'status'         => 'remote_catalog',
+                            'available'      => false,
+                            'localFilePath'  => null,
+                        ];
+
+                        self::crossReferenceAvailability($item);
+                        $results[] = $item;
                     }
                 }
-
-                self::crossReferenceAvailability($sample);
-                $results[] = $sample;
+            } catch (\Throwable $e) {
+                Log::warning("OttSyncService getAvailableCatalog exception [{$norm}]: " . $e->getMessage());
             }
         }
 
         return $results;
     }
+
+    public function getAllCatalogSamples(): array
+    {
+        $connected = self::getActiveConnectedPlatforms();
+        $result = [];
+        foreach ($connected as $prov) {
+            $result[$prov] = self::getAvailableCatalog($prov);
+        }
+        return $result;
+    }
+
     public function clearCache(?string $provider = null): bool
     {
         $targetProvider = !empty($provider) && $provider !== 'all' ? Str::slug($provider, '_') : null;
