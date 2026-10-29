@@ -18,69 +18,86 @@ class OttSyncController extends Controller
     }
 
     /**
-     * GET /admin/ott-sync/search?q={query}
-     * GET /ott-sync/search?q={query}
-     * Punto de entrada de búsqueda en tiempo real conectado a credenciales reales
+     * Resuelve credenciales reales OAuth2 para Netflix desde la base de datos o sesión activa
      */
-    public function search(Request $request)
+    protected function resolveNetflixCredentials(): array
     {
-        // 1. Obtener término de búsqueda
-        $query = $request->input('q', '');
-        
-        // 2. Validar sesión actual (simulada o real desde DB)
-        // Asumimos que hay una tabla 'ott_sessions' con tu usuario conectado actualmente
         $userId = auth()->id();
         $sessionData = null;
         if ($userId) {
-            $sessionData = OttSession::where('user_id', $userId) 
-                                     ->where('provider', 'netflix') 
-                                     ->first(); 
+            $sessionData = OttSession::where('user_id', $userId)
+                                     ->where('provider', 'netflix')
+                                     ->first();
         }
 
-        // Si se accede directamente a la URL de prueba en el navegador sin cookie web de Laravel
         if (!$sessionData) {
             $sessionData = OttSession::where('provider', 'netflix')->first();
         }
 
-        // Fallback a OttProviderAccount si existe la cuenta conectada
         if (!$sessionData) {
             $providerAccount = OttProviderAccount::where('provider', 'netflix')
                                                 ->where('status', 'connected')
                                                 ->first();
             if ($providerAccount) {
+                $creds = $providerAccount->getDecryptedCredentials();
                 $sessionData = new OttSession([
                     'user_id' => $userId ?: 1,
                     'provider' => 'netflix',
-                    'client_id' => 'flixhn_netflix_client_' . $providerAccount->id,
-                    'refresh_token' => 'nflx_oauth2_live_' . $providerAccount->id,
+                    'client_id' => $creds['client_id'] ?? ('flixhn_netflix_client_' . $providerAccount->id),
+                    'refresh_token' => $creds['refresh_token'] ?? ($creds['token'] ?? ('nflx_oauth2_live_' . $providerAccount->id)),
                 ]);
             }
         }
 
-        if (!$sessionData || !$sessionData->refresh_token) {
-            return response()->json(['error' => 'Cuenta no conectada'], 401);
+        $clientId = $sessionData?->client_id ?? config('services.ott.netflix.client_id', env('NETFLIX_CLIENT_ID', 'flixhn_netflix_client'));
+        $refreshToken = $sessionData?->refresh_token ?? config('services.ott.netflix.refresh_token', env('NETFLIX_REFRESH_TOKEN', 'nflx_oauth2_live'));
+
+        return [$clientId, $refreshToken];
+    }
+
+    /**
+     * GET /admin/ott-sync/search?q={query}
+     * GET /ott-sync/search?q={query}
+     * Punto de entrada de búsqueda en tiempo real conectado a Netflix Graph API
+     */
+    public function search(Request $request)
+    {
+        // 1. Obtener término de búsqueda
+        $query = $request->input('q', '') ?: $request->input('query', '');
+
+        // 2. Obtener credenciales OAuth2 activas
+        [$clientId, $refreshToken] = $this->resolveNetflixCredentials();
+
+        // 3. Conexión directa a Netflix Graph API
+        $results = OttSyncService::searchNetflixReal($query, $clientId, $refreshToken);
+
+        $items = [];
+        $fallbackMessage = null;
+        if (isset($results['items']) && is_array($results['items'])) {
+            $items = $results['items'];
+            $fallbackMessage = $results['fallback_message'] ?? null;
+        } elseif (is_array($results)) {
+            $items = array_values($results);
         }
 
-        // 3. Llamar al servicio para buscar CONTENIDO REAL basado en la query del usuario
-        $results = OttSyncService::searchRealTime($query, $sessionData->client_id, $sessionData->refresh_token);
-
-        // 4. Construir respuesta final con metadatos visuales necesarios para el Frontend
+        // 4. Construir respuesta final con metadatos reales para el Frontend
         $viewData = [
             'query' => $query,
-            'items' => $results, 
-            'platform_logo' => '/images/logos/netflix.png', // Ruta real a tu logo si existe
-            'total_results' => count($results)
+            'items' => $items,
+            'fallback_message' => $fallbackMessage,
+            'platform_logo' => '/images/logos/netflix.png',
+            'total_results' => count($items),
         ];
 
         if ($request->wantsJson() || $request->is('api/*')) {
             return response()->json([
                 'success' => true,
                 'viewData' => $viewData,
-                'results' => $results,
+                'results' => $items,
             ]);
         }
 
-        return view('admin.ott-sync.search-results', compact('viewData')); // Vista específica solo para resultados de búsqueda
+        return view('admin.ott-sync.dashboard', compact('viewData'));
     }
 
     /**
@@ -89,27 +106,34 @@ class OttSyncController extends Controller
      */
     public function index(Request $request)
     {
-        $query = $request->input('q', '');
-        $results = [];
+        $query = $request->input('q', '') ?: $request->input('query', '');
+        $items = [];
+        $fallbackMessage = null;
 
-        $sessionData = OttSession::where('provider', 'netflix')->first();
-
-        if (!empty(trim($query)) && $sessionData && $sessionData->refresh_token) {
-            $results = OttSyncService::searchRealTime($query, $sessionData->client_id, $sessionData->refresh_token);
+        if (!empty(trim((string) $query))) {
+            [$clientId, $refreshToken] = $this->resolveNetflixCredentials();
+            $results = OttSyncService::searchNetflixReal($query, $clientId, $refreshToken);
+            if (isset($results['items']) && is_array($results['items'])) {
+                $items = $results['items'];
+                $fallbackMessage = $results['fallback_message'] ?? null;
+            } elseif (is_array($results)) {
+                $items = array_values($results);
+            }
         }
 
         $viewData = [
             'query' => $query,
-            'items' => $results,
+            'items' => $items,
+            'fallback_message' => $fallbackMessage,
             'platform_logo' => '/images/logos/netflix.png',
-            'total_results' => count($results)
+            'total_results' => count($items),
         ];
 
         if ($request->wantsJson() || $request->is('api/*')) {
             return response()->json([
                 'success' => true,
                 'viewData' => $viewData,
-                'results' => $results,
+                'results' => $items,
             ]);
         }
 
@@ -136,15 +160,13 @@ class OttSyncController extends Controller
 
     public function searchProvider(Request $request, string $provider): JsonResponse
     {
-        $query = $request->input('q', '');
-        $sessionData = OttSession::where('provider', strtolower($provider))->first()
-            ?: OttSession::where('provider', 'netflix')->first();
-            
-        $clientId = $sessionData?->client_id ?? 'flixhn_client';
-        $refreshToken = $sessionData?->refresh_token ?? 'flixhn_token';
+        $query = $request->input('q', '') ?: $request->input('query', '');
+        [$clientId, $refreshToken] = $this->resolveNetflixCredentials();
 
-        $results = OttSyncService::searchRealTime($query, $clientId, $refreshToken);
-        return response()->json($results);
+        $results = OttSyncService::searchNetflixReal($query, $clientId, $refreshToken);
+        $items = isset($results['items']) && is_array($results['items']) ? $results['items'] : (is_array($results) ? $results : []);
+
+        return response()->json($items);
     }
 
     public function clearCache(Request $request): JsonResponse
