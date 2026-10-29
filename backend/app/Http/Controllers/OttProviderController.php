@@ -342,14 +342,7 @@ class OttProviderController extends Controller
     {
         try {
             $query = trim((string) ($request->query('q') ?: $request->query('query', '')));
-            $results = $this->ottService->searchRemoteCatalog($query, $provider);
-
-            if (empty($results) && !empty($query)) {
-                $results = app(OttSyncController::class)->searchProvider($request, $provider)->getData(true);
-                if (isset($results['results'])) {
-                    $results = $results['results'];
-                }
-            }
+            $results = OttSyncService::searchReal($query, $provider);
 
             // Asegurar formato compatible con array directo o envuelto
             if ($request->query('format') === 'wrapped') {
@@ -371,7 +364,7 @@ class OttProviderController extends Controller
     /**
      * GET /api/admin/ott-providers/search
      * GET /api/v1/search
-     * Búsqueda en el catálogo remoto de plataformas conectadas o TMDb.
+     * Búsqueda en el catálogo remoto de plataformas conectadas.
      */
     public function search(Request $request): JsonResponse
     {
@@ -379,14 +372,7 @@ class OttProviderController extends Controller
             $query = trim((string) ($request->query('query') ?: $request->query('q', '')));
             $provider = $request->query('provider') ?: $request->query('platform');
 
-            $results = $this->ottService->searchRemoteCatalog($query, $provider);
-
-            if (empty($results) && !empty($query)) {
-                $results = app(OttSyncController::class)->search($request)->getData(true);
-                if (isset($results['results'])) {
-                    $results = $results['results'];
-                }
-            }
+            $results = OttSyncService::searchReal($query, $provider ? (string) $provider : null);
 
             // Si se solicita formato envuelto
             if ($request->query('format') === 'wrapped') {
