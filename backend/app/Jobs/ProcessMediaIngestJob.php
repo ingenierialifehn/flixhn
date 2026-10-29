@@ -240,39 +240,54 @@ class ProcessMediaIngestJob implements ShouldQueue
             }
             @chmod($dir, 0777);
 
-            // Si el archivo ya existe y supera 1 MB (1048576 bytes), no requiere regenerarse
-            if (File::exists($diskPath) && @filesize($diskPath) > 1048576) {
+            // Si el archivo ya existe y supera 1.5 MB y no es un archivo corrompido de sine
+            if (File::exists($diskPath) && @filesize($diskPath) > 1572864) {
                 return;
             }
 
-            // Si existe un archivo anterior pero es un clip corto (< 1 MB) o corrupto, removerlo
             if (File::exists($diskPath)) {
                 @unlink($diskPath);
             }
 
             $downloaded = false;
-            $candidates = $this->resolveRealVideoCandidates($task?->title, $task?->source_url);
+            $title = trim($task?->title ?? '');
+            $provider = strtolower(trim($task?->provider ?? 'netflix'));
+            $escapedOut = escapeshellarg($diskPath);
 
-            foreach ($candidates as $candidateUrl) {
-                if (empty($candidateUrl)) continue;
+            // 1. Descarga prioritaria con yt-dlp usando búsquedas del contenido oficial en HD
+            if (!empty($title)) {
+                $searchQueries = [
+                    "ytsearch1:{$title} {$provider} trailer oficial",
+                    "ytsearch1:{$title} trailer oficial espanol",
+                    "ytsearch1:{$title} {$provider} trailer",
+                ];
 
-                $escapedUrl = escapeshellarg($candidateUrl);
-                $escapedOut = escapeshellarg($diskPath);
+                foreach ($searchQueries as $sq) {
+                    $cmd = "yt-dlp --newline --no-colors -f 'best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best' --no-playlist -o {$escapedOut} " . escapeshellarg($sq) . " 2>&1";
+                    Log::info("ProcessMediaIngestJob: Descargando con yt-dlp [{$sq}] hacia {$diskPath}");
+                    @shell_exec($cmd);
 
-                // Ejecución con User-Agent de navegador para evitar rechazos HTTP 500/503
-                @shell_exec("curl -L --fail --max-time 120 -s -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) FlixHN/2.0' -o {$escapedOut} {$escapedUrl} 2>&1");
-
-                if (File::exists($diskPath) && @filesize($diskPath) > 1048576) {
-                    $downloaded = true;
-                    Log::info("ProcessMediaIngestJob: Película/Video HD real descargado exitosamente para '{$diskPath}' (" . filesize($diskPath) . " bytes) desde: {$candidateUrl}");
-                    break;
+                    if (File::exists($diskPath) && @filesize($diskPath) > 1048576) {
+                        $downloaded = true;
+                        Log::info("ProcessMediaIngestJob: Video HD auténtico descargado exitosamente para '{$diskPath}' (" . filesize($diskPath) . " bytes)");
+                        break;
+                    }
                 }
             }
 
-            // Fallback de contingencia (en caso de corte de internet exterior): generar video 1080p con fondo oscuro FlixHN (#141414), nunca Bunny
+            // 2. Si falló yt-dlp de búsqueda y hay una URL de origen válida externa directa
+            if (!$downloaded && !empty($task?->source_url) && filter_var($task->source_url, FILTER_VALIDATE_URL) && !str_contains($task->source_url, 'netflix.com')) {
+                $escapedUrl = escapeshellarg($task->source_url);
+                @shell_exec("yt-dlp --newline --no-colors -f 'best[ext=mp4]/best' --no-playlist -o {$escapedOut} {$escapedUrl} 2>&1");
+                if (File::exists($diskPath) && @filesize($diskPath) > 1048576) {
+                    $downloaded = true;
+                }
+            }
+
+            // 3. Fallback de contingencia: NUNCA usar beep/sine molesto; usar yt-dlp con trailer general de Netflix HD
             if (!$downloaded || !File::exists($diskPath) || @filesize($diskPath) <= 1048576) {
-                $escapedOut = escapeshellarg($diskPath);
-                @shell_exec("ffmpeg -y -f lavfi -i color=c=0x141414:s=1920x1080:rate=30:duration=60 -f lavfi -i sine=frequency=220:duration=60 -c:v libx264 -preset ultrafast -b:v 2500k -pix_fmt yuv420p -c:a aac -b:a 192k -movflags +faststart {$escapedOut} 2>&1");
+                Log::warning("ProcessMediaIngestJob: Descargando trailer general Netflix HD como contingencia para '{$diskPath}'");
+                @shell_exec("yt-dlp --newline --no-colors -f 'best[ext=mp4]/best' --no-playlist -o {$escapedOut} 'ytsearch1:netflix pelicula estreno trailer oficial' 2>&1");
             }
 
             if (File::exists($diskPath)) {

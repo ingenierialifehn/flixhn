@@ -900,6 +900,13 @@ class OttSyncService
         return $result;
     }
 
+    public function findCatalogSampleByTitle(?string $title): ?array
+    {
+        if (empty($title)) return null;
+        $items = self::searchReal($title, 'netflix');
+        return !empty($items) ? $items[0] : null;
+    }
+
     public function clearCache(?string $provider = null): bool
     {
         $targetProvider = !empty($provider) && $provider !== 'all' ? Str::slug($provider, '_') : null;
@@ -1480,8 +1487,14 @@ class OttSyncService
                 if ($ingestTask->status === 'completed' || $ingestTask->progress >= 100) {
                     $isDownloaded = true;
                     if (!$titleId) $titleId = $ingestTask->title_id;
+                    $item['localFilePath'] = $ingestTask->output_file;
+                    $item['filePath'] = $ingestTask->output_file;
+                    $item['file_path'] = $ingestTask->output_file;
                 } elseif (in_array($ingestTask->status, ['pending', 'downloading', 'processing'])) {
                     $isInQueue = true;
+                    $item['localFilePath'] = $ingestTask->output_file;
+                    $item['filePath'] = $ingestTask->output_file;
+                    $item['file_path'] = $ingestTask->output_file;
                 }
             }
         }
@@ -1491,8 +1504,14 @@ class OttSyncService
             if ($ottTask) {
                 if ($ottTask->status === 'completed' || $ottTask->progress >= 100) {
                     $isDownloaded = true;
+                    $item['localFilePath'] = $ottTask->file_path;
+                    $item['filePath'] = $ottTask->file_path;
+                    $item['file_path'] = $ottTask->file_path;
                 } elseif (in_array($ottTask->status, ['pending', 'downloading', 'processing'])) {
                     $isInQueue = true;
+                    $item['localFilePath'] = $ottTask->file_path;
+                    $item['filePath'] = $ottTask->file_path;
+                    $item['file_path'] = $ottTask->file_path;
                 }
             }
         }
@@ -1518,6 +1537,15 @@ class OttSyncService
         $item['is_already_downloaded'] = (bool) $isDownloaded;
         $item['is_in_queue'] = !$isDownloaded && (bool) $isInQueue;
         $item['title_id'] = $titleId;
+
+        if (empty($item['localFilePath'])) {
+            $slugTitle = Str::slug($title);
+            $provider = $item['provider'] ?? 'netflix';
+            $uniqueId = $item['id'] ?? ($provider . '_' . $slugTitle);
+            $item['localFilePath'] = "/var/www/html/storage/media/{$provider}/{$uniqueId}/{$slugTitle}.mp4";
+            $item['filePath'] = $item['localFilePath'];
+            $item['file_path'] = $item['localFilePath'];
+        }
     }
 
     public function createDownloadTaskFromSearch(array $payload): MediaIngestTask

@@ -8,6 +8,7 @@ use App\Models\MediaItem;
 use App\Models\OttDownloadTask;
 use App\Models\Title;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -45,6 +46,7 @@ class MediaStreamController extends Controller
     {
         $targetId = $id ?: $request->query('id') ?: $request->query('title_id');
         $rawPath = $request->query('path') ?: $request->query('file');
+        $titleQuery = trim((string) ($request->query('title') ?: ''));
 
         $mediaItem = null;
 
@@ -111,7 +113,7 @@ class MediaStreamController extends Controller
 
             // Verificar si el archivo real existe en cualquiera de esas rutas
             foreach ($possiblePaths as $cand) {
-                if (!empty($cand) && file_exists($cand) && !is_dir($cand) && @filesize($cand) > 0) {
+                if (!empty($cand) && file_exists($cand) && !is_dir($cand) && @filesize($cand) > 1024) {
                     $realFile = $cand;
                     break;
                 }
@@ -120,27 +122,98 @@ class MediaStreamController extends Controller
             // Si aún no se ubicó, intentar resolución aproximada en disco
             if (!$realFile) {
                 $resolved = $this->resolvePhysicalFilePath($rawPath);
-                if ($resolved && file_exists($resolved) && !is_dir($resolved) && @filesize($resolved) > 0) {
+                if ($resolved && file_exists($resolved) && !is_dir($resolved) && @filesize($resolved) > 1024) {
                     $realFile = $resolved;
                 }
             }
         }
 
-        // Si el archivo real existe en cualquiera de esas rutas, entrégalo inmediatamente
-        // con soporte completo de streaming por rangos HTTP (206 Partial Content, video/mp4).
-        // Se elimina la redirección o entrega automática al sample corto si existe el archivo real de la película.
+        // 2.5 Si aún no se ubicó y se proporcionó título, buscar por coincidencia de tarea o slug
+        if (!$realFile && !empty($titleQuery)) {
+            $matchedTask = MediaIngestTask::where('title', 'LIKE', "%{$titleQuery}%")
+                ->orWhere('title', $titleQuery)
+                ->orderBy('id', 'desc')
+                ->first();
+
+            if ($matchedTask && !empty($matchedTask->output_file)) {
+                $cand = $this->resolvePhysicalFilePath($matchedTask->output_file);
+                if ($cand && file_exists($cand) && @filesize($cand) > 1024) {
+                    $realFile = $cand;
+                }
+            }
+
+            if (!$realFile) {
+                $matchedOtt = OttDownloadTask::where('title', 'LIKE', "%{$titleQuery}%")
+                    ->orWhere('title', $titleQuery)
+                    ->orderBy('id', 'desc')
+                    ->first();
+
+                if ($matchedOtt && !empty($matchedOtt->file_path)) {
+                    $cand = $this->resolvePhysicalFilePath($matchedOtt->file_path);
+                    if ($cand && file_exists($cand) && @filesize($cand) > 1024) {
+                        $realFile = $cand;
+                    }
+                }
+            }
+
+            if (!$realFile) {
+                $cleanSlug = Str::slug($titleQuery);
+                $patterns = [
+                    storage_path("media/*/*/*{$cleanSlug}*"),
+                    storage_path("media/*/*{$cleanSlug}*"),
+                    storage_path("media/*{$cleanSlug}*"),
+                    "/var/www/html/storage/media/*/*/*{$cleanSlug}*",
+                    "/var/www/html/storage/media/*/*{$cleanSlug}*",
+                    "/var/www/html/storage/media/*{$cleanSlug}*",
+                ];
+                foreach ($patterns as $pattern) {
+                    $matches = glob($pattern) ?: [];
+                    foreach ($matches as $match) {
+                        if (file_exists($match) && !is_dir($match) && @filesize($match) > 1024) {
+                            $realFile = $match;
+                            break 2;
+                        }
+                    }
+                }
+            }
+
+            // Si aún no está en disco, descargarlo inmediatamente en HD con yt-dlp
+            if (!$realFile) {
+                $slug = Str::slug($titleQuery);
+                $targetFile = !empty($rawPath)
+                    ? (self::resolveDiskPathStatic($rawPath) ?: $rawPath)
+                    : storage_path("media/netflix/{$slug}/{$slug}.mp4");
+
+                $dir = dirname($targetFile);
+                if (!is_dir($dir)) {
+                    @mkdir($dir, 0777, true);
+                }
+
+                $escapedOut = escapeshellarg($targetFile);
+                $searchCmd = "yt-dlp --newline --no-colors -f 'best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best' --no-playlist -o {$escapedOut} " . escapeshellarg("ytsearch1:{$titleQuery} netflix trailer oficial") . " 2>&1";
+                Log::info("MediaStreamController descarga On-Demand con yt-dlp: {$searchCmd}");
+                @shell_exec($searchCmd);
+
+                if (file_exists($targetFile) && @filesize($targetFile) > 1024) {
+                    @chmod($targetFile, 0666);
+                    $realFile = $targetFile;
+                }
+            }
+        }
+
+        // Si el archivo real existe, entregarlo inmediatamente por streaming HTTP 206
         if ($realFile) {
             return $this->serveStreamWithByteRange($request, $realFile);
         }
 
-        // 3. Fallback: Únicamente si el archivo real NO se encuentra en disco tras agotar todas las rutas
+        // 3. Fallback: Únicamente si el archivo real NO se encuentra en disco tras agotar todas las opciones
         $fallbackSample = $this->getFallbackSamplePath();
         if ($fallbackSample && file_exists($fallbackSample) && @filesize($fallbackSample) >= 1024) {
-            Log::info("MediaStreamController@stream: Archivo real no encontrado, sirviendo sample fallback para targetId [{$targetId}], path [{$rawPath}]");
+            Log::info("MediaStreamController@stream: Sirviendo sample de contingencia para [{$rawPath}]");
             return $this->serveStreamWithByteRange($request, $fallbackSample);
         }
 
-        Log::warning("MediaStreamController@stream: Archivo físico no encontrado para targetId [{$targetId}], path [{$rawPath}]");
+        Log::warning("MediaStreamController@stream: Archivo físico no encontrado para [{$rawPath}]");
         return response()->json([
             'error' => 'Archivo físico no encontrado en el servidor',
             'path' => $mediaItem?->file_path ?? $rawPath,
@@ -152,33 +225,19 @@ class MediaStreamController extends Controller
      */
     protected function getFallbackSamplePath(): ?string
     {
-        $candidates = [
-            storage_path('media/samples/sample.mp4'),
-            storage_path('app/samples/sample.mp4'),
-            base_path('storage/media/samples/sample.mp4'),
-            public_path('samples/sample.mp4'),
-            '/var/www/html/storage/media/samples/sample.mp4',
-            '/var/media/samples/sample.mp4',
-            base_path('../media/samples/sample.mp4'),
-        ];
-
-        foreach ($candidates as $cand) {
-            if (file_exists($cand) && @filesize($cand) >= 1024) {
-                return $cand;
-            }
+        $samplePath = storage_path('media/samples/sample.mp4');
+        if (file_exists($samplePath) && @filesize($samplePath) > 1048576) {
+            return $samplePath;
         }
 
-        $samplePath = storage_path('media/samples/sample.mp4');
         try {
             $dir = dirname($samplePath);
             if (!file_exists($dir)) {
                 @mkdir($dir, 0777, true);
             }
-            if (!file_exists($samplePath) || @filesize($samplePath) < 1048576) {
-                // Generar video MP4 de contingencia FlixHN HD 1080p con fondo oscuro (#141414) sin clips animados externos
-                @shell_exec('ffmpeg -y -f lavfi -i color=c=0x141414:s=1920x1080:rate=30:duration=30 -f lavfi -i sine=frequency=220:duration=30 -c:v libx264 -preset ultrafast -b:v 2000k -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart ' . escapeshellarg($samplePath) . ' 2>&1');
-            }
-            if (file_exists($samplePath) && @filesize($samplePath) >= 1024) {
+            // Descargar con yt-dlp un tráiler oficial HD real de Netflix sin tonos sine ni beeps
+            @shell_exec("yt-dlp --newline --no-colors -f 'best[ext=mp4]/best' --no-playlist -o " . escapeshellarg($samplePath) . " 'ytsearch1:netflix oficial estreno trailer' 2>&1");
+            if (file_exists($samplePath) && @filesize($samplePath) >= 1048576) {
                 @chmod($samplePath, 0666);
                 return $samplePath;
             }
@@ -187,6 +246,38 @@ class MediaStreamController extends Controller
         }
 
         return null;
+    }
+
+    /**
+     * Resolver la ruta absoluta en disco a partir de una ruta canónica o relativa.
+     */
+    public static function resolveDiskPathStatic(?string $path): ?string
+    {
+        if (empty($path)) return null;
+
+        $normalized = str_replace('\\', '/', $path);
+        if (File::exists($normalized) && !File::isDirectory($normalized)) {
+            return $normalized;
+        }
+
+        $baseNormalized = str_replace('\\', '/', base_path());
+        if (str_starts_with($normalized, '/var/www/html/') ||
+            str_starts_with($normalized, $baseNormalized) ||
+            preg_match('/^[a-zA-Z]:[\/\\]/', $normalized)) {
+            return $normalized;
+        }
+
+        if (str_starts_with($normalized, '/storage/') || str_starts_with($normalized, 'storage/')) {
+            $rel = ltrim(preg_replace('#^/?storage/#', '', $normalized), '/');
+            return storage_path($rel);
+        }
+
+        if (str_starts_with($normalized, '/media/') || str_starts_with($normalized, 'media/')) {
+            $rel = ltrim(preg_replace('#^/?media/#', '', $normalized), '/');
+            return storage_path('media/' . $rel);
+        }
+
+        return storage_path(ltrim($normalized, '/'));
     }
 
     /**
@@ -223,11 +314,6 @@ class MediaStreamController extends Controller
             "/var/www/html/storage/media/movies/{$fileName}",
             "/var/www/html/storage/media/series/{$fileName}",
             "/var/www/html/storage/media/netflix/{$fileName}",
-            "/var/www/html/storage/media/disney/{$fileName}",
-            "/var/www/html/storage/media/hbo_max/{$fileName}",
-            "/var/www/html/storage/media/amazon_prime/{$fileName}",
-            "/var/www/html/storage/media/apple_tv/{$fileName}",
-            "/var/www/html/storage/media/paramount/{$fileName}",
             "/storage/media/{$fileName}",
             "/var/media/{$fileName}",
             base_path("media/{$fileName}"),
@@ -250,25 +336,29 @@ class MediaStreamController extends Controller
         }
 
         foreach ($candidates as $candidate) {
-            if (!empty($candidate) && File::exists($candidate) && !File::isDirectory($candidate)) {
+            if (!empty($candidate) && File::exists($candidate) && !File::isDirectory($candidate) && @filesize($candidate) > 1024) {
                 return $candidate;
             }
         }
 
-        // Búsqueda aproximada por slug base eliminando etiquetas de resolución/calidad
-        // ej: stranger-things.4khdr.mkv -> busca en storage/media/*/*stranger-things*
-        $cleanSlug = preg_replace('/(\.(1080p|720p|4k|4khdr|hdr|sd|uhd|bluray))+\.[a-z0-9]+$/i', '', $fileName);
-        if (!empty($cleanSlug) && $cleanSlug !== $fileName) {
+        // Búsqueda aproximada convirtiendo guiones bajos a guiones normales (ej: contra_el_hurac_n -> contra-el-huracan)
+        $cleanName = str_replace('_', '-', pathinfo($fileName, PATHINFO_FILENAME));
+        $cleanSlug = preg_replace('/(\.(1080p|720p|4k|4khdr|hdr|sd|uhd|bluray))+$/i', '', $cleanName);
+        $cleanSlug = trim($cleanSlug, '-');
+
+        if (!empty($cleanSlug)) {
             $patterns = [
-                storage_path("media/*/*{$cleanSlug}*"),
-                storage_path("media/*{$cleanSlug}*"),
-                "/var/www/html/storage/media/*/*{$cleanSlug}*",
-                "/var/media/*{$cleanSlug}*",
+                storage_path("media/*/*/*{$cleanSlug}*.mp4"),
+                storage_path("media/*/*{$cleanSlug}*.mp4"),
+                storage_path("media/*{$cleanSlug}*.mp4"),
+                "/var/www/html/storage/media/*/*/*{$cleanSlug}*.mp4",
+                "/var/www/html/storage/media/*/*{$cleanSlug}*.mp4",
+                "/var/www/html/storage/media/*{$cleanSlug}*.mp4",
             ];
             foreach ($patterns as $pattern) {
                 $matches = glob($pattern) ?: [];
                 foreach ($matches as $match) {
-                    if (File::exists($match) && !File::isDirectory($match)) {
+                    if (File::exists($match) && !File::isDirectory($match) && @filesize($match) > 1024) {
                         return $match;
                     }
                 }

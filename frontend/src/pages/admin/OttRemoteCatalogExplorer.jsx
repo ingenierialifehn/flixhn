@@ -185,7 +185,7 @@ export default function OttRemoteCatalogExplorer({
     }
     const assignedProvider = resolveTargetProvider(item);
     const uniqueId = item.unique_id || item.id || `ott_${Date.now()}`;
-    const slug = (item.title || 'media').toLowerCase().replace(/[^a-z0-9]/g, '_');
+    const slug = (item.title || 'media').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
     const dynamicFilePath = item.localFilePath || item.filePath || item.local_file_path || item.file_path || `/var/www/html/storage/media/${assignedProvider}/${uniqueId}/${slug}.mp4`;
     const streamUrl = `/api/media/stream?path=${encodeURIComponent(dynamicFilePath)}&title=${encodeURIComponent(item.title || 'FlixHN')}`;
 
@@ -303,7 +303,7 @@ export default function OttRemoteCatalogExplorer({
   const handleQuickDownload = async (item) => {
     const assignedProvider = resolveTargetProvider(item);
     const uniqueId = item.unique_id || item.id || `ott_${Date.now()}`;
-    const slug = (item.title || 'media').toLowerCase().replace(/[^a-z0-9]/g, '_');
+    const slug = (item.title || 'media').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
     const dynamicFolder = `/storage/media/${assignedProvider}/${uniqueId}`;
     const dynamicFilePath = `/var/www/html/storage/media/${assignedProvider}/${uniqueId}/${slug}.mp4`;
 
@@ -357,6 +357,20 @@ export default function OttRemoteCatalogExplorer({
         overview: item.overview,
         year: item.year,
         id: item.id,
+      }).then((res) => {
+        const t = res?.data?.task;
+        if (t) {
+          const finalPath = t.output_file || t.file_path;
+          if (finalPath) {
+            setResults((prev) =>
+              prev.map((r) =>
+                r.id === item.id || r.title === item.title
+                  ? { ...r, localFilePath: finalPath, filePath: finalPath, file_path: finalPath, local_file_path: finalPath }
+                  : r
+              )
+            );
+          }
+        }
       }).catch(() => {});
     } catch {}
   };
@@ -634,7 +648,7 @@ export default function OttRemoteCatalogExplorer({
             // Clave crítica: Resolver filePath para reproducción On-Net local
             const assignedProvider = resolveTargetProvider(item);
             const uniqueId = item.unique_id || item.id || `ott_${Date.now()}`;
-            const slug = (item.title || 'media').toLowerCase().replace(/[^a-z0-9]/g, '_');
+            const slug = (item.title || 'media').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
             const filePath = item.localFilePath || item.filePath || item.local_file_path || item.file_path || `/var/www/html/storage/media/${assignedProvider}/${uniqueId}/${slug}.mp4`;
 
             return (

@@ -50,7 +50,8 @@ export default function OttPlayerModal({
 
   if (!isOpen || !media) return null;
 
-  const rawPath = media.localFilePath || media.filePath || media.local_file_path || media.file_path || `/var/www/html/storage/media/${media.provider || 'netflix'}/${media.unique_id || 'media'}/${(media.title || 'video').toLowerCase().replace(/[^a-z0-9]/g, '_')}.mp4`;
+  const cleanSlug = (media.title || 'video').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  const rawPath = media.localFilePath || media.filePath || media.local_file_path || media.file_path || `/var/www/html/storage/media/${media.provider || 'netflix'}/${media.unique_id || 'media'}/${cleanSlug}.mp4`;
   const streamUrl = media.streamUrl || `/api/media/stream?path=${encodeURIComponent(rawPath)}&title=${encodeURIComponent(media.title || 'FlixHN')}`;
   
   // Debug log para diagnóstico en consola del navegador
