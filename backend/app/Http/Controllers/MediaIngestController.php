@@ -250,11 +250,11 @@ class MediaIngestController extends Controller
     public function clearCompleted(): JsonResponse
     {
         try {
-            $deletedIngest = MediaIngestTask::where('status', 'completed')
+            $deletedIngest = MediaIngestTask::whereIn('status', ['completed', 'failed', 'cancelled'])
                 ->orWhere('progress', '>=', 100)
                 ->delete();
 
-            $deletedOtt = \App\Models\OttDownloadTask::where('status', 'completed')
+            $deletedOtt = \App\Models\OttDownloadTask::whereIn('status', ['completed', 'failed', 'cancelled'])
                 ->orWhere('progress', '>=', 100)
                 ->delete();
 

@@ -345,7 +345,9 @@ export default function OttSyncManagement({
       const saved = localStorage.getItem('flixhn_ott_tasks');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed) && !parsed.some((p) => p.title === 'Top Gun: Maverick' || p.title === 'Noche fatidica')) {
+          return parsed;
+        }
       }
     } catch {}
     return [];
@@ -546,69 +548,6 @@ export default function OttSyncManagement({
     }, 3000);
     return () => clearInterval(pollInterval);
   }, [loadOttData]);
-
-  /* -------------------------------------------------------------------------
-     SIMULACIÃ“N REACTIVA EN TIEMPO REAL CON NÃšMEROS DECIMALES Y VELOCIDAD
-     (Requerimiento 5: Micro-interacciones y Feedback tÃ©cnico avanzado)
-     ------------------------------------------------------------------------- */
-  useEffect(() => {
-    const hasDownloading = tasks.some((t) => t.status === 'downloading');
-    if (!hasDownloading) return;
-
-    const interval = setInterval(() => {
-      setTasks((prevTasks) => {
-        let anyCompleted = false;
-        const updated = prevTasks.map((t) => {
-          if (t.status !== 'downloading') return t;
-
-          const currentProg = typeof t.progress === 'number' ? t.progress : parseFloat(t.progress) || 12.0;
-          const delta = parseFloat((Math.random() * 4.8 + 3.1).toFixed(1));
-          const nextProg = parseFloat(Math.min(100, currentProg + delta).toFixed(1));
-
-          if (nextProg >= 100) {
-            anyCompleted = true;
-            const uniqueId = t.unique_id || t.id || 'ott_' + Date.now();
-            const slug = (t.title || 'media').toLowerCase().replace(/[^a-z0-9]/g, '_');
-            return {
-              ...t,
-              progress: 100.0,
-              status: 'completed',
-              download_speed: 'Completado',
-              eta: null,
-              file_path: t.file_path || `/var/www/html/storage/media/${t.provider || 'netflix'}/${uniqueId}/${slug}.mp4`,
-            };
-          }
-
-          const speeds = ['48.5 MB/s', '52.1 MB/s', '58.4 MB/s', '63.2 MB/s', '71.0 MB/s'];
-          const randomSpeed = speeds[Math.floor(Math.random() * speeds.length)];
-
-          return {
-            ...t,
-            progress: nextProg,
-            download_speed: randomSpeed,
-            eta: `${Math.max(1, Math.round((100 - nextProg) / 6))}s`,
-          };
-        });
-
-        try {
-          localStorage.setItem('flixhn_ott_tasks', JSON.stringify(updated));
-        } catch {}
-
-        if (anyCompleted) {
-          notifyCatalogUpdated({ action: 'task_completed' });
-          showToast(
-            'success',
-            'Descarga completada y almacenada en /storage/media. TÃ­tulo disponible en streaming local On-Net.',
-            'FlixGrab Ingesta'
-          );
-        }
-
-        return updated;
-      });
-    }, 850);
-
-    return () => clearInterval(interval);
-  }, [tasks, showToast]);
 
   // Recalcular mÃ©tricas en base al estado reactivo
   useEffect(() => {
@@ -880,7 +819,8 @@ export default function OttSyncManagement({
   };
 
   const handleDeleteTask = async (task) => {
-    const remaining = tasks.filter((t) => t.id !== task.id);
+    const targetId = task.id || task.unique_id || task.external_id;
+    const remaining = tasks.filter((t) => t.id !== task.id && t.title !== task.title);
     setTasks(remaining);
     try {
       localStorage.setItem('flixhn_ott_tasks', JSON.stringify(remaining));
@@ -888,25 +828,31 @@ export default function OttSyncManagement({
     showToast('success', `Tarea de '${task.title}' eliminada de la cola.`);
     try {
       await Promise.allSettled([
-        api.delete(`/admin/ott-providers/tasks/${task.id}`),
-        api.delete(`/admin/ingest/tasks/${task.id}`),
+        api.delete(`/admin/ott-providers/tasks/${targetId}`),
+        api.delete(`/admin/ingest/tasks/${targetId}`),
+        api.delete(`/ott-providers/tasks/${targetId}`),
+        api.delete(`/ingest/tasks/${targetId}`),
       ]);
+      await loadOttData(true);
     } catch {}
   };
 
   const handleClearCompleted = async () => {
-    const remaining = tasks.filter((t) => t.status !== 'completed' && Number(t.progress || 0) < 100);
+    const remaining = tasks.filter((t) => !['completed', 'failed', 'cancelled'].includes(t.status) && Number(t.progress || 0) < 100);
     const completedCount = tasks.length - remaining.length;
     setTasks(remaining);
     try {
       localStorage.setItem('flixhn_ott_tasks', JSON.stringify(remaining));
     } catch {}
-    showToast('info', `Se limpiaron ${completedCount} tareas completadas de la cola.`);
+    showToast('info', `Se limpiaron ${completedCount} tareas de la cola.`);
     try {
       await Promise.allSettled([
         api.post('/admin/ott-providers/tasks/clear-completed'),
         api.post('/admin/ingest/tasks/clear-completed'),
+        api.post('/ott-providers/tasks/clear-completed'),
+        api.post('/ingest/tasks/clear-completed'),
       ]);
+      await loadOttData(true);
     } catch {}
   };
 

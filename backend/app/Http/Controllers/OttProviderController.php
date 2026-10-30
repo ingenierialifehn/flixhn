@@ -527,10 +527,7 @@ class OttProviderController extends Controller
     public function deleteTask($id): JsonResponse
     {
         try {
-            $taskId = is_numeric($id) ? (int) $id : 0;
-            if ($taskId > 0) {
-                $this->ottService->deleteTask($taskId);
-            }
+            $this->ottService->deleteTask($id);
 
             return response()->json([
                 'success' => true,

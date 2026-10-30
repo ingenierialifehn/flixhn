@@ -317,9 +317,28 @@ Route::post('/telemetry/stop', [DeviceSessionController::class, 'stopPlayback'])
 Route::post('/ott-providers/download', [OttProviderController::class, 'download']);
 Route::get('/ott-providers/tasks', [OttProviderController::class, 'tasks']);
 Route::get('/ott-tasks', [OttProviderController::class, 'tasks']);
+Route::delete('/ott-providers/tasks/{id}', [OttProviderController::class, 'deleteTask']);
+Route::post('/ott-providers/tasks/clear-completed', [OttProviderController::class, 'clearCompleted']);
+Route::post('/ott-providers/tasks/{id}/retry', [OttProviderController::class, 'retryTask']);
+Route::post('/ott-providers/tasks/{id}/cancel', [OttProviderController::class, 'cancelTask']);
+
 Route::post('/admin/ott-providers/download', [OttProviderController::class, 'download']);
 Route::get('/admin/ott-providers/tasks', [OttProviderController::class, 'tasks']);
 Route::get('/admin/ott-tasks', [OttProviderController::class, 'tasks']);
+Route::delete('/admin/ott-providers/tasks/{id}', [OttProviderController::class, 'deleteTask']);
+Route::post('/admin/ott-providers/tasks/clear-completed', [OttProviderController::class, 'clearCompleted']);
+Route::post('/admin/ott-providers/tasks/{id}/retry', [OttProviderController::class, 'retryTask']);
+Route::post('/admin/ott-providers/tasks/{id}/cancel', [OttProviderController::class, 'cancelTask']);
+
+// Endpoints compatibles para FlixEngine Ingest
+Route::delete('/admin/ingest/tasks/{id}', [OttProviderController::class, 'deleteTask']);
+Route::post('/admin/ingest/tasks/clear-completed', [OttProviderController::class, 'clearCompleted']);
+Route::delete('/ingest/tasks/{id}', [OttProviderController::class, 'deleteTask']);
+Route::post('/ingest/tasks/clear-completed', [OttProviderController::class, 'clearCompleted']);
+Route::post('/admin/ingest/tasks/{id}/cancel', [OttProviderController::class, 'cancelTask']);
+Route::post('/admin/ingest/tasks/{id}/retry', [OttProviderController::class, 'retryTask']);
+Route::post('/ingest/tasks/{id}/cancel', [OttProviderController::class, 'cancelTask']);
+Route::post('/ingest/tasks/{id}/retry', [OttProviderController::class, 'retryTask']);
 
 Route::prefix('v1')->group(function () {
     Route::post('/download', [OttProviderController::class, 'download']);

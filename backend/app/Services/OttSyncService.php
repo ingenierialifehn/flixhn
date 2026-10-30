@@ -1397,21 +1397,47 @@ class OttSyncService
         return $task;
     }
 
-    public function deleteTask(int $taskId): bool
+    public function deleteTask($taskId): bool
     {
-        $task = OttDownloadTask::find($taskId);
-        if ($task) {
-            $task->delete();
+        if (empty($taskId)) {
+            return false;
         }
 
-        $ingestTask = MediaIngestTask::find($taskId);
-        if ($ingestTask) {
-            $ingestTask->delete();
+        $query = OttDownloadTask::where('id', $taskId);
+        if (!is_numeric($taskId)) {
+            $query->orWhere('external_id', (string) $taskId)
+                  ->orWhere('title', (string) $taskId);
         }
 
-        if (Schema::hasTable('ott_contents')) {
-            DB::table('ott_contents')->where('id', $taskId)->delete();
+        $tasks = $query->get();
+        foreach ($tasks as $t) {
+            $title = $t->title;
+            $filePath = $t->file_path;
+            $t->delete();
+
+            if (!empty($title)) {
+                MediaIngestTask::where('title', $title)->delete();
+            }
+            if (!empty($filePath)) {
+                MediaIngestTask::where('output_file', $filePath)->delete();
+            }
         }
+
+        if (is_numeric($taskId)) {
+            MediaIngestTask::where('id', (int) $taskId)->delete();
+            OttDownloadTask::where('id', (int) $taskId)->delete();
+        } else {
+            MediaIngestTask::where('title', (string) $taskId)->delete();
+        }
+
+        try {
+            if (Schema::hasTable('ott_contents')) {
+                DB::table('ott_contents')
+                    ->where('id', $taskId)
+                    ->orWhere('external_id', (string) $taskId)
+                    ->delete();
+            }
+        } catch (\Throwable $e) {}
 
         Cache::forget('ott_tasks_overview');
         Cache::forget('ott_downloading_tasks');
@@ -1421,17 +1447,19 @@ class OttSyncService
 
     public function clearCompletedTasks(): int
     {
-        MediaIngestTask::where('status', 'completed')
+        MediaIngestTask::whereIn('status', ['completed', 'failed', 'cancelled'])
             ->orWhere('progress', '>=', 100)
             ->delete();
 
-        $count = OttDownloadTask::where('status', 'completed')
+        $count = OttDownloadTask::whereIn('status', ['completed', 'failed', 'cancelled'])
             ->orWhere('progress', '>=', 100)
             ->delete();
 
         try {
             if (Schema::hasTable('ott_contents')) {
-                DB::table('ott_contents')->where('download_status', 'completed')->delete();
+                DB::table('ott_contents')
+                    ->whereIn('download_status', ['completed', 'failed'])
+                    ->delete();
             }
         } catch (\Throwable $e) {}
 

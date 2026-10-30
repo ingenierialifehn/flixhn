@@ -98,7 +98,7 @@ class MediaIngestService
      */
     public function launchBackgroundWorker(int $taskId): void
     {
-        $artisanPath = base_path('artisan');
+        $runnerPath = base_path('ingest_runner.php');
 
         $phpBinary = 'php';
         if (file_exists('/usr/local/bin/php')) {
@@ -110,11 +110,11 @@ class MediaIngestService
         }
 
         if (PHP_OS_FAMILY === 'Windows') {
-            $command = "start /B {$phpBinary} \"{$artisanPath}\" flixengine:ingest-process {$taskId} > NUL 2>&1";
+            $command = "start /B {$phpBinary} \"{$runnerPath}\" {$taskId} > NUL 2>&1";
             pclose(popen($command, 'r'));
         } else {
             // Linux / Docker: uso de nohup para desacople total del proceso sin trabar php-fpm
-            $command = "nohup {$phpBinary} \"{$artisanPath}\" flixengine:ingest-process {$taskId} > /dev/null 2>&1 &";
+            $command = "nohup {$phpBinary} \"{$runnerPath}\" {$taskId} > /dev/null 2>&1 &";
             exec($command);
         }
     }
