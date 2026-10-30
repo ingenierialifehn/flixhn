@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
+﻿import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import api from '../../services/api';
 import {
   Search,
@@ -24,13 +24,13 @@ import FolderPickerModal from './FolderPickerModal';
 import OttPlayerModal from './OttPlayerModal';
 import { notifyCatalogUpdated } from '../../utils/catalogEvents';
 
-// Función para generar resultados dinámicos realistas según la consulta del usuario
+// FunciÃ³n para generar resultados dinÃ¡micos realistas segÃºn la consulta del usuario
 export const generateSimulatedResults = (query = '', provider = 'all') => {
   return [];
 };
 
 /**
- * Insignia vectorial o estilizada de la plataforma para las tarjetas de catálogo remoto.
+ * Insignia vectorial o estilizada de la plataforma para las tarjetas de catÃ¡logo remoto.
  */
 export const PlatformMiniBadge = ({ provider }) => {
   switch (provider) {
@@ -89,7 +89,7 @@ export const PlatformMiniBadge = ({ provider }) => {
   }
 };
 
-// Base local de respaldo vacía: Se nutre 100% del catálogo real conectado desde la API
+// Base local de respaldo vacÃ­a: Se nutre 100% del catÃ¡logo real conectado desde la API
 const CURATED_OTT_CATALOG = [];
 
 const SUGGESTION_CHIPS = [
@@ -106,7 +106,7 @@ const SUGGESTION_CHIPS = [
 ];
 
 /**
- * Explorador y Buscador de Catálogo Remoto On-Demand (FlixGrab Engine)
+ * Explorador y Buscador de CatÃ¡logo Remoto On-Demand (FlixGrab Engine)
  */
 export default function OttRemoteCatalogExplorer({
   onTaskCreated,
@@ -114,6 +114,7 @@ export default function OttRemoteCatalogExplorer({
   connectedProviders = [],
   targetProviderFromParent = null,
   activeDownloadingTasks = [],
+  allTasks = [],
 }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedProvider, setSelectedProvider] = useState('all');
@@ -122,7 +123,7 @@ export default function OttRemoteCatalogExplorer({
   const [loading, setLoading] = useState(false);
   const [searchedOnce, setSearchedOnce] = useState(false);
 
-  // Sincronizar selección de plataforma desde el padre si cambia
+  // Sincronizar selecciÃ³n de plataforma desde el padre si cambia
   useEffect(() => {
     if (targetProviderFromParent) {
       setSelectedProvider(targetProviderFromParent);
@@ -151,7 +152,7 @@ export default function OttRemoteCatalogExplorer({
     return (providersList || []).filter((p) => p.status === 'connected');
   }, [providersList]);
 
-  // Resolver qué proveedor conectado debe asumir la descarga
+  // Resolver quÃ© proveedor conectado debe asumir la descarga
   const resolveTargetProvider = useCallback(
     (item) => {
       if (activeConnectedProviders.length === 0) {
@@ -168,7 +169,7 @@ export default function OttRemoteCatalogExplorer({
     [activeConnectedProviders]
   );
 
-  // Modal de confirmación de descarga
+  // Modal de confirmaciÃ³n de descarga
   const [confirmItem, setConfirmItem] = useState(null);
   const [downloadQuality, setDownloadQuality] = useState('1080p');
   const [targetFolder, setTargetFolder] = useState('/storage/media');
@@ -207,13 +208,13 @@ export default function OttRemoteCatalogExplorer({
     });
   }, [resolveTargetProvider]);
 
-  // Consulta de catálogo remoto al backend con fallback dinámico
+  // Consulta de catÃ¡logo remoto al backend con fallback dinÃ¡mico
   const fetchOttResults = useCallback(
     async (query = '') => {
       const cleanQuery = (query || '').trim();
       setLoading(true);
 
-      // Simular spinner de carga rápida (500ms) requerido
+      // Simular spinner de carga rÃ¡pida (500ms) requerido
       await new Promise((r) => setTimeout(r, 480));
 
       const prov = selectedProvider !== 'all' ? selectedProvider : 'netflix';
@@ -260,7 +261,7 @@ export default function OttRemoteCatalogExplorer({
     [selectedProvider]
   );
 
-  // Búsqueda en tiempo real con debounce
+  // BÃºsqueda en tiempo real con debounce
   useEffect(() => {
     const clean = (searchQuery || '').trim();
     const timer = setTimeout(() => {
@@ -269,7 +270,7 @@ export default function OttRemoteCatalogExplorer({
     return () => clearTimeout(timer);
   }, [searchQuery, selectedProvider, fetchOttResults]);
 
-  // Manejador del submit de búsqueda (Enter o Clic en Lupa)
+  // Manejador del submit de bÃºsqueda (Enter o Clic en Lupa)
   const handleSearchSubmit = (e) => {
     if (e) e.preventDefault();
     fetchOttResults(searchQuery);
@@ -281,13 +282,13 @@ export default function OttRemoteCatalogExplorer({
     fetchOttResults(chipTitle);
   };
 
-  // Limpiar búsqueda
+  // Limpiar bÃºsqueda
   const handleClearSearch = () => {
     setSearchQuery('');
     fetchOttResults('');
   };
 
-  // Abrir modal de confirmación o lanzar descarga
+  // Abrir modal de confirmaciÃ³n o lanzar descarga
   const handleOpenDownloadModal = (item) => {
     const assignedProvider = resolveTargetProvider(item);
     const uniqueId = item.unique_id || item.id || `ott_${Date.now()}`;
@@ -299,7 +300,7 @@ export default function OttRemoteCatalogExplorer({
     setTargetFolder(`/storage/media/${assignedProvider}/${uniqueId}`);
   };
 
-  // Iniciar descarga directa rápida tipo FlixGrab
+    // Iniciar descarga directa rápida tipo FlixGrab
   const handleQuickDownload = async (item) => {
     const assignedProvider = resolveTargetProvider(item);
     const uniqueId = item.unique_id || item.id || `ott_${Date.now()}`;
@@ -316,10 +317,11 @@ export default function OttRemoteCatalogExplorer({
       media_type: item.media_type || 'movie',
       poster_url: item.poster_url || item.poster,
       quality: item.quality || '4K HDR',
-      progress: 12.5,
-      download_speed: '58.4 MB/s',
+      progress: 20.0,
+      download_speed: '48.5 MB/s',
       status: 'downloading',
       file_path: dynamicFilePath,
+      output_file: dynamicFilePath,
       created_at: new Date().toISOString(),
     };
 
@@ -327,7 +329,7 @@ export default function OttRemoteCatalogExplorer({
     setResults((prev) =>
       prev.map((r) =>
         r.id === item.id || r.title === item.title
-          ? { ...r, is_downloading: true, is_in_queue: true, is_already_downloaded: false }
+          ? { ...r, is_downloading: true, is_in_queue: false, is_already_downloaded: false, localFilePath: dynamicFilePath }
           : r
       )
     );
@@ -344,35 +346,53 @@ export default function OttRemoteCatalogExplorer({
       onTaskCreated(tempTask);
     }
 
-    // Despacho asíncrono al backend
+    const payload = {
+      title: item.title,
+      original_title: item.original_title || item.title,
+      provider: assignedProvider,
+      media_type: item.media_type || 'movie',
+      poster_url: item.poster_url || item.poster,
+      quality: '1080p',
+      target_folder: dynamicFolder,
+      overview: item.overview,
+      year: item.year,
+      id: item.id,
+    };
+
     try {
-      api.post('/admin/ott-providers/download', {
-        title: item.title,
-        original_title: item.original_title || item.title,
-        provider: assignedProvider,
-        media_type: item.media_type || 'movie',
-        poster_url: item.poster_url,
-        quality: '1080p',
-        target_folder: dynamicFolder,
-        overview: item.overview,
-        year: item.year,
-        id: item.id,
-      }).then((res) => {
-        const t = res?.data?.task;
-        if (t) {
-          const finalPath = t.output_file || t.file_path;
-          if (finalPath) {
-            setResults((prev) =>
-              prev.map((r) =>
-                r.id === item.id || r.title === item.title
-                  ? { ...r, localFilePath: finalPath, filePath: finalPath, file_path: finalPath, local_file_path: finalPath }
-                  : r
-              )
-            );
-          }
+      let res = null;
+      try {
+        res = await api.post('/admin/ott-providers/download', payload);
+      } catch (err1) {
+        try {
+          res = await api.post('/ott-providers/download', payload);
+        } catch (err2) {
+          const raw = await fetch('/admin/ott-sync/download', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          res = { data: await raw.json() };
         }
-      }).catch(() => {});
-    } catch {}
+      }
+
+      const t = res?.data?.task;
+      if (t) {
+        const finalPath = t.output_file || t.file_path || dynamicFilePath;
+        setResults((prev) =>
+          prev.map((r) =>
+            r.id === item.id || r.title === item.title
+              ? { ...r, localFilePath: finalPath, filePath: finalPath, file_path: finalPath, local_file_path: finalPath }
+              : r
+          )
+        );
+        if (onTaskCreated) {
+          onTaskCreated(t);
+        }
+      }
+    } catch (err) {
+      console.warn('[FlixGrab] Error iniciando descarga en servidor:', err);
+    }
   };
 
   // Confirmar y despachar la tarea desde el modal
@@ -392,33 +412,47 @@ export default function OttRemoteCatalogExplorer({
         original_title: confirmItem.original_title || confirmItem.title,
         provider: assignedProvider,
         media_type: confirmItem.media_type || 'movie',
-        poster_url: confirmItem.poster_url,
+        poster_url: confirmItem.poster_url || confirmItem.poster,
         quality: downloadQuality,
-        target_folder: dynamicFolder,
+        target_folder: strictFolder,
         overview: confirmItem.overview,
         year: confirmItem.year,
         id: confirmItem.id,
       };
 
-      const res = await api.post('/admin/ott-providers/download', payload);
+      let res = null;
+      try {
+        res = await api.post('/admin/ott-providers/download', payload);
+      } catch (err1) {
+        try {
+          res = await api.post('/ott-providers/download', payload);
+        } catch (err2) {
+          const raw = await fetch('/admin/ott-sync/download', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          res = { data: await raw.json() };
+        }
+      }
 
-      const createdTask = res.data?.task || res.data || {
+      const createdTask = res?.data?.task || res?.data || {
         id: 'task_' + Date.now(),
         title: confirmItem.title,
         provider: assignedProvider,
         media_type: confirmItem.media_type || 'movie',
-        poster_url: confirmItem.poster_url,
+        poster_url: confirmItem.poster_url || confirmItem.poster,
         quality: downloadQuality,
         progress: 15.0,
         download_speed: '58.2 MB/s',
         status: 'downloading',
-        file_path: `/var/www/html/storage/media/${assignedProvider}/${confirmItem.title.toLowerCase().replace(/[^a-z0-9]/g, '_')}.mkv`,
+        file_path: `/var/www/html/storage/media/${assignedProvider}/${confirmItem.title.toLowerCase().replace(/[^a-z0-9]/g, '_')}.mp4`,
       };
 
       setResults((prev) =>
         prev.map((r) =>
           r.id === confirmItem.id || r.title === confirmItem.title
-            ? { ...r, is_downloading: true, is_in_queue: true, is_already_downloaded: false }
+            ? { ...r, is_downloading: true, is_in_queue: false, is_already_downloaded: false }
             : r
         )
       );
@@ -435,17 +469,9 @@ export default function OttRemoteCatalogExplorer({
         onTaskCreated(createdTask);
       }
 
-      notifyCatalogUpdated({
-        action: 'task_created',
-        task: createdTask,
-        title: confirmItem.title,
-        provider: assignedProvider,
-      });
-
       setConfirmItem(null);
     } catch (err) {
-      console.warn('Despachando descarga simulada por timeout de backend:', err);
-      // Fallback amigable
+      console.warn('Error en handleConfirmDownload:', err);
       handleQuickDownload(confirmItem);
       setConfirmItem(null);
     } finally {
@@ -461,7 +487,7 @@ export default function OttRemoteCatalogExplorer({
 
   return (
     <div className="bg-[#181818] border border-zinc-800 rounded-2xl p-6 shadow-2xl space-y-6">
-      {/* Cabecera de la sección Buscador FlixGrab */}
+      {/* Cabecera de la secciÃ³n Buscador FlixGrab */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-zinc-800/80">
         <div>
           <div className="flex items-center gap-2">
@@ -471,7 +497,7 @@ export default function OttRemoteCatalogExplorer({
             </span>
             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
               <Zap className="w-2.5 h-2.5" />
-              Ingesta Fibra Óptica
+              Ingesta Fibra Ã“ptica
             </span>
           </div>
           <h2 className="text-xl font-black text-white flex items-center gap-2 mt-1 tracking-tight">
@@ -479,7 +505,7 @@ export default function OttRemoteCatalogExplorer({
             Buscador Integrado FlixGrab
           </h2>
           <p className="text-xs text-zinc-400 max-w-2xl mt-0.5">
-            Busca cualquier película o serie en Netflix, Disney+, Max o Prime Video y ordénala inmediatamente para almacenamiento e ingesta local On-Net.
+            Busca cualquier pelÃ­cula o serie en Netflix, Disney+, Max o Prime Video y ordÃ©nala inmediatamente para almacenamiento e ingesta local On-Net.
           </p>
         </div>
 
@@ -487,15 +513,15 @@ export default function OttRemoteCatalogExplorer({
         <div className="flex items-center gap-2 self-start md:self-auto">
           <span className="text-xs text-zinc-400">Resultados encontrados:</span>
           <span className="px-3 py-1 rounded-lg text-xs font-mono font-bold bg-zinc-900 border border-zinc-800 text-white">
-            {filteredResults.length} títulos
+            {filteredResults.length} tÃ­tulos
           </span>
         </div>
       </div>
 
-      {/* Barra de Búsqueda Interactiva & Filtros */}
+      {/* Barra de BÃºsqueda Interactiva & Filtros */}
       <form onSubmit={handleSearchSubmit} className="space-y-3">
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-          {/* Campo de búsqueda con spinner sutil */}
+          {/* Campo de bÃºsqueda con spinner sutil */}
           <div className="relative flex-1">
             <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-zinc-400">
               {loading ? (
@@ -508,7 +534,7 @@ export default function OttRemoteCatalogExplorer({
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Escribe el nombre de la película o serie (ej: The Witcher, Stranger Things)..."
+              placeholder="Escribe el nombre de la pelÃ­cula o serie (ej: The Witcher, Stranger Things)..."
               className="w-full pl-10 pr-10 py-3 bg-[#111827]/80 border border-zinc-800 rounded-xl text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 transition-all shadow-inner"
             />
             {loading && (
@@ -521,7 +547,7 @@ export default function OttRemoteCatalogExplorer({
                 type="button"
                 onClick={handleClearSearch}
                 className="absolute inset-y-0 right-0 pr-3 flex items-center text-zinc-400 hover:text-white transition-colors cursor-pointer"
-                title="Limpiar búsqueda"
+                title="Limpiar bÃºsqueda"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -570,7 +596,7 @@ export default function OttRemoteCatalogExplorer({
           ))}
         </div>
 
-        {/* Píldoras de filtro por tipo de medio */}
+        {/* PÃ­ldoras de filtro por tipo de medio */}
         <div className="flex items-center gap-2 pt-1 border-t border-zinc-800/60">
           <span className="text-[11px] text-zinc-400 uppercase tracking-wider font-semibold mr-1">
             Tipo:
@@ -596,7 +622,7 @@ export default function OttRemoteCatalogExplorer({
             }`}
           >
             <Film className="w-3.5 h-3.5" />
-            <span>Películas</span>
+            <span>PelÃ­culas</span>
           </button>
           <button
             type="button"
@@ -613,7 +639,7 @@ export default function OttRemoteCatalogExplorer({
         </div>
       </form>
 
-      {/* Cuadrícula de Resultados FlixGrab */}
+      {/* CuadrÃ­cula de Resultados FlixGrab */}
       {loading && results.length === 0 ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
           {[...Array(6)].map((_, i) => (
@@ -633,23 +659,40 @@ export default function OttRemoteCatalogExplorer({
           {filteredResults.map((item) => {
             const isSeries = item.media_type === 'series';
 
-            // Comprobar si hay una tarea en curso para este título
-            const activeMatch = activeDownloadingTasks.find(
+                        // Comprobar si hay una tarea en curso o completada para este título
+            const taskPool = (allTasks && allTasks.length > 0) ? allTasks : activeDownloadingTasks;
+            const activeMatch = taskPool.find(
               (t) =>
-                (t.title && t.title.toLowerCase() === item.title.toLowerCase()) ||
-                (t.id && item.id && t.id === item.id)
+                (t.title && item.title && t.title.toLowerCase().trim() === item.title.toLowerCase().trim()) ||
+                (t.id && item.id && (String(t.id) === String(item.id) || t.external_id === item.id))
             );
 
-            const isDownloading = item.is_downloading || (activeMatch && activeMatch.status === 'downloading');
-            const isCompleted = item.is_already_downloaded || (activeMatch && (activeMatch.status === 'completed' || activeMatch.progress >= 100));
-            const isInQueue = item.is_in_queue || (activeMatch && activeMatch.status === 'pending');
-            const progressVal = activeMatch?.progress !== undefined ? activeMatch.progress : 25.4;
+            const isCompleted = Boolean(
+              item.is_already_downloaded ||
+              item.status === 'En Catálogo' ||
+              (activeMatch && (activeMatch.status === 'completed' || Number(activeMatch.progress) >= 100))
+            );
+
+            const isDownloading = !isCompleted && Boolean(
+              item.is_downloading ||
+              item.status === 'Descargando' ||
+              (activeMatch && activeMatch.status === 'downloading')
+            );
+
+            const isInQueue = !isCompleted && !isDownloading && Boolean(
+              item.is_in_queue ||
+              (activeMatch && activeMatch.status === 'pending')
+            );
+
+            const progressVal = isCompleted
+              ? 100
+              : (activeMatch?.progress !== undefined ? Number(activeMatch.progress) : (item.progress || 15.0));
 
             // Clave crítica: Resolver filePath para reproducción On-Net local
             const assignedProvider = resolveTargetProvider(item);
             const uniqueId = item.unique_id || item.id || `ott_${Date.now()}`;
             const slug = (item.title || 'media').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-            const filePath = item.localFilePath || item.filePath || item.local_file_path || item.file_path || `/var/www/html/storage/media/${assignedProvider}/${uniqueId}/${slug}.mp4`;
+            const filePath = activeMatch?.file_path || activeMatch?.output_file || item.localFilePath || item.filePath || item.local_file_path || item.file_path || `/var/www/html/storage/media/${assignedProvider}/${uniqueId}/${slug}.mp4`;
 
             return (
               <div
@@ -659,7 +702,7 @@ export default function OttRemoteCatalogExplorer({
                 className="bg-[#141414] border border-zinc-800/90 hover:border-zinc-700 rounded-xl p-3 flex flex-col justify-between transition-all duration-200 group shadow-lg hover:shadow-black/70 relative overflow-hidden"
               >
                 <div>
-                  {/* Carátula vertical con badges */}
+                  {/* CarÃ¡tula vertical con badges */}
                   <div className="relative aspect-[2/3] w-full rounded-lg overflow-hidden bg-zinc-900 border border-zinc-800/80 shadow-inner group">
                     <img
                       src={item.poster_url || `/api/media/poster?title=${encodeURIComponent(item.title)}`}
@@ -681,11 +724,11 @@ export default function OttRemoteCatalogExplorer({
                       <PlatformMiniBadge provider={item.provider} />
                     </div>
 
-                    {/* Badge de Serie/Película */}
+                    {/* Badge de Serie/PelÃ­cula */}
                     <div className="absolute top-2 right-2 z-10">
                       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-black/70 text-zinc-300 border border-zinc-700/50 backdrop-blur-md">
                         {isSeries ? <Tv className="w-2.5 h-2.5" /> : <Film className="w-2.5 h-2.5" />}
-                        {isSeries ? 'Serie' : 'Película'}
+                        {isSeries ? 'Serie' : 'PelÃ­cula'}
                       </span>
                     </div>
 
@@ -698,7 +741,7 @@ export default function OttRemoteCatalogExplorer({
                       </div>
                     )}
 
-                    {/* Año */}
+                    {/* AÃ±o */}
                     {item.year && (
                       <div className="absolute bottom-2 right-2 z-10">
                         <span className="text-[10px] font-mono text-zinc-300 bg-black/80 px-1.5 py-0.5 rounded border border-zinc-800/50">
@@ -720,41 +763,41 @@ export default function OttRemoteCatalogExplorer({
                       {item.genre || (isSeries ? 'Serie Original' : 'Largometraje')}
                     </div>
                     <p className="text-[11px] text-zinc-500 line-clamp-2 leading-relaxed">
-                      {item.overview || 'Sin descripción disponible para este medio.'}
+                      {item.overview || 'Sin descripciÃ³n disponible para este medio.'}
                     </p>
                   </div>
                 </div>
 
-                {/* Botón de Acción Principal Semántico según Estado */}
+                {/* BotÃ³n de AcciÃ³n Principal SemÃ¡ntico segÃºn Estado */}
                 <div className="mt-3 pt-2 border-t border-zinc-800/80 space-y-1.5">
                   {isCompleted ? (
-                    // Estado 1: Verde brillante con check "✓ En Catálogo" + "▶ Reproducción Local On-Net"
+                    // Estado 1: Verde brillante con check "âœ“ En CatÃ¡logo" + "â–¶ ReproducciÃ³n Local On-Net"
                     <div className="space-y-1.5">
                       <button
                         type="button"
                         data-path={filePath}
                         onClick={(e) => {
                           e.preventDefault();
-                          handleOpenPlayer(item);
+                          handleOpenPlayer({ ...item, filePath: filePath, localFilePath: filePath, file_path: filePath });
                         }}
                         className="flex items-center justify-center gap-1.5 w-full py-1.5 px-2 rounded-lg text-xs font-bold bg-emerald-600/25 hover:bg-emerald-600/35 text-emerald-300 border border-emerald-500/40 transition-all shadow-sm active:scale-95 cursor-pointer"
-                        title="Título disponible en catálogo On-Net. Haz clic para reproducir."
+                        title="TÃ­tulo disponible en catÃ¡logo On-Net. Haz clic para reproducir."
                       >
                         <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                        <span className="truncate">✓ En Catálogo</span>
+                        <span className="truncate">âœ“ En CatÃ¡logo</span>
                       </button>
                       <button
                         type="button"
                         data-path={filePath}
                         onClick={(e) => {
                           e.preventDefault();
-                          handleOpenPlayer(item);
+                          handleOpenPlayer({ ...item, filePath: filePath, localFilePath: filePath, file_path: filePath });
                         }}
                         className="flex items-center justify-center gap-1.5 w-full py-1.5 px-2 rounded-lg text-[11px] font-bold bg-sky-950/80 hover:bg-sky-900/90 text-sky-300 border border-sky-500/40 transition-all shadow-sm active:scale-95 cursor-pointer"
-                        title="Reproducción directa On-Net desde el nodo perimetral"
+                        title="ReproducciÃ³n directa On-Net desde el nodo perimetral"
                       >
                         <Play className="w-3 h-3 fill-sky-400 text-sky-400 shrink-0" />
-                        <span className="truncate">▶ Reproducción Local On-Net</span>
+                        <span className="truncate">â–¶ ReproducciÃ³n Local On-Net</span>
                       </button>
                     </div>
                   ) : isDownloading ? (
@@ -777,7 +820,7 @@ export default function OttRemoteCatalogExplorer({
                       </div>
                     </div>
                   ) : isInQueue ? (
-                    // Estado 3: En Cola (Ámbar)
+                    // Estado 3: En Cola (Ãmbar)
                     <button
                       disabled
                       className="flex items-center justify-center gap-1.5 w-full py-2 px-2 rounded-lg text-xs font-semibold bg-amber-600/20 text-amber-300 border border-amber-500/40 cursor-not-allowed shadow-sm"
@@ -792,7 +835,7 @@ export default function OttRemoteCatalogExplorer({
                         type="button"
                         onClick={() => handleQuickDownload(item)}
                         className="flex items-center justify-center gap-1.5 w-full py-2 px-2.5 rounded-lg text-xs font-bold bg-gradient-to-r from-[#E50914] to-orange-600 hover:from-red-600 hover:to-orange-500 text-white transition-all shadow-md shadow-red-950/40 active:scale-95 cursor-pointer"
-                        title="Descarga automática con FlixGrab Engine"
+                        title="Descarga automÃ¡tica con FlixGrab Engine"
                       >
                         <DownloadCloud className="w-3.5 h-3.5 text-white shrink-0" />
                         <span className="truncate">+ FlixGrab / Descargar</span>
@@ -805,16 +848,16 @@ export default function OttRemoteCatalogExplorer({
           })}
         </div>
       ) : (
-        // Estado vacío
+        // Estado vacÃ­o
         <div className="text-center py-12 px-4 border border-dashed border-zinc-800 rounded-xl space-y-3 bg-[#141414]/50">
           <Search className="w-8 h-8 text-zinc-600 mx-auto" />
           <h3 className="text-sm font-semibold text-zinc-300">
-            {searchQuery ? `No se encontraron resultados para "${searchQuery}"` : 'Búsqueda On-Demand FlixGrab'}
+            {searchQuery ? `No se encontraron resultados para "${searchQuery}"` : 'BÃºsqueda On-Demand FlixGrab'}
           </h3>
           <p className="text-xs text-zinc-400 max-w-md mx-auto">
             {searchQuery
               ? 'Prueba buscando con otra palabra clave como "The Witcher" o "Stranger Things".'
-              : 'Escribe un título en el buscador o pulsa una de las sugerencias para ver películas y series listas para descargar.'}
+              : 'Escribe un tÃ­tulo en el buscador o pulsa una de las sugerencias para ver pelÃ­culas y series listas para descargar.'}
           </p>
           {searchQuery && (
             <button
@@ -823,13 +866,13 @@ export default function OttRemoteCatalogExplorer({
               className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium rounded-lg transition-colors cursor-pointer"
             >
               <X className="w-3.5 h-3.5 text-zinc-400" />
-              <span>Limpiar Búsqueda</span>
+              <span>Limpiar BÃºsqueda</span>
             </button>
           )}
         </div>
       )}
 
-      {/* Modal de Reproducción On-Net Embebido */}
+      {/* Modal de ReproducciÃ³n On-Net Embebido */}
       <OttPlayerModal
         isOpen={Boolean(activePlayerMedia)}
         onClose={() => setActivePlayerMedia(null)}
@@ -837,7 +880,7 @@ export default function OttRemoteCatalogExplorer({
       />
 
 
-      {/* Modal Rápido de Configuración de Ingesta Avanzada */}
+      {/* Modal RÃ¡pido de ConfiguraciÃ³n de Ingesta Avanzada */}
       {confirmItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
           <div className="bg-[#181818] border border-zinc-800 rounded-2xl p-6 max-w-lg w-full shadow-2xl space-y-5 animate-in zoom-in-95 duration-150">
@@ -852,7 +895,7 @@ export default function OttRemoteCatalogExplorer({
                     Confirmar Descarga hacia el Servidor
                   </h3>
                   <p className="text-xs text-zinc-400">
-                    Se encolará la ingesta On-Net con indexación automática en catálogo.
+                    Se encolarÃ¡ la ingesta On-Net con indexaciÃ³n automÃ¡tica en catÃ¡logo.
                   </p>
                 </div>
               </div>
@@ -865,7 +908,7 @@ export default function OttRemoteCatalogExplorer({
               </button>
             </div>
 
-            {/* Vista previa del título */}
+            {/* Vista previa del tÃ­tulo */}
             <div className="flex gap-4 p-3.5 rounded-xl bg-zinc-950/70 border border-zinc-800/80">
               <img
                 src={confirmItem.poster_url || `/api/media/poster?title=${encodeURIComponent(confirmItem.title)}`}
@@ -880,17 +923,17 @@ export default function OttRemoteCatalogExplorer({
                 <div className="flex items-center gap-2">
                   <PlatformMiniBadge provider={confirmItem.assignedProvider || confirmItem.provider} />
                   <span className="text-[10px] text-zinc-400 font-mono">
-                    {confirmItem.media_type === 'series' ? 'Serie' : 'Película'} • {confirmItem.year || '2024'}
+                    {confirmItem.media_type === 'series' ? 'Serie' : 'PelÃ­cula'} â€¢ {confirmItem.year || '2024'}
                   </span>
                 </div>
                 <h4 className="font-bold text-sm text-white truncate">{confirmItem.title}</h4>
                 <p className="text-xs text-zinc-400 line-clamp-2 leading-relaxed">
-                  {confirmItem.overview || 'Sin descripción disponible.'}
+                  {confirmItem.overview || 'Sin descripciÃ³n disponible.'}
                 </p>
               </div>
             </div>
 
-            {/* Selección de Calidad de Ingesta */}
+            {/* SelecciÃ³n de Calidad de Ingesta */}
             <div className="space-y-1.5">
               <label className="block text-xs font-semibold text-zinc-300">
                 Perfil de Calidad de Descarga:
@@ -944,7 +987,7 @@ export default function OttRemoteCatalogExplorer({
               </p>
             </div>
 
-            {/* Botones de acción */}
+            {/* Botones de acciÃ³n */}
             <div className="flex items-center justify-end gap-3 pt-3 border-t border-zinc-800">
               <button
                 type="button"
@@ -990,3 +1033,7 @@ export default function OttRemoteCatalogExplorer({
     </div>
   );
 }
+
+
+
+

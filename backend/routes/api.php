@@ -35,7 +35,7 @@ use App\Http\Middleware\AuthenticateApiKey;
 
 /*
 |--------------------------------------------------------------------------
-| Rutas Públicas (Sin Autenticación)
+| Rutas PÃºblicas (Sin AutenticaciÃ³n)
 |--------------------------------------------------------------------------
 */
 Route::get('/health', function () {
@@ -67,16 +67,16 @@ Route::get('/media/backdrop', function (\Illuminate\Http\Request $request) {
 Route::post('/auth/login', [AuthController::class, 'login']);
 Route::post('/login', [AuthController::class, 'login'])->name('login');
 
-// Recuperación de Contraseña de Clientes (Email y WhatsApp/Teléfono)
+// RecuperaciÃ³n de ContraseÃ±a de Clientes (Email y WhatsApp/TelÃ©fono)
 Route::post('/auth/password/forgot', [PasswordResetController::class, 'forgot']);
 Route::post('/auth/password/verify-code', [PasswordResetController::class, 'verifyCode']);
 Route::post('/auth/password/reset', [PasswordResetController::class, 'resetPassword']);
 
-// Acceso público al portal Live TV y proxy de streaming
+// Acceso pÃºblico al portal Live TV y proxy de streaming
 Route::get('/livetv/channels', [LiveTvController::class, 'getChannels']);
 Route::get('/livetv/proxy', [LiveTvController::class, 'proxy']);
 
-// Streaming directo para archivos locales OTT y catálogo On-Net (Soporta Range: bytes para MP4/MKV)
+// Streaming directo para archivos locales OTT y catÃ¡logo On-Net (Soporta Range: bytes para MP4/MKV)
 Route::get('/media/{id}/stream', [App\Http\Controllers\MediaStreamController::class, 'stream'])->name('media.stream');
 Route::match(['get', 'head'], '/stream/{id}', [App\Http\Controllers\MediaStreamController::class, 'stream'])->name('stream.direct');
 Route::match(['get', 'head'], '/media/stream', [App\Http\Controllers\MediaStreamController::class, 'stream']);
@@ -87,7 +87,7 @@ Route::match(['get', 'head'], '/media/stream', [App\Http\Controllers\MediaStream
 |--------------------------------------------------------------------------
 */
 Route::middleware('auth:sanctum')->group(function () {
-    // Autenticación de Sesión
+    // AutenticaciÃ³n de SesiÃ³n
     Route::get('/auth/me', [AuthController::class, 'me']);
     Route::post('/auth/logout', [AuthController::class, 'logout']);
 
@@ -99,14 +99,14 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/profiles/{id}', [ProfileController::class, 'destroy']);
     Route::post('/profiles/{id}/select', [ProfileController::class, 'select']);
 
-    // Catálogo de Video y Streaming
+    // CatÃ¡logo de Video y Streaming
     Route::get('/titles', [TitleController::class, 'index']);
     Route::get('/titles/active-downloads', [TitleController::class, 'activeDownloads']);
     Route::get('/home', [TitleController::class, 'index']);
     Route::get('/browse', [TitleController::class, 'index']);
     Route::get('/titles/{id}', [TitleController::class, 'show']);
 
-    // Sincronización de Reproducción (Continuar Viendo y Sesiones de Streaming)
+    // SincronizaciÃ³n de ReproducciÃ³n (Continuar Viendo y Sesiones de Streaming)
     Route::get('/playback/info', [PlaybackController::class, 'getPlaybackInfo']);
     Route::post('/playback/progress', [PlaybackController::class, 'updateProgress']);
     Route::get('/playback/progress', [PlaybackController::class, 'getProgress']);
@@ -115,16 +115,16 @@ Route::middleware('auth:sanctum')->group(function () {
 
     /*
     |--------------------------------------------------------------------------
-    | Módulo Administrativo (/admin) - Solo Rol Admin
+    | MÃ³dulo Administrativo (/admin) - Solo Rol Admin
     |--------------------------------------------------------------------------
     */
     Route::middleware(EnsureUserIsAdmin::class)->prefix('admin')->group(function () {
-        // Métricas en tiempo real y monitoreo de telemetría
+        // MÃ©tricas en tiempo real y monitoreo de telemetrÃ­a
         Route::get('/dashboard-stats', [AdminTitleController::class, 'dashboardStats']);
         Route::get('/stats', [AdminTitleController::class, 'dashboardStats']);
         Route::post('/sessions/{id}/stop', [AdminTitleController::class, 'stopSession']);
 
-        // Gestión del Catálogo y Sincronización de Medios Remotos
+        // GestiÃ³n del CatÃ¡logo y SincronizaciÃ³n de Medios Remotos
         Route::post('/sync-media', [AdminTitleController::class, 'syncMedia']);
         Route::post('/media/sync', [AdminTitleController::class, 'syncRemoteMedia']);
         Route::post('/sync-emby', [AdminTitleController::class, 'syncEmby']);
@@ -135,7 +135,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/titles/{id}/seasons', [AdminTitleController::class, 'addSeason']);
         Route::post('/titles/{id}/episodes', [AdminTitleController::class, 'addEpisode']);
 
-        // Gestión de Suscriptores del ISP
+        // GestiÃ³n de Suscriptores del ISP
         Route::get('/users', [AdminUserController::class, 'index']);
         Route::post('/users', [AdminUserController::class, 'store']);
         Route::put('/users/{id}', [AdminUserController::class, 'update']);
@@ -143,18 +143,18 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/users/{id}/reset-password', [AdminUserController::class, 'resetPassword']);
         Route::delete('/users/{id}', [AdminUserController::class, 'destroy']);
 
-        // Parámetros y Configuración de Red / Conexiones
+        // ParÃ¡metros y ConfiguraciÃ³n de Red / Conexiones
         Route::get('/network', [NetworkSettingController::class, 'index']);
         Route::post('/network', [NetworkSettingController::class, 'updateSettings']);
         Route::get('/network-settings', [NetworkSettingController::class, 'index']);
         Route::post('/network-settings', [NetworkSettingController::class, 'updateSettings']);
 
-        // Parámetros y Motor de Transcodificación / Mapeo de Tonos
+        // ParÃ¡metros y Motor de TranscodificaciÃ³n / Mapeo de Tonos
         Route::get('/transcoding', [TranscodingSettingController::class, 'index']);
         Route::post('/transcoding', [TranscodingSettingController::class, 'update']);
         Route::post('/transcoding/validate-path', [TranscodingSettingController::class, 'validatePath']);
 
-        // Administración y Mantenimiento de Base de Datos
+        // AdministraciÃ³n y Mantenimiento de Base de Datos
         Route::get('/database/settings', [DatabaseAdminController::class, 'settings']);
         Route::post('/database/settings', [DatabaseAdminController::class, 'updateSettings']);
         Route::get('/database/backups', [DatabaseAdminController::class, 'backups']);
@@ -181,7 +181,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/alerts/{id}/dismiss', [AlertController::class, 'dismiss']);
         Route::post('/alerts/dismiss-all', [AlertController::class, 'dismissAll']);
 
-        // Gestión de TV en Vivo (Fuentes IPTV, Canales y Sincronización)
+        // GestiÃ³n de TV en Vivo (Fuentes IPTV, Canales y SincronizaciÃ³n)
         Route::get('/tv-sources', [TvSourceController::class, 'index']);
         Route::post('/tv-sources', [TvSourceController::class, 'store']);
         Route::get('/tv-sources/{id}', [TvSourceController::class, 'show']);
@@ -192,18 +192,18 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::delete('/tv-sources/{id}', [TvSourceController::class, 'destroy']);
         Route::get('/tv-channels', [TvSourceController::class, 'channels']);
 
-        // Fuentes de Datos de Guía (EPG / XMLTV)
+        // Fuentes de Datos de GuÃ­a (EPG / XMLTV)
         Route::get('/tv-guide-sources', [TvGuideSourceController::class, 'index']);
         Route::post('/tv-guide-sources', [TvGuideSourceController::class, 'store']);
         Route::post('/tv-guide-sources/{id}/refresh', [TvGuideSourceController::class, 'refresh']);
         Route::delete('/tv-guide-sources/{id}', [TvGuideSourceController::class, 'destroy']);
 
-        // Gestión de Tareas Programadas del Servidor (Scheduled Tasks)
+        // GestiÃ³n de Tareas Programadas del Servidor (Scheduled Tasks)
         Route::get('/tasks', [ScheduledTaskController::class, 'index']);
         Route::post('/tasks/{key}/run', [ScheduledTaskController::class, 'run']);
         Route::get('/tasks/{key}/status', [ScheduledTaskController::class, 'status']);
 
-        // Gestión y Visualización de Logs del Servidor
+        // GestiÃ³n y VisualizaciÃ³n de Logs del Servidor
         Route::get('/logs/settings', [LogAdminController::class, 'settings']);
         Route::post('/logs/settings', [LogAdminController::class, 'updateSettings']);
         Route::get('/logs/files', [LogAdminController::class, 'files']);
@@ -211,7 +211,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/logs/download/{filename}', [LogAdminController::class, 'download']);
         Route::post('/logs/clear', [LogAdminController::class, 'clear']);
 
-        // Gestión y Monitoreo de Dispositivos Conectados en Tiempo Real
+        // GestiÃ³n y Monitoreo de Dispositivos Conectados en Tiempo Real
         Route::get('/devices', [DeviceSessionController::class, 'index']);
         Route::get('/devices/{id}', [DeviceSessionController::class, 'show']);
         Route::put('/devices/{id}/name', [DeviceSessionController::class, 'updateName']);
@@ -219,7 +219,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/devices/{id}/toggle-block', [DeviceSessionController::class, 'toggleBlock']);
         Route::delete('/devices/{id}/session', [DeviceSessionController::class, 'terminateSession']);
 
-        // Gestión de Extensiones y Complementos del Servidor (Plugins)
+        // GestiÃ³n de Extensiones y Complementos del Servidor (Plugins)
         Route::get('/plugins/installed', [PluginAdminController::class, 'installed']);
         Route::get('/plugins/catalog', [PluginAdminController::class, 'catalog']);
         Route::post('/plugins/{slug}/install', [PluginAdminController::class, 'install']);
@@ -228,14 +228,14 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/plugins/{slug}/settings', [PluginAdminController::class, 'settings']);
         Route::put('/plugins/{slug}/settings', [PluginAdminController::class, 'updateSettings']);
 
-        // Gestión de Claves API y Tokens de Integración
+        // GestiÃ³n de Claves API y Tokens de IntegraciÃ³n
         Route::get('/api-keys', [ApiKeyAdminController::class, 'index']);
         Route::post('/api-keys', [ApiKeyAdminController::class, 'store']);
         Route::put('/api-keys/{id}', [ApiKeyAdminController::class, 'update']);
         Route::post('/api-keys/{id}/toggle', [ApiKeyAdminController::class, 'toggle']);
         Route::delete('/api-keys/{id}', [ApiKeyAdminController::class, 'destroy']);
 
-        // Gestor de Metadatos de Medios y Árbol Explorer
+        // Gestor de Metadatos de Medios y Ãrbol Explorer
         Route::get('/metadata/tree', [MetadataManagerController::class, 'tree']);
         Route::get('/metadata/item/{type}/{id}', [MetadataManagerController::class, 'showItem']);
         Route::put('/metadata/item/{type}/{id}', [MetadataManagerController::class, 'updateItem']);
@@ -244,7 +244,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::delete('/metadata/item/{type}/{id}', [MetadataManagerController::class, 'destroy']);
         Route::get('/metadata/search-external', [MetadataManagerController::class, 'searchExternal']);
 
-        // Estadísticas y Analíticas Avanzadas del Servidor (On-Net & Telemetría)
+        // EstadÃ­sticas y AnalÃ­ticas Avanzadas del Servidor (On-Net & TelemetrÃ­a)
         Route::prefix('stats')->group(function () {
             Route::get('/overview', [AnalyticsAdminController::class, 'overview']);
             Route::get('/playback-chart', [AnalyticsAdminController::class, 'playbackChart']);
@@ -255,7 +255,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/export', [AnalyticsAdminController::class, 'export']);
         });
 
-        // Cuentas y Sincronización OTT (Netflix, Disney+, HBO Max, Prime Video, Apple TV+, Paramount+)
+        // Cuentas y SincronizaciÃ³n OTT (Netflix, Disney+, HBO Max, Prime Video, Apple TV+, Paramount+)
         Route::prefix('ott-providers')->group(function () {
             Route::get('/', [OttProviderController::class, 'index']);
             Route::get('/search', [OttProviderController::class, 'search']);
@@ -278,7 +278,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/daemon/control', [OttProviderController::class, 'daemonControl']);
         });
 
-        // Endpoint canónico directo para tareas de ingesta OTT
+        // Endpoint canÃ³nico directo para tareas de ingesta OTT
         Route::get('/ott-tasks', [OttProviderController::class, 'tasks']);
 
         // Explorador Interactivo de Directorios del Servidor (Server Directory Picker)
@@ -299,21 +299,31 @@ Route::middleware('auth:sanctum')->group(function () {
         });
     });
 
-    // Telemetría y Latido de Reproducción Real en Vivo
+    // TelemetrÃ­a y Latido de ReproducciÃ³n Real en Vivo
     Route::post('/telemetry/heartbeat', [DeviceSessionController::class, 'heartbeat']);
     Route::post('/telemetry/stop', [DeviceSessionController::class, 'stopPlayback']);
     Route::post('/devices/heartbeat', [DeviceSessionController::class, 'heartbeat']);
 });
 
-// Detención de telemetría de dispositivo (Compatible con sendBeacon y keepalive al cerrar pestaña)
+// DetenciÃ³n de telemetrÃ­a de dispositivo (Compatible con sendBeacon y keepalive al cerrar pestaÃ±a)
 Route::post('/telemetry/stop', [DeviceSessionController::class, 'stopPlayback']);
 
 /*
 |--------------------------------------------------------------------------
-| API v1 - Integración de Terceros mediante API Key (Radarr, Sonarr, Home Assistant, etc.)
+| API v1 - IntegraciÃ³n de Terceros mediante API Key (Radarr, Sonarr, Home Assistant, etc.)
 |--------------------------------------------------------------------------
 */
+// Endpoints directos de compatibilidad FlixGrab para descarga y cola
+Route::post('/ott-providers/download', [OttProviderController::class, 'download']);
+Route::get('/ott-providers/tasks', [OttProviderController::class, 'tasks']);
+Route::get('/ott-tasks', [OttProviderController::class, 'tasks']);
+Route::post('/admin/ott-providers/download', [OttProviderController::class, 'download']);
+Route::get('/admin/ott-providers/tasks', [OttProviderController::class, 'tasks']);
+Route::get('/admin/ott-tasks', [OttProviderController::class, 'tasks']);
+
 Route::prefix('v1')->group(function () {
+    Route::post('/download', [OttProviderController::class, 'download']);
+    Route::get('/tasks', [OttProviderController::class, 'tasks']);
     Route::get('/search', [OttSyncController::class, 'search']);
     Route::get('/netflix/search', [OttSyncController::class, 'searchNetflix']);
     Route::get('/{provider}/search', [OttSyncController::class, 'searchProvider']);
@@ -324,5 +334,6 @@ Route::prefix('v1')->group(function () {
         Route::get('/titles', [TitleController::class, 'index']);
     });
 });
+
 
 

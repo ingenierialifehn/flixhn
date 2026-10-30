@@ -15,6 +15,10 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->statefulApi();
         $middleware->validateCsrfTokens(except: [
             'api/*',
+            'admin/ott-sync/*',
+            'ott-sync/*',
+            'admin/ott-sync',
+            'ott-sync',
         ]);
         $middleware->alias([
             'api.key' => \App\Http\Middleware\AuthenticateApiKey::class,
