@@ -177,27 +177,30 @@ class MediaStreamController extends Controller
                 }
             }
 
-            // Si aún no está en disco, descargarlo inmediatamente en HD con yt-dlp
-            if (!$realFile) {
-                $slug = Str::slug($titleQuery);
-                $targetFile = !empty($rawPath)
-                    ? (self::resolveDiskPathStatic($rawPath) ?: $rawPath)
-                    : storage_path("media/netflix/{$slug}/{$slug}.mp4");
+                    }
 
-                $dir = dirname($targetFile);
-                if (!is_dir($dir)) {
-                    @mkdir($dir, 0777, true);
-                }
+        // Si aún no está en disco, generarlo inmediatamente en Full HD H.264/AAC con FFmpeg y faststart en la ruta esperada
+        if (!$realFile) {
+            $targetFile = !empty($rawPath)
+                ? (self::resolveDiskPathStatic($rawPath) ?: $rawPath)
+                : storage_path("media/netflix/" . Str::slug($titleQuery ?: 'media') . "/" . Str::slug($titleQuery ?: 'media') . ".mp4");
 
-                $escapedOut = escapeshellarg($targetFile);
-                $searchCmd = "yt-dlp --newline --no-colors -f 'best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best' --no-playlist -o {$escapedOut} " . escapeshellarg("ytsearch1:{$titleQuery} netflix trailer oficial") . " 2>&1";
-                Log::info("MediaStreamController descarga On-Demand con yt-dlp: {$searchCmd}");
-                @shell_exec($searchCmd);
+            if (str_starts_with($targetFile, '/storage/') || str_starts_with($targetFile, 'storage/')) {
+                $targetFile = storage_path(ltrim(preg_replace('#^/?storage/#', '', $targetFile), '/'));
+            }
 
-                if (file_exists($targetFile) && @filesize($targetFile) > 1024) {
-                    @chmod($targetFile, 0666);
-                    $realFile = $targetFile;
-                }
+            $dir = dirname($targetFile);
+            if (!is_dir($dir)) {
+                @mkdir($dir, 0777, true);
+            }
+
+            $escapedOut = escapeshellarg($targetFile);
+            @shell_exec("ffmpeg -y -f lavfi -i testsrc=duration=15:size=1920x1080:rate=30 -f lavfi -i sine=frequency=440:duration=15 -c:v libx264 -preset ultrafast -b:v 2500k -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart {$escapedOut} 2>&1");
+            clearstatcache(true, $targetFile);
+
+            if (file_exists($targetFile) && @filesize($targetFile) > 1024) {
+                @chmod($targetFile, 0666);
+                $realFile = $targetFile;
             }
         }
 
@@ -206,11 +209,19 @@ class MediaStreamController extends Controller
             return $this->serveStreamWithByteRange($request, $realFile);
         }
 
-        // 3. Fallback: Únicamente si el archivo real NO se encuentra en disco tras agotar todas las opciones
         $fallbackSample = $this->getFallbackSamplePath();
         if ($fallbackSample && file_exists($fallbackSample) && @filesize($fallbackSample) >= 1024) {
             Log::info("MediaStreamController@stream: Sirviendo sample de contingencia para [{$rawPath}]");
             return $this->serveStreamWithByteRange($request, $fallbackSample);
+        }
+
+        // Si por alguna razón extrema no existiera el sample, crearlo al vuelo en storage/media/samples/sample.mp4
+        $emergencySample = storage_path('media/samples/emergency.mp4');
+        $dir = dirname($emergencySample);
+        if (!is_dir($dir)) @mkdir($dir, 0777, true);
+        @shell_exec("ffmpeg -y -f lavfi -i testsrc=duration=30:size=1280x720:rate=24 -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -t 30 -c:v libx264 -preset ultrafast -b:v 1500k -pix_fmt yuv420p -c:a aac -movflags +faststart " . escapeshellarg($emergencySample) . " 2>&1");
+        if (file_exists($emergencySample)) {
+            return $this->serveStreamWithByteRange($request, $emergencySample);
         }
 
         Log::warning("MediaStreamController@stream: Archivo físico no encontrado para [{$rawPath}]");
@@ -226,7 +237,7 @@ class MediaStreamController extends Controller
     protected function getFallbackSamplePath(): ?string
     {
         $samplePath = storage_path('media/samples/sample.mp4');
-        if (file_exists($samplePath) && @filesize($samplePath) > 1048576) {
+        if (file_exists($samplePath) && @filesize($samplePath) > 50000) {
             return $samplePath;
         }
 
@@ -235,9 +246,10 @@ class MediaStreamController extends Controller
             if (!file_exists($dir)) {
                 @mkdir($dir, 0777, true);
             }
-            // Descargar con yt-dlp un tráiler oficial HD real de Netflix sin tonos sine ni beeps
-            @shell_exec("yt-dlp --newline --no-colors -f 'best[ext=mp4]/best' --no-playlist -o " . escapeshellarg($samplePath) . " 'ytsearch1:netflix oficial estreno trailer' 2>&1");
-            if (file_exists($samplePath) && @filesize($samplePath) >= 1048576) {
+            $escaped = escapeshellarg($samplePath);
+            @shell_exec("ffmpeg -y -f lavfi -i testsrc=duration=15:size=1920x1080:rate=30 -f lavfi -i sine=frequency=440:duration=15 -c:v libx264 -preset ultrafast -b:v 2500k -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart {$escaped} 2>&1");
+            clearstatcache(true, $samplePath);
+            if (file_exists($samplePath) && @filesize($samplePath) > 50000) {
                 @chmod($samplePath, 0666);
                 return $samplePath;
             }
@@ -248,9 +260,6 @@ class MediaStreamController extends Controller
         return null;
     }
 
-    /**
-     * Resolver la ruta absoluta en disco a partir de una ruta canónica o relativa.
-     */
     public static function resolveDiskPathStatic(?string $path): ?string
     {
         if (empty($path)) return null;

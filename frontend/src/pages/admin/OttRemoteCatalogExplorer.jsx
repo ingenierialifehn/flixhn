@@ -174,6 +174,7 @@ export default function OttRemoteCatalogExplorer({
   const [downloadQuality, setDownloadQuality] = useState('1080p');
   const [targetFolder, setTargetFolder] = useState('/storage/media');
   const [submittingDownload, setSubmittingDownload] = useState(false);
+  const [submittingTitles, setSubmittingTitles] = useState({});
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
 
   // Estado del reproductor modal embebido On-Net
@@ -302,30 +303,21 @@ export default function OttRemoteCatalogExplorer({
 
     // Iniciar descarga directa rápida tipo FlixGrab
   const handleQuickDownload = async (item) => {
+    if (!item || !item.title) return;
+    if (submittingTitles[item.title] || item.is_downloading) {
+      console.log('[FlixGrab] Descarga ya en curso para:', item.title);
+      return;
+    }
+
     const assignedProvider = resolveTargetProvider(item);
     const uniqueId = item.unique_id || item.id || `ott_${Date.now()}`;
     const slug = (item.title || 'media').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
     const dynamicFolder = `/storage/media/${assignedProvider}/${uniqueId}`;
     const dynamicFilePath = `/var/www/html/storage/media/${assignedProvider}/${uniqueId}/${slug}.mp4`;
 
-    const tempTask = {
-      id: 'task_' + Date.now(),
-      unique_id: uniqueId,
-      title: item.title,
-      original_title: item.original_title || item.title,
-      provider: assignedProvider,
-      media_type: item.media_type || 'movie',
-      poster_url: item.poster_url || item.poster,
-      quality: item.quality || '4K HDR',
-      progress: 20.0,
-      download_speed: '48.5 MB/s',
-      status: 'downloading',
-      file_path: dynamicFilePath,
-      output_file: dynamicFilePath,
-      created_at: new Date().toISOString(),
-    };
+    setSubmittingTitles((prev) => ({ ...prev, [item.title]: true }));
 
-    // Actualizar visualmente la tarjeta de inmediato
+    // Actualizar visualmente la tarjeta de inmediato para reflejar descarga activa
     setResults((prev) =>
       prev.map((r) =>
         r.id === item.id || r.title === item.title
@@ -342,10 +334,6 @@ export default function OttRemoteCatalogExplorer({
       );
     }
 
-    if (onTaskCreated) {
-      onTaskCreated(tempTask);
-    }
-
     const payload = {
       title: item.title,
       original_title: item.original_title || item.title,
@@ -360,29 +348,14 @@ export default function OttRemoteCatalogExplorer({
     };
 
     try {
-      let res = null;
-      try {
-        res = await api.post('/admin/ott-providers/download', payload);
-      } catch (err1) {
-        try {
-          res = await api.post('/ott-providers/download', payload);
-        } catch (err2) {
-          const raw = await fetch('/admin/ott-sync/download', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-            body: JSON.stringify(payload)
-          });
-          res = { data: await raw.json() };
-        }
-      }
-
+      const res = await api.post('/admin/ott-providers/download', payload);
       const t = res?.data?.task;
       if (t) {
         const finalPath = t.output_file || t.file_path || dynamicFilePath;
         setResults((prev) =>
           prev.map((r) =>
             r.id === item.id || r.title === item.title
-              ? { ...r, localFilePath: finalPath, filePath: finalPath, file_path: finalPath, local_file_path: finalPath }
+              ? { ...r, is_downloading: true, localFilePath: finalPath, filePath: finalPath, file_path: finalPath, local_file_path: finalPath }
               : r
           )
         );
@@ -392,6 +365,19 @@ export default function OttRemoteCatalogExplorer({
       }
     } catch (err) {
       console.warn('[FlixGrab] Error iniciando descarga en servidor:', err);
+      setResults((prev) =>
+        prev.map((r) =>
+          r.id === item.id || r.title === item.title
+            ? { ...r, is_downloading: false }
+            : r
+        )
+      );
+    } finally {
+      setSubmittingTitles((prev) => {
+        const next = { ...prev };
+        delete next[item.title];
+        return next;
+      });
     }
   };
 
@@ -420,34 +406,8 @@ export default function OttRemoteCatalogExplorer({
         id: confirmItem.id,
       };
 
-      let res = null;
-      try {
-        res = await api.post('/admin/ott-providers/download', payload);
-      } catch (err1) {
-        try {
-          res = await api.post('/ott-providers/download', payload);
-        } catch (err2) {
-          const raw = await fetch('/admin/ott-sync/download', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-            body: JSON.stringify(payload)
-          });
-          res = { data: await raw.json() };
-        }
-      }
-
-      const createdTask = res?.data?.task || res?.data || {
-        id: 'task_' + Date.now(),
-        title: confirmItem.title,
-        provider: assignedProvider,
-        media_type: confirmItem.media_type || 'movie',
-        poster_url: confirmItem.poster_url || confirmItem.poster,
-        quality: downloadQuality,
-        progress: 15.0,
-        download_speed: '58.2 MB/s',
-        status: 'downloading',
-        file_path: `/var/www/html/storage/media/${assignedProvider}/${confirmItem.title.toLowerCase().replace(/[^a-z0-9]/g, '_')}.mp4`,
-      };
+      const res = await api.post('/admin/ott-providers/download', payload);
+      const createdTask = res?.data?.task || res?.data;
 
       setResults((prev) =>
         prev.map((r) =>
@@ -465,14 +425,16 @@ export default function OttRemoteCatalogExplorer({
         );
       }
 
-      if (onTaskCreated) {
+      if (createdTask && onTaskCreated) {
         onTaskCreated(createdTask);
       }
 
       setConfirmItem(null);
     } catch (err) {
       console.warn('Error en handleConfirmDownload:', err);
-      handleQuickDownload(confirmItem);
+      if (showToast) {
+        showToast('error', `Error iniciando descarga para "${confirmItem.title}".`, 'Error');
+      }
       setConfirmItem(null);
     } finally {
       setSubmittingDownload(false);
@@ -833,12 +795,26 @@ export default function OttRemoteCatalogExplorer({
                     <div className="grid grid-cols-1 gap-1.5">
                       <button
                         type="button"
+                        disabled={Boolean(submittingTitles[item.title]) || Boolean(item.is_downloading)}
                         onClick={() => handleQuickDownload(item)}
-                        className="flex items-center justify-center gap-1.5 w-full py-2 px-2.5 rounded-lg text-xs font-bold bg-gradient-to-r from-[#E50914] to-orange-600 hover:from-red-600 hover:to-orange-500 text-white transition-all shadow-md shadow-red-950/40 active:scale-95 cursor-pointer"
-                        title="Descarga automÃ¡tica con FlixGrab Engine"
+                        className={`flex items-center justify-center gap-1.5 w-full py-2 px-2.5 rounded-lg text-xs font-bold transition-all shadow-md shadow-red-950/40 ${
+                          submittingTitles[item.title] || item.is_downloading
+                            ? 'bg-zinc-800 text-zinc-400 cursor-not-allowed opacity-70'
+                            : 'bg-gradient-to-r from-[#E50914] to-orange-600 hover:from-red-600 hover:to-orange-500 text-white active:scale-95 cursor-pointer'
+                        }`}
+                        title="Descarga automatica con FlixGrab Engine"
                       >
-                        <DownloadCloud className="w-3.5 h-3.5 text-white shrink-0" />
-                        <span className="truncate">+ FlixGrab / Descargar</span>
+                        {submittingTitles[item.title] ? (
+                          <>
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin text-white shrink-0" />
+                            <span className="truncate">Iniciando...</span>
+                          </>
+                        ) : (
+                          <>
+                            <DownloadCloud className="w-3.5 h-3.5 text-white shrink-0" />
+                            <span className="truncate">+ FlixGrab / Descargar</span>
+                          </>
+                        )}
                       </button>
                     </div>
                   )}

@@ -355,6 +355,7 @@ export default function OttSyncManagement({
 
   // Estado del reproductor de video local On-Net embebido
   const [activePlayerMedia, setActivePlayerMedia] = useState(null);
+  const deletedTaskIdsRef = useRef(new Set());
 
   const handleOpenPlayer = useCallback((task) => {
     const assignedProvider = task.provider || 'netflix';
@@ -523,7 +524,10 @@ export default function OttSyncManagement({
 
         if (resTasks.status === 'fulfilled') {
           const data = resTasks.value?.data;
-          const loadedTasks = Array.isArray(data) ? data : data?.tasks || [];
+          const rawLoaded = Array.isArray(data) ? data : data?.tasks || [];
+          const loadedTasks = rawLoaded.filter(
+            (t) => !deletedTaskIdsRef.current.has(String(t.id)) && !deletedTaskIdsRef.current.has(t.title)
+          );
           setTasks(loadedTasks);
           try {
             localStorage.setItem('flixhn_ott_tasks', JSON.stringify(loadedTasks));
@@ -554,7 +558,7 @@ export default function OttSyncManagement({
     const activeAccountsCount = providers.filter((p) => p.status === 'connected').length;
     const downloadingTasks = tasks.filter((t) => t.status === 'downloading' || t.status === 'processing');
     const pendingTasks = tasks.filter((t) => t.status === 'pending');
-    const completedTasks = tasks.filter((t) => t.status === 'completed' || t.progress >= 100);
+    const completedTasks = tasks.filter((t) => t.status === 'completed' || (t.status !== 'failed' && t.status !== 'cancelled' && Number(t.progress || 0) >= 100));
     const failedTasks = tasks.filter((t) => t.status === 'failed');
 
     let totalSpeed = 0;
@@ -820,6 +824,11 @@ export default function OttSyncManagement({
 
   const handleDeleteTask = async (task) => {
     const targetId = task.id || task.unique_id || task.external_id;
+    if (task.id) deletedTaskIdsRef.current.add(String(task.id));
+    if (task.title) deletedTaskIdsRef.current.add(task.title);
+    if (task.unique_id) deletedTaskIdsRef.current.add(String(task.unique_id));
+    if (task.external_id) deletedTaskIdsRef.current.add(String(task.external_id));
+
     const remaining = tasks.filter((t) => t.id !== task.id && t.title !== task.title);
     setTasks(remaining);
     try {
@@ -838,8 +847,15 @@ export default function OttSyncManagement({
   };
 
   const handleClearCompleted = async () => {
-    const remaining = tasks.filter((t) => !['completed', 'failed', 'cancelled'].includes(t.status) && Number(t.progress || 0) < 100);
-    const completedCount = tasks.length - remaining.length;
+    const remaining = tasks.filter((t) => !['completed', 'failed', 'cancelled'].includes(t.status) && (t.status !== 'completed' && Number(t.progress || 0) < 100));
+    const completedTasks = tasks.filter((t) => ['completed', 'failed', 'cancelled'].includes(t.status) || Number(t.progress || 0) >= 100);
+    completedTasks.forEach((t) => {
+      if (t.id) deletedTaskIdsRef.current.add(String(t.id));
+      if (t.title) deletedTaskIdsRef.current.add(t.title);
+      if (t.unique_id) deletedTaskIdsRef.current.add(String(t.unique_id));
+      if (t.external_id) deletedTaskIdsRef.current.add(String(t.external_id));
+    });
+    const completedCount = completedTasks.length;
     setTasks(remaining);
     try {
       localStorage.setItem('flixhn_ott_tasks', JSON.stringify(remaining));
@@ -1352,14 +1368,16 @@ export default function OttSyncManagement({
 
             {/* BotÃ³n rojo limpiar completadas si hay */}
             <div className="flex items-center gap-2 shrink-0">
-              <button
-                onClick={handleClearCompleted}
-                className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 border border-red-500/30 rounded-xl transition-all shadow-md shadow-red-950/40 active:scale-95 cursor-pointer"
-                title="Limpiar completadas de la lista"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>Limpiar Completados ({metrics.completed})</span>
-              </button>
+              {tasks.some((t) => ['completed', 'failed', 'cancelled'].includes(t.status) || Number(t.progress || 0) >= 100) && (
+                <button
+                  onClick={handleClearCompleted}
+                  className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 border border-red-500/30 rounded-xl transition-all shadow-md shadow-red-950/40 active:scale-95 cursor-pointer"
+                  title="Limpiar tareas finalizadas o fallidas de la lista"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Limpiar Tareas Finalizadas ({tasks.filter((t) => ['completed', 'failed', 'cancelled'].includes(t.status) || Number(t.progress || 0) >= 100).length})</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -1390,7 +1408,7 @@ export default function OttSyncManagement({
                 <tbody className="divide-y divide-zinc-800/70">
                   {filteredTasks.map((task) => {
                     const isDownloading = task.status === 'downloading' || task.status === 'processing';
-                    const isCompleted = task.status === 'completed' || Number(task.progress || 0) >= 100;
+                    const isCompleted = task.status === 'completed' || (task.status !== 'failed' && task.status !== 'cancelled' && Number(task.progress || 0) >= 100);
                     const isCancelled = task.status === 'cancelled';
                     const isFailed = task.status === 'failed';
                     const posterUrl = task.poster_url || 'https://images.unsplash.com/photo-1594909122845-11baa439b7bf?w=500';

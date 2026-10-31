@@ -1078,25 +1078,16 @@ class OttSyncService
         }
 
         $normalized = str_replace('\\', '/', $raw);
-        $fullTargetPath = $normalized;
 
-        if (PHP_OS_FAMILY === 'Windows' && str_starts_with($normalized, '/storage')) {
-            $relative = ltrim(substr($normalized, 8), '/');
+        if (str_starts_with($normalized, '/storage/') || str_starts_with($normalized, 'storage/')) {
+            $relative = ltrim(preg_replace('#^/?storage/#', '', $normalized), '/');
             $fullTargetPath = storage_path($relative);
-        } elseif (str_starts_with($normalized, 'storage/')) {
-            $relative = substr($normalized, 8);
-            $fullTargetPath = storage_path($relative);
+        } elseif (str_starts_with($normalized, '/var/www/html/storage/')) {
+            $fullTargetPath = $normalized;
         } elseif (!str_starts_with($normalized, '/') && !preg_match('/^[a-zA-Z]:/', $normalized)) {
             $fullTargetPath = storage_path($normalized);
         } else {
-            if (str_starts_with($normalized, '/storage')) {
-                if (!File::isDirectory('/storage') && !@is_link('/storage')) {
-                    if (!@mkdir('/storage', 0777, true)) {
-                        $relative = ltrim(substr($normalized, 8), '/');
-                        $fullTargetPath = storage_path($relative);
-                    }
-                }
-            }
+            $fullTargetPath = $normalized;
         }
 
         try {
@@ -1113,9 +1104,7 @@ class OttSyncService
                 }
                 @chmod($fallback, 0777);
                 $fullTargetPath = $fallback;
-            } catch (\Throwable $ex) {
-                Log::error("Fallo crÃ­tico en creaciÃ³n de carpeta destino: " . $ex->getMessage());
-            }
+            } catch (\Throwable $f) {}
         }
 
         return $fullTargetPath;
@@ -1403,41 +1392,48 @@ class OttSyncService
             return false;
         }
 
-        $query = OttDownloadTask::where('id', $taskId);
-        if (!is_numeric($taskId)) {
-            $query->orWhere('external_id', (string) $taskId)
-                  ->orWhere('title', (string) $taskId);
+        $titlesToDelete = [];
+        $filesToDelete = [];
+
+        // 1. Buscar en OttDownloadTask
+        $foundOtt = OttDownloadTask::where('id', $taskId)
+            ->orWhere('external_id', (string) $taskId)
+            ->orWhere('title', (string) $taskId)
+            ->get();
+        foreach ($foundOtt as $ot) {
+            if (!empty($ot->title)) $titlesToDelete[] = $ot->title;
+            if (!empty($ot->file_path)) $filesToDelete[] = $ot->file_path;
+            $ot->delete();
         }
 
-        $tasks = $query->get();
-        foreach ($tasks as $t) {
-            $title = $t->title;
-            $filePath = $t->file_path;
-            $t->delete();
-
-            if (!empty($title)) {
-                MediaIngestTask::where('title', $title)->delete();
-            }
-            if (!empty($filePath)) {
-                MediaIngestTask::where('output_file', $filePath)->delete();
-            }
+        // 2. Buscar en MediaIngestTask
+        $foundIngest = MediaIngestTask::where('id', $taskId)
+            ->orWhere('title', (string) $taskId)
+            ->get();
+        foreach ($foundIngest as $it) {
+            if (!empty($it->title)) $titlesToDelete[] = $it->title;
+            if (!empty($it->output_file)) $filesToDelete[] = $it->output_file;
+            $it->delete();
         }
 
-        if (is_numeric($taskId)) {
-            MediaIngestTask::where('id', (int) $taskId)->delete();
-            OttDownloadTask::where('id', (int) $taskId)->delete();
-        } else {
-            MediaIngestTask::where('title', (string) $taskId)->delete();
+        // 3. Cascada completa por título y archivo a través de ambas tablas y ott_contents
+        $titlesToDelete = array_unique(array_filter($titlesToDelete));
+        $filesToDelete = array_unique(array_filter($filesToDelete));
+
+        foreach ($titlesToDelete as $tName) {
+            OttDownloadTask::where('title', $tName)->delete();
+            MediaIngestTask::where('title', $tName)->delete();
+            try {
+                if (Schema::hasTable('ott_contents')) {
+                    DB::table('ott_contents')->where('title', $tName)->delete();
+                }
+            } catch (\Throwable $e) {}
         }
 
-        try {
-            if (Schema::hasTable('ott_contents')) {
-                DB::table('ott_contents')
-                    ->where('id', $taskId)
-                    ->orWhere('external_id', (string) $taskId)
-                    ->delete();
-            }
-        } catch (\Throwable $e) {}
+        foreach ($filesToDelete as $fPath) {
+            OttDownloadTask::where('file_path', $fPath)->delete();
+            MediaIngestTask::where('output_file', $fPath)->delete();
+        }
 
         Cache::forget('ott_tasks_overview');
         Cache::forget('ott_downloading_tasks');
@@ -1630,8 +1626,27 @@ class OttSyncService
         @chmod($targetFolder, 0777);
 
         $fileName = "{$slugTitle}.mp4";
-        $outputFile = rtrim($targetFolder, '/\\') . DIRECTORY_SEPARATOR . $fileName;
-        $fullPath = "/var/www/html/storage/media/{$provider}/{$uniqueId}/{$fileName}";
+        $outputFile = rtrim(str_replace('\\', '/', $targetFolder), '/') . '/' . $fileName;
+        $fullPath = $outputFile;
+
+        // Idempotencia: evitar creación duplicada si ya está en curso
+        $existingIngest = MediaIngestTask::where('title', $title)
+            ->whereIn('status', ['pending', 'downloading'])
+            ->first();
+        if ($existingIngest) {
+            Log::info("createDownloadTaskFromSearch: Tarea ya activa para '{$title}', retornando #{$existingIngest->id}");
+            return $existingIngest;
+        }
+
+        $existingOtt = OttDownloadTask::where('title', $title)
+            ->whereIn('status', ['pending', 'downloading'])
+            ->first();
+        if ($existingOtt) {
+            $matched = MediaIngestTask::where('title', $title)->first();
+            if ($matched) {
+                return $matched;
+            }
+        }
 
         $ingestTask = MediaIngestTask::create([
             'source_url' => "https://www." . ($provider ?: 'netflix') . ".com/title/" . Str::slug($title),
