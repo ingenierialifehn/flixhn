@@ -1510,12 +1510,21 @@ export default function OttSyncManagement({
                               {isCompleted ? (
                                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950/70 text-emerald-400 border border-emerald-500/30">
                                   <Check className="w-2.5 h-2.5" />
-                                  âœ“ On-Net Local
+                                  ✓ On-Net Local
                                 </span>
                               ) : isDownloading ? (
                                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-sky-950/70 text-sky-400 border border-sky-500/30">
                                   <RefreshCw className="w-2.5 h-2.5 animate-spin" />
-                                  âš¡ Descargando
+                                  ⚡ Descargando
+                                </span>
+                              ) : isFailed ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-rose-950/70 text-rose-400 border border-rose-500/30">
+                                  <X className="w-2.5 h-2.5" />
+                                  ✕ Fallido
+                                </span>
+                              ) : isCancelled ? (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-zinc-800 text-zinc-400 border border-zinc-700">
+                                  Cancelado
                                 </span>
                               ) : (
                                 <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-amber-950/70 text-amber-400 border border-amber-500/30">

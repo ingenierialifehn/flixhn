@@ -1616,9 +1616,11 @@ class OttSyncService
             $slugTitle = 'ott_' . time();
         }
 
-        $uniqueId = !empty($payload['id']) ? Str::slug($payload['id']) : ($provider . '_' . substr(md5($title . microtime()), 0, 8));
+        $rawId = $payload['id'] ?? $payload['unique_id'] ?? null;
+        $uniqueId = !empty($rawId) ? preg_replace('/[^a-zA-Z0-9_\-]/', '_', (string) $rawId) : ($provider . '_' . substr(md5($title . microtime()), 0, 8));
 
-        $targetFolder = self::resolveAndEnsureTargetFolder("/storage/media/{$provider}/{$uniqueId}", $provider);
+        $targetFolderInput = !empty($payload['target_folder']) ? $payload['target_folder'] : "/storage/media/{$provider}/{$uniqueId}";
+        $targetFolder = self::resolveAndEnsureTargetFolder($targetFolderInput, $provider);
 
         if (!File::isDirectory($targetFolder)) {
             File::makeDirectory($targetFolder, 0777, true, true);

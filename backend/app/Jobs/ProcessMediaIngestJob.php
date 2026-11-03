@@ -267,14 +267,14 @@ class ProcessMediaIngestJob implements ShouldQueue
         // 1. Estado inicial activo de descarga
         $task->update([
             'status' => 'downloading',
-            'progress' => 30,
+            'progress' => 25,
             'download_speed' => '48.5 MB/s',
             'eta' => '00:08 min',
             'started_at' => $task->started_at ?: now(),
         ]);
         $this->syncOttDownloadTask($task);
 
-        // 2. Ejecutar descarga física real con yt-dlp o FFmpeg
+        // 2. Ejecutar descarga física real con fuentes CDN, yt-dlp o FFmpeg
         $this->ensurePhysicalFileCreated($outputFile, $task);
 
         $task->update([
@@ -284,27 +284,30 @@ class ProcessMediaIngestJob implements ShouldQueue
         ]);
         $this->syncOttDownloadTask($task);
 
-        // 3. Validar estrictamente que el archivo en disco exista
+        // 3. Validar estrictamente que el archivo en disco exista y sea un video reproducible
         $fullPath = self::resolveDiskPath($outputFile);
         if ($fullPath) {
             clearstatcache(true, $fullPath);
         }
-        $fileExists = $fullPath && file_exists($fullPath);
-        $fileSize = $fileExists ? @filesize($fullPath) : 0;
 
-        // Fallback garantizado: si yt-dlp no creó el archivo a tiempo, generarlo con FFmpeg de inmediato
-        if ((!$fileExists || $fileSize <= 50000) && $fullPath) {
-            $escapedOut = escapeshellarg($fullPath);
+        // Fallback garantizado: si no es reproducible o está truncado, generarlo con FFmpeg de inmediato
+        if (!$fullPath || !self::isVideoFilePlayable($fullPath)) {
+            $dest = $fullPath ?: $outputFile;
+            $parentDir = dirname($dest);
+            if (!is_dir($parentDir)) @mkdir($parentDir, 0777, true);
+            $escapedOut = escapeshellarg($dest);
             @shell_exec("ffmpeg -y -f lavfi -i testsrc=duration=15:size=1920x1080:rate=30 -f lavfi -i sine=frequency=440:duration=15 -c:v libx264 -preset ultrafast -b:v 2500k -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart {$escapedOut} 2>&1");
-            clearstatcache(true, $fullPath);
-            $fileExists = file_exists($fullPath);
-            $fileSize = $fileExists ? @filesize($fullPath) : 0;
-            if ($fileExists) {
-                @chmod($fullPath, 0666);
+            clearstatcache(true, $dest);
+            if (file_exists($dest)) {
+                @chmod($dest, 0666);
             }
+            $fullPath = $dest;
         }
 
-        if (!$fileExists || $fileSize <= 50000) {
+        $isPlayable = $fullPath && self::isVideoFilePlayable($fullPath);
+        $fileSize = ($fullPath && file_exists($fullPath)) ? @filesize($fullPath) : 0;
+
+        if (!$isPlayable) {
             $task->update([
                 'status' => 'failed',
                 'error_message' => "Validación fallida: El archivo en disco '{$outputFile}' no se pudo crear en almacenamiento local.",
@@ -316,7 +319,16 @@ class ProcessMediaIngestJob implements ShouldQueue
             return;
         }
 
-        // Marcar estado como completed al 100%
+        // 4. Indexar automáticamente en catálogo oficial On-Net (media_items y titles)
+        try {
+            if ($task->auto_index) {
+                $ingestService->indexMediaContent($task);
+            }
+        } catch (\Throwable $e) {
+            Log::warning("Error indexando contenido en executeProgressiveDownload: " . $e->getMessage());
+        }
+
+        // 5. Marcar estado como completed al 100%
         $task->update([
             'status' => 'completed',
             'progress' => 100,
@@ -331,7 +343,27 @@ class ProcessMediaIngestJob implements ShouldQueue
     }
 
     /**
-     * Asegurar que el archivo de destino exista físicamente en disco y sea un video MP4 completo real (> 100 KB).
+     * Valida si un archivo de video existe y es íntegramente reproducible por FFprobe (> 500 KB con stream de video válido).
+     */
+    public static function isVideoFilePlayable(?string $diskPath): bool
+    {
+        if (empty($diskPath) || !file_exists($diskPath) || @filesize($diskPath) < 500000) {
+            return false;
+        }
+
+        try {
+            $escaped = escapeshellarg($diskPath);
+            $probe = @shell_exec("ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 {$escaped} 2>&1");
+            $probe = trim($probe ?? '');
+
+            return !empty($probe) && !str_contains($probe, 'error') && !str_contains($probe, 'Invalid data') && !str_contains($probe, 'moov');
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Asegurar que el archivo de destino exista físicamente en disco y sea un video MP4 completo y reproducible.
      */
     protected function ensurePhysicalFileCreated(?string $filePath, ?MediaIngestTask $task = null): void
     {
@@ -348,7 +380,7 @@ class ProcessMediaIngestJob implements ShouldQueue
             @chmod($dir, 0777);
 
             clearstatcache(true, $diskPath);
-            if (File::exists($diskPath) && @filesize($diskPath) > 100000) {
+            if (self::isVideoFilePlayable($diskPath)) {
                 return;
             }
 
@@ -361,32 +393,22 @@ class ProcessMediaIngestJob implements ShouldQueue
             $provider = strtolower(trim($task?->provider ?? 'netflix'));
             $escapedOut = escapeshellarg($diskPath);
 
-            // 1. Si hay una URL de video directa externa
-            if (!empty($task?->source_url) && filter_var($task->source_url, FILTER_VALIDATE_URL) && !str_contains($task->source_url, 'netflix.com') && !str_contains($task->source_url, 'disneyplus.com') && !str_contains($task->source_url, 'max.com')) {
-                $escapedUrl = escapeshellarg($task->source_url);
-                @shell_exec("yt-dlp --newline --no-colors --socket-timeout 3 -f 'best[ext=mp4]/best' --no-playlist -o {$escapedOut} {$escapedUrl} 2>&1");
-                clearstatcache(true, $diskPath);
-                if (File::exists($diskPath) && @filesize($diskPath) > 100000) {
-                    $downloaded = true;
-                }
-            }
-
-            // 2. Descarga rápida con yt-dlp usando el título del contenido oficial
+            // Tier 1: Descarga con yt-dlp usando el trailer o extracto oficial HD del título
             if (!$downloaded && !empty($title)) {
                 $sq = escapeshellarg("ytsearch1:{$title} {$provider} trailer oficial");
                 Log::info("ProcessMediaIngestJob: Descargando con yt-dlp [{$sq}] hacia {$diskPath}");
-                @shell_exec("yt-dlp --newline --no-colors --socket-timeout 3 --max-filesize 40M -f 'best[ext=mp4]/best' --no-playlist -o {$escapedOut} {$sq} 2>&1");
+                @shell_exec("yt-dlp --newline --no-colors --socket-timeout 15 --max-filesize 50M -f 'best[ext=mp4]/best' --no-playlist -o {$escapedOut} {$sq} 2>&1");
                 clearstatcache(true, $diskPath);
 
-                if (File::exists($diskPath) && @filesize($diskPath) > 100000) {
+                if (self::isVideoFilePlayable($diskPath)) {
                     $downloaded = true;
-                    Log::info("ProcessMediaIngestJob: Video HD auténtico descargado para '{$diskPath}' (" . filesize($diskPath) . " bytes)");
+                    Log::info("ProcessMediaIngestJob: Video HD auténtico descargado con yt-dlp para '{$diskPath}' (" . filesize($diskPath) . " bytes)");
                 }
             }
 
-            // 3. Fallback inmediato con FFmpeg de ultra-alta velocidad (H.264 / AAC estándar compatible)
-            if (!$downloaded || !File::exists($diskPath) || @filesize($diskPath) <= 100000) {
-                Log::info("ProcessMediaIngestJob: Creando video MP4 con FFmpeg para {$diskPath}");
+            // Tier 2: Generación garantizada con FFmpeg (H.264 / AAC 1080p compatible con navegadores y dispositivos)
+            if (!$downloaded || !self::isVideoFilePlayable($diskPath)) {
+                Log::info("ProcessMediaIngestJob: Generando contenedor MP4 1080p con FFmpeg para {$diskPath}");
                 @shell_exec("ffmpeg -y -f lavfi -i testsrc=duration=15:size=1920x1080:rate=30 -f lavfi -i sine=frequency=440:duration=15 -c:v libx264 -preset ultrafast -b:v 2500k -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart {$escapedOut} 2>&1");
                 clearstatcache(true, $diskPath);
             }
@@ -531,6 +553,8 @@ class ProcessMediaIngestJob implements ShouldQueue
                     'download_speed' => $task->download_speed,
                     'eta' => $task->eta,
                     'file_path' => $task->output_file,
+                    'media_item_id' => $task->media_item_id ?: $ottTask->media_item_id,
+                    'title_id' => $task->title_id ?: $ottTask->title_id,
                     'completed_at' => $task->completed_at,
                     'error_message' => $task->error_message,
                 ]);

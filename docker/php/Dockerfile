@@ -1,6 +1,6 @@
 FROM php:8.3-fpm-alpine
 
-RUN apk add --no-cache curl git ffmpeg mariadb-client yt-dlp
+RUN apk add --no-cache curl git ffmpeg mariadb-client python3 py3-pip yt-dlp
 
 COPY --from=mlocati/php-extension-installer /usr/bin/install-php-extensions /usr/local/bin/
 

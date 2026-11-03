@@ -635,13 +635,17 @@ export default function OttRemoteCatalogExplorer({
               (activeMatch && (activeMatch.status === 'completed' || Number(activeMatch.progress) >= 100))
             );
 
-            const isDownloading = !isCompleted && Boolean(
-              item.is_downloading ||
+            const isFailed = Boolean(
+              !isCompleted && activeMatch && (activeMatch.status === 'failed' || activeMatch.status === 'cancelled')
+            );
+
+            const isDownloading = !isCompleted && !isFailed && Boolean(
+              (item.is_downloading && (!activeMatch || activeMatch.status === 'downloading')) ||
               item.status === 'Descargando' ||
               (activeMatch && activeMatch.status === 'downloading')
             );
 
-            const isInQueue = !isCompleted && !isDownloading && Boolean(
+            const isInQueue = !isCompleted && !isFailed && !isDownloading && Boolean(
               item.is_in_queue ||
               (activeMatch && activeMatch.status === 'pending')
             );
@@ -780,6 +784,19 @@ export default function OttRemoteCatalogExplorer({
                           style={{ width: `${Math.min(100, Math.max(8, Number(progressVal) || 15))}%` }}
                         />
                       </div>
+                    </div>
+                  ) : isFailed ? (
+                    // Estado Fallido: Botón para reintentar
+                    <div className="grid grid-cols-1 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => handleQuickDownload(item)}
+                        className="flex items-center justify-center gap-1.5 w-full py-2 px-2.5 rounded-lg text-xs font-bold bg-rose-950/80 hover:bg-rose-900 border border-rose-500/50 text-rose-300 transition-all shadow-md active:scale-95 cursor-pointer"
+                        title="La descarga previa reportó error. Haz clic para reintentar."
+                      >
+                        <RefreshCw className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                        <span className="truncate">Reintentar Descarga</span>
+                      </button>
                     </div>
                   ) : isInQueue ? (
                     // Estado 3: En Cola (Ãmbar)
