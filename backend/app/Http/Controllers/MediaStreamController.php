@@ -102,18 +102,35 @@ class MediaStreamController extends Controller
             ];
 
             // Rutas adicionales de compatibilidad de almacenamiento Docker/Linux y Windows
-            $cleanedStorage = preg_replace('#^/?storage/#', '', $rawPath);
+            $cleanedStorage = preg_replace('#^/?var/www/html/storage/#', '', $rawPath);
+            $cleanedStorage = preg_replace('#^/?storage/#', '', $cleanedStorage);
+            $cleanedStorage = ltrim($cleanedStorage, '/');
+
+            // Variación de guiones y guiones bajos en nombres de carpetas
+            $parts = explode('/', $cleanedStorage);
+            $altParts = $parts;
+            if (count($parts) >= 2) {
+                $dirIdx = count($parts) - 2;
+                $altParts[$dirIdx] = str_contains($altParts[$dirIdx], '_')
+                    ? str_replace('_', '-', $altParts[$dirIdx])
+                    : str_replace('-', '_', $altParts[$dirIdx]);
+            }
+            $altStorage = implode('/', $altParts);
+
             $possiblePaths[] = storage_path($cleanedStorage);
-            $possiblePaths[] = storage_path('media/' . ltrim($cleanedStorage, '/'));
+            $possiblePaths[] = storage_path($altStorage);
+            $possiblePaths[] = storage_path('media/' . $cleanedStorage);
+            $possiblePaths[] = storage_path('media/' . $altStorage);
             $possiblePaths[] = base_path($rawPath);
             $possiblePaths[] = base_path('storage/' . $cleanedStorage);
             $possiblePaths[] = '/var/www/html/storage/' . $cleanedStorage;
+            $possiblePaths[] = '/var/www/html/storage/' . $altStorage;
             $possiblePaths[] = '/storage/' . $cleanedStorage;
             $possiblePaths[] = '/var/media/' . basename($rawPath);
 
             // Verificar si el archivo real existe en cualquiera de esas rutas
             foreach ($possiblePaths as $cand) {
-                if (!empty($cand) && file_exists($cand) && !is_dir($cand) && @filesize($cand) > 1024) {
+                if (!empty($cand) && file_exists($cand) && !is_dir($cand) && !str_ends_with($cand, '.part') && !str_ends_with($cand, '.download') && @filesize($cand) > 1024) {
                     $realFile = $cand;
                     break;
                 }
@@ -169,7 +186,7 @@ class MediaStreamController extends Controller
                 foreach ($patterns as $pattern) {
                     $matches = glob($pattern) ?: [];
                     foreach ($matches as $match) {
-                        if (file_exists($match) && !is_dir($match) && @filesize($match) > 1024) {
+                        if (file_exists($match) && !is_dir($match) && !str_ends_with($match, '.part') && !str_ends_with($match, '.download') && @filesize($match) > 1024) {
                             $realFile = $match;
                             break 2;
                         }
@@ -179,52 +196,26 @@ class MediaStreamController extends Controller
 
                     }
 
-        // Si aún no está en disco, generarlo inmediatamente en Full HD H.264/AAC con FFmpeg y faststart en la ruta esperada
-        if (!$realFile) {
-            $targetFile = !empty($rawPath)
-                ? (self::resolveDiskPathStatic($rawPath) ?: $rawPath)
-                : storage_path("media/netflix/" . Str::slug($titleQuery ?: 'media') . "/" . Str::slug($titleQuery ?: 'media') . ".mp4");
-
-            if (str_starts_with($targetFile, '/storage/') || str_starts_with($targetFile, 'storage/')) {
-                $targetFile = storage_path(ltrim(preg_replace('#^/?storage/#', '', $targetFile), '/'));
-            }
-
-            $dir = dirname($targetFile);
-            if (!is_dir($dir)) {
-                @mkdir($dir, 0777, true);
-            }
-
-            $escapedOut = escapeshellarg($targetFile);
-            @shell_exec("ffmpeg -y -f lavfi -i testsrc=duration=15:size=1920x1080:rate=30 -f lavfi -i sine=frequency=440:duration=15 -c:v libx264 -preset ultrafast -b:v 2500k -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart {$escapedOut} 2>&1");
-            clearstatcache(true, $targetFile);
-
-            if (file_exists($targetFile) && @filesize($targetFile) > 1024) {
-                @chmod($targetFile, 0666);
-                $realFile = $targetFile;
-            }
-        }
-
-        // Si el archivo real existe, entregarlo inmediatamente por streaming HTTP 206
-        if ($realFile) {
+        // Si el archivo real existe en almacenamiento local On-Net, entregarlo inmediatamente por streaming HTTP 206
+        if ($realFile && file_exists($realFile) && @filesize($realFile) > 1024) {
             return $this->serveStreamWithByteRange($request, $realFile);
         }
 
-        $fallbackSample = $this->getFallbackSamplePath();
-        if ($fallbackSample && file_exists($fallbackSample) && @filesize($fallbackSample) >= 1024) {
-            Log::info("MediaStreamController@stream: Sirviendo sample de contingencia para [{$rawPath}]");
-            return $this->serveStreamWithByteRange($request, $fallbackSample);
+        // Si no está en disco aún, verificar si hay un stream auténtico disponible (Emby / Red On-Net)
+        $lookupTitle = $titleQuery ?: ($mediaItem?->title ?? basename($rawPath));
+        if (!empty($lookupTitle)) {
+            try {
+                $streamInfo = app(\App\Services\MediaIngestService::class)->resolveUniversalStreamUrl($lookupTitle);
+                if ($streamInfo && !empty($streamInfo['stream_url'])) {
+                    Log::info("MediaStreamController@stream: Sirviendo stream auténtico para [{$lookupTitle}] desde {$streamInfo['source']}");
+                    return $this->proxyRemoteStreamWithByteRange($request, $streamInfo['stream_url']);
+                }
+            } catch (\Throwable $e) {
+                Log::warning("Error resolviendo stream remoto para [{$lookupTitle}]: " . $e->getMessage());
+            }
         }
 
-        // Si por alguna razón extrema no existiera el sample, crearlo al vuelo en storage/media/samples/sample.mp4
-        $emergencySample = storage_path('media/samples/emergency.mp4');
-        $dir = dirname($emergencySample);
-        if (!is_dir($dir)) @mkdir($dir, 0777, true);
-        @shell_exec("ffmpeg -y -f lavfi -i testsrc=duration=30:size=1280x720:rate=24 -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -t 30 -c:v libx264 -preset ultrafast -b:v 1500k -pix_fmt yuv420p -c:a aac -movflags +faststart " . escapeshellarg($emergencySample) . " 2>&1");
-        if (file_exists($emergencySample)) {
-            return $this->serveStreamWithByteRange($request, $emergencySample);
-        }
-
-        Log::warning("MediaStreamController@stream: Archivo físico no encontrado para [{$rawPath}]");
+        Log::warning("MediaStreamController@stream: Archivo físico o stream no encontrado para [{$rawPath}]");
         return response()->json([
             'error' => 'Archivo físico no encontrado en el servidor',
             'path' => $mediaItem?->file_path ?? $rawPath,
@@ -247,7 +238,7 @@ class MediaStreamController extends Controller
                 @mkdir($dir, 0777, true);
             }
             $escaped = escapeshellarg($samplePath);
-            @shell_exec("ffmpeg -y -f lavfi -i testsrc=duration=15:size=1920x1080:rate=30 -f lavfi -i sine=frequency=440:duration=15 -c:v libx264 -preset ultrafast -b:v 2500k -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart {$escaped} 2>&1");
+            // Sin generador testsrc
             clearstatcache(true, $samplePath);
             if (file_exists($samplePath) && @filesize($samplePath) > 50000) {
                 @chmod($samplePath, 0666);
@@ -380,6 +371,82 @@ class MediaStreamController extends Controller
     /**
      * Servir archivo multimedia con soporte completo para encabezados HTTP Range: bytes.
      */
+    
+    /**
+     * Hace proxy transparente del stream remoto auténtico (Emby / CDN) hacia el navegador
+     * soportando cabeceras HTTP 206 Partial Content y Range requests nativamente.
+     */
+    protected function proxyRemoteStreamWithByteRange(Request $request, string $remoteUrl)
+    {
+        $rangeHeader = $request->header('Range');
+        $headers = [
+            'User-Agent: FlixGrab/3.0',
+            'Accept: */*',
+        ];
+        if (!empty($rangeHeader)) {
+            $headers[] = "Range: {$rangeHeader}";
+        }
+
+        $opts = [
+            'http' => [
+                'method' => 'GET',
+                'header' => implode("\r\n", $headers) . "\r\n",
+                'timeout' => 30,
+                'follow_location' => 1,
+            ]
+        ];
+
+        $context = stream_context_create($opts);
+        $fp = @fopen($remoteUrl, 'rb', false, $context);
+        if (!$fp) {
+            return response()->json(['error' => 'No fue posible conectar al stream remoto de alta definición'], 502);
+        }
+
+        $responseHeaders = $http_response_header ?? [];
+        $status = 200;
+        $contentRange = null;
+        $contentLength = null;
+        $contentType = 'video/mp4';
+
+        foreach ($responseHeaders as $h) {
+            if (preg_match('#HTTP/[0-9\.]+\s+([0-9]+)#i', $h, $sm)) {
+                $status = (int) $sm[1];
+            } elseif (stripos($h, 'Content-Range:') === 0) {
+                $contentRange = trim(substr($h, 14));
+            } elseif (stripos($h, 'Content-Length:') === 0) {
+                $contentLength = trim(substr($h, 15));
+            } elseif (stripos($h, 'Content-Type:') === 0) {
+                $contentType = trim(substr($h, 13));
+            }
+        }
+
+        $outHeaders = [
+            'Content-Type' => $contentType,
+            'Accept-Ranges' => 'bytes',
+            'Access-Control-Allow-Origin' => '*',
+            'Cache-Control' => 'no-cache, no-store, must-revalidate',
+        ];
+        if ($contentLength !== null) $outHeaders['Content-Length'] = $contentLength;
+        if ($contentRange !== null) $outHeaders['Content-Range'] = $contentRange;
+
+        if ($request->isMethod('HEAD')) {
+            @fclose($fp);
+            return response('', $status, $outHeaders);
+        }
+
+        return new StreamedResponse(function () use ($fp) {
+            while (ob_get_level() > 0) ob_end_clean();
+            $chunkSize = 256 * 1024;
+            while (!feof($fp) && !connection_aborted()) {
+                $data = fread($fp, $chunkSize);
+                if ($data === false || $data === '') break;
+                echo $data;
+                flush();
+            }
+            @fclose($fp);
+        }, $status, $outHeaders);
+    }
+
     protected function serveStreamWithByteRange(Request $request, string $filePath)
     {
         $fileSize = (int) @filesize($filePath);

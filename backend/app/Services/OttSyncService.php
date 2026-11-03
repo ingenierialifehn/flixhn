@@ -1302,8 +1302,26 @@ class OttSyncService
         }
 
         $limit = isset($filters['limit']) ? (int) $filters['limit'] : 100;
+        $tasks = $query->take($limit)->get();
 
-        return $query->take($limit)->get();
+        // Sincronizar reactivamente el progreso desde MediaIngestTask
+        foreach ($tasks as $ot) {
+            if (in_array($ot->status, ['pending', 'downloading'])) {
+                $ingest = MediaIngestTask::where('output_file', $ot->file_path)
+                    ->orWhere('title', $ot->title)
+                    ->orderBy('id', 'desc')
+                    ->first();
+                if ($ingest && ($ingest->status !== $ot->status || $ingest->progress != $ot->progress)) {
+                    $ot->status = $ingest->status;
+                    $ot->progress = $ingest->progress;
+                    $ot->download_speed = $ingest->download_speed;
+                    $ot->eta = $ingest->eta;
+                    $ot->save();
+                }
+            }
+        }
+
+        return $tasks;
     }
 
     public function getDownloadTasks(array $filters = []): array
