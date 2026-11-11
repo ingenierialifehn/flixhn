@@ -129,7 +129,10 @@ class ProcessMediaIngestJob implements ShouldQueue
             // 2. Resolver y ejecutar descarga real externa o de catálogo universal (Emby / CDN)
             $streamInfo = null;
             if (!$ingestService->isRealDownloadUrl($task->source_url)) {
-                $streamInfo = $ingestService->resolveUniversalStreamUrl($task->title, $task->provider, null, null);
+                $ottTask = OttDownloadTask::where('title', $task->title)->latest()->first();
+                $originalTitle = $ottTask?->metadata['original_title'] ?? null;
+                $mediaType = $ottTask?->metadata['media_type'] ?? null;
+                $streamInfo = $ingestService->resolveUniversalStreamUrl($task->title, $task->provider, $originalTitle, $mediaType);
             }
 
             if ($streamInfo && !empty($streamInfo['stream_url'])) {
@@ -350,6 +353,12 @@ class ProcessMediaIngestJob implements ShouldQueue
                 @unlink($partFile);
                 return;
             }
+            if ($fresh && $fresh->status === 'completed') {
+                Log::info("Descarga ya completada por worker concurrente para tarea #{$task->id}");
+                @fclose($in);
+                @fclose($out);
+                return;
+            }
 
             $buffer = fread($in, $chunkSize);
             if ($buffer === false || $buffer === '') {
@@ -386,6 +395,16 @@ class ProcessMediaIngestJob implements ShouldQueue
         @fclose($out);
 
         clearstatcache(true, $partFile);
+        clearstatcache(true, $outputFile);
+
+        if (File::exists($outputFile) && File::size($outputFile) > 10000000 && self::isVideoFilePlayable($outputFile)) {
+            if (File::exists($partFile)) {
+                @unlink($partFile);
+            }
+            $this->finalizeDownloadTask($task, $ingestService, $outputFile);
+            return;
+        }
+
         $finalSize = File::exists($partFile) ? File::size($partFile) : 0;
 
         if ($finalSize < 10000000) {

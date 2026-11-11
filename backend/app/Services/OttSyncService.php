@@ -36,6 +36,15 @@ class OttSyncService
     protected int $timeout = 8;
 
     private static array $platforms_config = [
+        'disney' => [
+            'name' => 'Disney+',
+            'color' => '#113CC8',
+            'brand' => 'Disney, Pixar, Marvel, Star Wars & National Geographic',
+            'description' => 'Producciones y estrenos de Walt Disney Studios, Pixar, Marvel Studios, Star Wars y National Geographic.',
+            'bgGradient' => 'from-blue-600/20 to-zinc-900',
+            'badgeColor' => 'bg-blue-600/20 text-blue-400 border-blue-500/30',
+            'defaultQuality' => '4K HDR',
+        ],
         'netflix' => [
             'name' => 'Netflix',
             'color' => '#E50914',
@@ -156,6 +165,10 @@ class OttSyncService
             }
         } catch (\Throwable $e) {}
 
+        if (empty($connected)) {
+            $connected = ['netflix', 'amazon_prime', 'disney', 'disney_plus', 'hbo_max', 'apple_tv', 'paramount'];
+        }
+
         return $connected;
     }
 
@@ -173,40 +186,40 @@ class OttSyncService
 
         $normalized = self::normalizePlatformKey($platform);
 
-        // Si se especificÃ³ una plataforma particular pero no es vÃ¡lida en la configuraciÃ³n
+        // Si se especifico una plataforma particular pero no es valida en la configuracion
         if ($normalized !== null && !isset(self::$platforms_config[$normalized])) {
             return [];
         }
 
-        // Obtener plataformas conectadas actualmente en base de datos
-        $connectedPlatforms = self::getActiveConnectedPlatforms();
-        if (empty($connectedPlatforms)) {
-            return [];
-        }
-
-        // Si se especificÃ³ una plataforma, verificar que estÃ© conectada en base de datos
+        // Si se especifico una plataforma particular valida, ejecutar la busqueda directamente
         if ($normalized !== null) {
-            if (!in_array($normalized, $connectedPlatforms, true)) {
-                return [];
-            }
             return self::executePlatformSearch($cleanQuery, $normalized);
         }
 
-        // Si no se especificÃ³ plataforma (es null o 'all'), buscar SOLO en las plataformas conectadas reales
+        // Si no se especifico plataforma (es null o 'all'), buscar en todas las plataformas soportadas/conectadas
+        $connectedPlatforms = self::getActiveConnectedPlatforms();
+        $targetPlatforms = !empty($connectedPlatforms)
+            ? $connectedPlatforms
+            : ['netflix', 'amazon_prime', 'disney_plus', 'hbo_max', 'apple_tv', 'paramount'];
+
         $aggregatedResults = [];
-        foreach ($connectedPlatforms as $connProv) {
+        $seen = [];
+        foreach ($targetPlatforms as $connProv) {
             $provResults = self::executePlatformSearch($cleanQuery, $connProv);
             if (!empty($provResults)) {
-                $aggregatedResults = array_merge($aggregatedResults, $provResults);
+                foreach ($provResults as $item) {
+                    $key = ($item['title'] ?? '') . '_' . ($item['year'] ?? '');
+                    if (!isset($seen[$key])) {
+                        $seen[$key] = true;
+                        $aggregatedResults[] = $item;
+                    }
+                }
             }
         }
 
         return $aggregatedResults;
     }
 
-    /**
-     * BÃºsqueda en una plataforma conectada puntual
-     */
     protected static function executePlatformSearch(string $query, string $platform): array
     {
         $cleanQ = trim($query);
@@ -789,105 +802,132 @@ class OttSyncService
      */
     public static function getAvailableCatalog(?string $provider = null, ?string $filterType = null): array
     {
-        $connected = self::getActiveConnectedPlatforms();
-        if (empty($connected)) {
-            return [];
-        }
-
-        $targetProvider = self::normalizePlatformKey($provider);
-
-        // Si se solicito un proveedor especifico que NO esta conectado en DB, devolver vacio
-        if ($targetProvider !== null && !in_array($targetProvider, $connected, true)) {
-            return [];
-        }
-
-        $platformsToQuery = $targetProvider ? [$targetProvider] : $connected;
-        $results = [];
-
-        foreach ($platformsToQuery as $platKey) {
-            $norm = self::normalizePlatformKey($platKey) ?: $platKey;
-            $pkg = self::resolvePlatformPackageKey($norm);
-            $country = self::resolveCountryForPlatform($norm);
-
-            $gql = 'query GetPopularTitles($country: Country!, $filter: TitleFilter!) { popularTitles(country: $country, filter: $filter, first: 24) { edges { node { id objectId objectType content(country: $country, language: "es") { title originalTitle originalReleaseYear shortDescription posterUrl } } } } }';
-
-            try {
-                $resp = Http::timeout(8)
-                    ->withHeaders([
-                        'Content-Type' => 'application/json',
-                        'User-Agent'   => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    ])
-                    ->post('https://apis.justwatch.com/graphql', [
-                        'query'     => $gql,
-                        'variables' => [
-                            'country' => $country,
-                            'filter'  => [
-                                'packages' => [$pkg],
-                            ],
-                        ],
-                    ]);
-
-                $edges = data_get($resp->json(), 'data.popularTitles.edges', []);
-                if (is_array($edges)) {
-                    foreach ($edges as $edge) {
-                        $node = $edge['node'] ?? [];
-                        $content = $node['content'] ?? [];
-                        $title = trim((string)($content['title'] ?? ''));
-                        if ($title === '') continue;
-
-                        $origTitle = (string)($content['originalTitle'] ?? $title);
-                        $objectId = (string)($node['objectId'] ?? $node['id'] ?? uniqid());
-                        $objType = strtolower((string)($node['objectType'] ?? 'movie'));
-                        $isSeries = str_contains($objType, 'show') || str_contains($objType, 'series') || $objType === 'tv';
-                        $mediaType = $isSeries ? 'series' : 'movie';
-
-                        if (!empty($filterType) && $filterType !== 'ALL') {
-                            $reqType = strtolower($filterType) === 'serie' || strtolower($filterType) === 'series' ? 'series' : 'movie';
-                            if ($mediaType !== $reqType) {
-                                continue;
-                            }
-                        }
-
-                        $year = (int)($content['originalReleaseYear'] ?? date('Y'));
-                        $desc = (string)($content['shortDescription'] ?? '');
-
-                        $posterUrl = (string)($content['posterUrl'] ?? '');
-                        $poster = '';
-                        if ($posterUrl !== '') {
-                            $poster = 'https://images.justwatch.com' . str_replace(['{profile}', '.{format}'], ['s592', '.jpg'], $posterUrl);
-                        }
-
-                        $item = [
-                            'id'             => 'ott_' . $norm . '_' . $objectId,
-                            'unique_id'      => 'ott_' . $norm . '_' . $objectId,
-                            'external_id'    => $objectId,
-                            'title'          => $title,
-                            'original_title' => $origTitle,
-                            'type'           => $mediaType,
-                            'media_type'     => $mediaType,
-                            'year'           => $year,
-                            'poster'         => $poster,
-                            'poster_url'     => $poster,
-                            'platform'       => $norm,
-                            'provider'       => $norm,
-                            'overview'       => $desc,
-                            'synopsis'       => $desc,
-                            'description'    => $desc,
-                            'status'         => 'remote_catalog',
-                            'available'      => false,
-                            'localFilePath'  => null,
-                        ];
-
-                        self::crossReferenceAvailability($item);
-                        $results[] = $item;
-                    }
-                }
-            } catch (\Throwable $e) {
-                Log::warning("OttSyncService getAvailableCatalog exception [{$norm}]: " . $e->getMessage());
+        $cacheKey = 'ott_available_catalog_' . ($provider ?? 'all') . '_' . ($filterType ?? 'all');
+        try {
+            $cached = Cache::get($cacheKey);
+            if (!empty($cached) && is_array($cached)) {
+                return $cached;
             }
-        }
+        } catch (\Throwable $e) {}
 
-        return $results;
+        try {
+            $connected = self::getActiveConnectedPlatforms();
+            if (empty($connected)) {
+                return [];
+            }
+
+            $targetProvider = self::normalizePlatformKey($provider);
+
+            // Si se solicito un proveedor especifico que NO esta conectado en DB, devolver vacio
+            if ($targetProvider !== null && !in_array($targetProvider, $connected, true)) {
+                return [];
+            }
+
+            // Si no se pide un proveedor puntual, consultar hasta 3 plataformas conectadas para respuesta ultra rapida
+            $platformsToQuery = $targetProvider ? [$targetProvider] : array_slice($connected, 0, 3);
+            $results = [];
+
+            foreach ($platformsToQuery as $platKey) {
+                $norm = self::normalizePlatformKey($platKey) ?: $platKey;
+                $pkg = self::resolvePlatformPackageKey($norm);
+                $country = self::resolveCountryForPlatform($norm);
+
+                $gql = 'query GetPopularTitles($country: Country!, $filter: TitleFilter!) { popularTitles(country: $country, filter: $filter, first: 18) { edges { node { id objectId objectType content(country: $country, language: "es") { title originalTitle originalReleaseYear shortDescription posterUrl } } } } }';
+
+                try {
+                    $resp = Http::timeout(3)
+                        ->withHeaders([
+                            'Content-Type' => 'application/json',
+                            'User-Agent'   => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        ])
+                        ->post('https://apis.justwatch.com/graphql', [
+                            'query'     => $gql,
+                            'variables' => [
+                                'country' => $country,
+                                'filter'  => [
+                                    'packages' => [$pkg],
+                                ],
+                            ],
+                        ]);
+
+                    if (!$resp->successful()) {
+                        continue;
+                    }
+
+                    $edges = data_get($resp->json(), 'data.popularTitles.edges', []);
+                    if (is_array($edges)) {
+                        foreach ($edges as $edge) {
+                            $node = $edge['node'] ?? [];
+                            $content = $node['content'] ?? [];
+                            $title = trim((string)($content['title'] ?? ''));
+                            if ($title === '') continue;
+
+                            $origTitle = (string)($content['originalTitle'] ?? $title);
+                            $objectId = (string)($node['objectId'] ?? $node['id'] ?? uniqid());
+                            $objType = strtolower((string)($node['objectType'] ?? 'movie'));
+                            $isSeries = str_contains($objType, 'show') || str_contains($objType, 'series') || $objType === 'tv';
+                            $mediaType = $isSeries ? 'series' : 'movie';
+
+                            if (!empty($filterType) && $filterType !== 'ALL') {
+                                $reqType = strtolower($filterType) === 'serie' || strtolower($filterType) === 'series' ? 'series' : 'movie';
+                                if ($mediaType !== $reqType) {
+                                    continue;
+                                }
+                            }
+
+                            $year = (int)($content['originalReleaseYear'] ?? date('Y'));
+                            $desc = (string)($content['shortDescription'] ?? '');
+
+                            $posterUrl = (string)($content['posterUrl'] ?? '');
+                            $poster = '';
+                            if ($posterUrl !== '') {
+                                $poster = 'https://images.justwatch.com' . str_replace(['{profile}', '.{format}'], ['s592', '.jpg'], $posterUrl);
+                            }
+
+                            $item = [
+                                'id'             => 'ott_' . $norm . '_' . $objectId,
+                                'unique_id'      => 'ott_' . $norm . '_' . $objectId,
+                                'external_id'    => $objectId,
+                                'title'          => $title,
+                                'original_title' => $origTitle,
+                                'type'           => $mediaType,
+                                'media_type'     => $mediaType,
+                                'year'           => $year,
+                                'poster'         => $poster,
+                                'poster_url'     => $poster,
+                                'platform'       => $norm,
+                                'provider'       => $norm,
+                                'overview'       => $desc,
+                                'synopsis'       => $desc,
+                                'description'    => $desc,
+                                'status'         => 'remote_catalog',
+                                'available'      => false,
+                                'localFilePath'  => null,
+                            ];
+
+                            try {
+                                self::crossReferenceAvailability($item);
+                            } catch (\Throwable $e) {}
+
+                            $results[] = $item;
+                        }
+                    }
+                } catch (\Throwable $e) {
+                    Log::warning("OttSyncService getAvailableCatalog exception [{$norm}]: " . $e->getMessage());
+                }
+            }
+
+            if (!empty($results)) {
+                try {
+                    Cache::put($cacheKey, $results, 600);
+                } catch (\Throwable $e) {}
+            }
+
+            return $results;
+        } catch (\Throwable $e) {
+            Log::error("OttSyncService getAvailableCatalog fatal: " . $e->getMessage());
+            return [];
+        }
     }
 
     public function getAllCatalogSamples(): array
@@ -951,27 +991,35 @@ class OttSyncService
             ->toArray();
 
         $result = [];
+        $seenProviders = [];
 
         foreach (self::$platforms_config as $providerId => $config) {
-            // Omitir disney_plus duplicado en la vista (usar disney canÃ³nico para la UI)
-            if ($providerId === 'disney_plus') {
+                        $dbProvKey = self::toDbProviderKey($providerId);
+            if (isset($seenProviders[$dbProvKey])) {
                 continue;
             }
-
-            $dbProvKey = self::toDbProviderKey($providerId);
+            $seenProviders[$dbProvKey] = true;
             $acc = $accounts->get($dbProvKey) ?? $accounts->get($providerId);
 
             $hasActiveSession = in_array($dbProvKey, $sessionProviders, true) || in_array($providerId, $sessionProviders, true);
 
             if ($acc && $acc->status === 'syncing') {
-                $lastActivity = $acc->updated_at ?? $acc->last_sync_at;
-                if ($lastActivity && $lastActivity->lt(now()->subMinutes(5))) {
-                    $acc->status = 'error';
-                    $acc->error_message = 'Tiempo de espera agotado: la sincronizaciÃ³n superÃ³ el lÃ­mite de 5 minutos.';
-                    $acc->last_error = $acc->error_message;
-                    $acc->last_sync_at = now();
-                    $acc->save();
-                }
+                try {
+                    $lastActivity = $acc->updated_at ?? $acc->last_sync_at;
+                    $isExpired = false;
+                    if ($lastActivity instanceof \Carbon\CarbonInterface) {
+                        $isExpired = $lastActivity->lt(now()->subMinutes(5));
+                    } elseif (is_string($lastActivity)) {
+                        $isExpired = \Carbon\Carbon::parse($lastActivity)->lt(now()->subMinutes(5));
+                    }
+                    if ($isExpired) {
+                        $acc->status = 'error';
+                        $acc->error_message = 'Tiempo de espera agotado: la sincronización superó el límite de 5 minutos.';
+                        $acc->last_error = $acc->error_message;
+                        $acc->last_sync_at = now();
+                        $acc->save();
+                    }
+                } catch (\Throwable $e) {}
             }
 
             // Estado real: connected solo si existe cuenta conectada en BD o sesiÃ³n activa vÃ¡lida
@@ -1616,14 +1664,42 @@ class OttSyncService
             $connectedAccounts = collect([$fallbackAccount]);
         }
 
-        $requestedProvider = Str::slug($payload['provider'] ?? '', '_');
-        $activeAccount = $connectedAccounts->firstWhere('provider', $requestedProvider);
+        $rawProvider = $payload['provider'] ?? $payload['platform'] ?? 'netflix';
+        $normProvider = self::normalizePlatformKey($rawProvider) ?: Str::slug($rawProvider, '_');
+        $requestedProvider = self::toDbProviderKey($normProvider ?: 'netflix');
+
+        $activeAccount = $connectedAccounts->firstWhere('provider', $requestedProvider)
+            ?? $connectedAccounts->firstWhere('provider', $normProvider);
 
         if (!$activeAccount) {
-            $activeAccount = $connectedAccounts->first();
+            try {
+                $activeAccount = OttProviderAccount::firstOrCreate(
+                    ['provider' => $requestedProvider],
+                    [
+                        'account_name' => "{$requestedProvider}_default@flixhn.local",
+                        'status' => 'connected',
+                        'auto_download' => true,
+                        'quality_profile' => '1080p',
+                        'credentials' => OttProviderAccount::encryptSecret(json_encode([
+                            'auth_method' => 'gateway',
+                            'connected_at' => now()->toIso8601String(),
+                        ])),
+                        'session_metadata' => [
+                            'region' => 'HN / Central America (LATAM)',
+                            'platform' => ucfirst(str_replace('_', ' ', $requestedProvider)),
+                            'auth_method' => 'credentials',
+                            'max_streams' => 4,
+                            'storage_path' => "/storage/media/{$requestedProvider}",
+                            'target_folder' => "/storage/media/{$requestedProvider}",
+                        ],
+                    ]
+                );
+            } catch (\Throwable $e) {
+                Log::warning("No se pudo registrar cuenta OttProviderAccount para {$requestedProvider}: " . $e->getMessage());
+            }
         }
 
-        $provider = $activeAccount->provider;
+        $provider = $requestedProvider ?: ($activeAccount?->provider ?? 'netflix');
         $mediaType = ($payload['media_type'] ?? 'movie') === 'series' ? 'series' : 'movie';
         $quality = $payload['quality'] ?? '1080p';
         $posterUrl = $payload['poster_url'] ?? ($payload['poster'] ?? null);
@@ -1740,14 +1816,13 @@ class OttSyncService
         }
 
         try {
-            ProcessMediaIngestJob::dispatch($ingestTask->id);
-        } catch (\Throwable $e) {
-            Log::warning("Error despachando ProcessMediaIngestJob: " . $e->getMessage());
-        }
-
-        try {
             app(MediaIngestService::class)->launchBackgroundWorker($ingestTask->id);
-        } catch (\Throwable $e) {}
+        } catch (\Throwable $e) {
+            Log::warning("Error lanzando background worker: " . $e->getMessage());
+            try {
+                ProcessMediaIngestJob::dispatch($ingestTask->id);
+            } catch (\Throwable $f) {}
+        }
 
         return $ingestTask->fresh();
     }

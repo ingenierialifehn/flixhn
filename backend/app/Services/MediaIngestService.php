@@ -164,6 +164,28 @@ class MediaIngestService
         if (str_contains($lower, 'mandalorian')) $searchTerms[] = 'The Mandalorian';
         if (str_contains($lower, 'gladiator')) $searchTerms[] = 'Gladiator';
         if (str_contains($lower, 'dune')) $searchTerms[] = 'Dune';
+        if (str_contains($lower, 'the boys') || str_contains($lower, 'boys')) $searchTerms[] = 'The Boys';
+        if (str_contains($lower, 'fallout')) {
+            $searchTerms[] = 'Fallout';
+            $searchTerms[] = 'The Fallout';
+        }
+        if (str_contains($lower, 'reacher')) $searchTerms[] = 'Reacher';
+        if (str_contains($lower, 'invincible') || str_contains($lower, 'invencible')) {
+            $searchTerms[] = 'Invencible';
+            $searchTerms[] = 'Invincible';
+        }
+        if (str_contains($lower, 'house of the dragon') || str_contains($lower, 'casa del drag')) {
+            $searchTerms[] = 'La Casa del Dragón';
+            $searchTerms[] = 'House of the Dragon';
+        }
+        if (str_contains($lower, 'ted lasso')) $searchTerms[] = 'Ted Lasso';
+        if (str_contains($lower, 'halo')) $searchTerms[] = 'Halo';
+        if (str_contains($lower, 'rings of power') || str_contains($lower, 'anillos de poder')) {
+            $searchTerms[] = 'El Señor de los Anillos';
+            $searchTerms[] = 'The Lord of the Rings';
+        }
+        if (str_contains($lower, 'jack ryan')) $searchTerms[] = 'Jack Ryan';
+        if (str_contains($lower, 'last of us')) $searchTerms[] = 'The Last of Us';
 
         $searchTerms = array_unique(array_filter($searchTerms));
 
@@ -286,11 +308,35 @@ class MediaIngestService
         }
 
         // Proveedores OTT con URLs emuladas
-        if (str_contains($host, 'netflix.') || str_contains($host, 'disneyplus.') || str_contains($host, 'max.') || str_contains($host, 'primevideo.') || str_contains($host, 'apple.')) {
+        if (
+            str_contains($host, 'netflix') ||
+            str_contains($host, 'disney') ||
+            str_contains($host, 'prime') ||
+            str_contains($host, 'amazon') ||
+            str_contains($host, 'hbo') ||
+            str_contains($host, 'max.') ||
+            str_contains($host, 'apple') ||
+            str_contains($host, 'paramount') ||
+            str_contains($host, 'peacock') ||
+            str_contains($host, 'starplus') ||
+            str_contains($host, 'hulu') ||
+            str_contains($url, '/title/')
+        ) {
             return false;
         }
 
-        return str_starts_with($url, 'http://') || str_starts_with($url, 'https://');
+        // Detectar si termina en extensión de video/streaming real
+        $path = strtolower(parse_url($url, PHP_URL_PATH) ?? '');
+        $mediaExts = ['.mp4', '.m3u8', '.ts', '.mkv', '.mov', '.webm', '.avi', '.flv'];
+        foreach ($mediaExts as $ext) {
+            if (str_ends_with($path, $ext)) return true;
+        }
+
+        if (str_contains($host, 'youtube.') || str_contains($host, 'youtu.be') || str_contains($host, 'vimeo.') || str_contains($host, 'archive.org') || str_contains($host, 'googleapis.com')) {
+            return true;
+        }
+
+        return false;
     }
 
     /**

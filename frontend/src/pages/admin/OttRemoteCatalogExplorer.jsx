@@ -155,18 +155,25 @@ export default function OttRemoteCatalogExplorer({
   // Resolver quÃ© proveedor conectado debe asumir la descarga
   const resolveTargetProvider = useCallback(
     (item) => {
-      if (activeConnectedProviders.length === 0) {
-        return item?.provider || 'netflix';
+      if (item?.provider) {
+        return item.provider;
       }
-      const match = activeConnectedProviders.find(
-        (p) => p.provider === item?.provider
-      );
-      if (match) {
-        return match.provider;
+      if (item?.platform) {
+        return item.platform;
       }
-      return activeConnectedProviders[0].provider;
+      if (selectedProvider && selectedProvider !== 'all') {
+        return selectedProvider;
+      }
+      if (activeConnectedProviders.length > 0) {
+        const match = activeConnectedProviders.find(
+          (p) => p.provider === item?.provider
+        );
+        if (match) return match.provider;
+        return activeConnectedProviders[0].provider;
+      }
+      return 'netflix';
     },
-    [activeConnectedProviders]
+    [activeConnectedProviders, selectedProvider]
   );
 
   // Modal de confirmaciÃ³n de descarga
@@ -218,15 +225,19 @@ export default function OttRemoteCatalogExplorer({
       // Simular spinner de carga rÃ¡pida (500ms) requerido
       await new Promise((r) => setTimeout(r, 480));
 
-      const prov = selectedProvider !== 'all' ? selectedProvider : 'netflix';
-
       try {
         let res;
         try {
-          // 1. Intentar endpoint REST /api/v1/{provider}/search?q={query}
-          res = await api.get(`/v1/${prov}/search`, {
-            params: { q: cleanQuery || undefined, query: cleanQuery || undefined },
-          });
+          // 1. Intentar endpoint REST /api/v1/{provider}/search?q={query} o /api/v1/search para 'all'
+          if (selectedProvider && selectedProvider !== 'all') {
+            res = await api.get(`/v1/${selectedProvider}/search`, {
+              params: { q: cleanQuery || undefined, query: cleanQuery || undefined },
+            });
+          } else {
+            res = await api.get('/v1/search', {
+              params: { q: cleanQuery || undefined, query: cleanQuery || undefined },
+            });
+          }
         } catch {
           // 2. Fallback a /admin/ott-providers/search
           res = await api.get('/admin/ott-providers/search', {

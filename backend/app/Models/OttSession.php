@@ -35,10 +35,14 @@ class OttSession extends Model
 
     public function getUserNameAttribute(): ?string
     {
-        return $this->attributes['user_name'] 
-            ?? ($this->session_metadata['user_name'] 
-            ?? ($this->user?->name 
-            ?? 'Usuario Netflix'));
+        try {
+            return ($this->attributes['user_name'] ?? null)
+                ?: ($this->session_metadata['user_name'] ?? null
+                ?: ($this->user?->name
+                ?: 'Usuario Netflix'));
+        } catch (\Throwable $e) {
+            return 'Usuario Netflix';
+        }
     }
 
     /**

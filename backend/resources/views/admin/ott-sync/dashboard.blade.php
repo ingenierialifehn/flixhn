@@ -23,7 +23,7 @@
         </div>
         <div class="text-center">
             <h2 class="text-emerald-400 font-bold text-2xl truncate px-2">
-                {{ $userName ?? ($sessionData->user_name ?? 'Usuario Netflix') }}
+                {{ $userName ?? ($sessionData?->user_name ?? 'Usuario Netflix') }}
             </h2>
             <p class="text-gray-400 text-sm">Perfil Conectado</p>
         </div>
