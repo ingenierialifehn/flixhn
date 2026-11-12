@@ -8,6 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   resolve: {
+    dedupe: ['react', 'react-dom'],
     alias: {
       '@': path.resolve(__dirname, './src'),
       '@api': path.resolve(__dirname, './src/api'),
@@ -31,8 +32,7 @@ export default defineConfig({
   ],
   cacheDir: '/tmp/.vite',
   optimizeDeps: {
-    noDiscovery: true,
-    include: ['react', 'react-dom', 'react-dom/client', 'axios', 'hls.js', 'lucide-react'],
+    include: ['react', 'react-dom', 'hls.js'],
     exclude: ['mpegts.js'],
   },
   server: {

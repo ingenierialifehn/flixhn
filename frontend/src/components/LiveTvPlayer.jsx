@@ -103,25 +103,40 @@ async function iniciarConMpegTs(url, video, onSuccess, onError) {
   return player;
 }
 
+// Volumen guardado o 1.0 por defecto
+function getSavedVolume() {
+  try {
+    const v = localStorage.getItem('livetv_volume') ?? localStorage.getItem('volume');
+    if (v !== null) {
+      const num = parseFloat(v);
+      if (!isNaN(num) && num >= 0 && num <= 1) {
+        return num;
+      }
+    }
+  } catch (e) {}
+  return 1.0;
+}
+
 export default function LiveTvPlayer({
   channel: initialChannel,
   channels = [],
   onClose,
   onSelectChannel,
 }) {
-  // Volumen guardado o 1.0 por defecto
-  const getSavedVolume = () => {
-    try {
-      const v = localStorage.getItem('livetv_volume') ?? localStorage.getItem('volume');
-      if (v !== null) {
-        const num = parseFloat(v);
-        if (!isNaN(num) && num >= 0 && num <= 1) {
-          return num;
-        }
-      }
-    } catch (e) {}
-    return 1.0;
-  };
+  const videoRef = useRef(null);
+  const playerContainerRef = useRef(null);
+  const hlsRef = useRef(null);
+  const mpegtsRef = useRef(null);
+  const urlActualRef = useRef(null);
+  const bloqueadoPorCambioRef = useRef(false);
+  const intentosRecuperacionRef = useRef(0);
+  const controlsTimeoutRef = useRef(null);
+  const currentPlaySessionRef = useRef(null);
+  const currentDeviceIdRef = useRef('flixhn-web-client');
+  const currentTuneRef = useRef(null);
+  const iniciarStreamLimpiamenteRef = useRef(null);
+  const volumeRef = useRef(getSavedVolume());
+  const isMutedRef = useRef(false);
 
   const [currentChannel, setCurrentChannel] = useState(initialChannel);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -135,21 +150,6 @@ export default function LiveTvPlayer({
   const [showZappingDrawer, setShowZappingDrawer] = useState(false);
   const [zappingSearch, setZappingSearch] = useState('');
   const [selectedZappingCategory, setSelectedZappingCategory] = useState('all');
-
-  const videoRef = useRef(null);
-  const playerContainerRef = useRef(null);
-  const hlsRef = useRef(null);
-  const mpegtsRef = useRef(null);
-  const urlActualRef = useRef(null);
-  const bloqueadoPorCambioRef = useRef(false);
-  const intentosRecuperacionRef = useRef(0);
-  const controlsTimeoutRef = useRef(null);
-  const currentPlaySessionRef = useRef(null);
-  const currentDeviceIdRef = useRef('flixhn-web-client');
-  const currentTuneRef = useRef(null);
-  const iniciarStreamLimpiamenteRef = useRef(null);
-  const volumeRef = useRef(volume);
-  const isMutedRef = useRef(isMuted);
 
   // Mantener referencias actualizadas de volumen y mute para evitar recreación de efectos
   useEffect(() => {
