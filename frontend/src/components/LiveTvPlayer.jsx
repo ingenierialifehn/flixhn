@@ -58,18 +58,35 @@ export default function LiveTvPlayer({
   const videoRef = useRef(null);
   const playerContainerRef = useRef(null);
   const hlsRef = useRef(null);
+  const urlActualRef = useRef(null);
+  const bloqueadoPorCambioRef = useRef(false);
+  const intentosRecuperacionRef = useRef(0);
   const controlsTimeoutRef = useRef(null);
   const currentPlaySessionRef = useRef(null);
   const currentDeviceIdRef = useRef('flixhn-web-client');
-  const reintentosMediaErrorRef = useRef(0);
   const currentTuneRef = useRef(null);
+  const volumeRef = useRef(volume);
+  const isMutedRef = useRef(isMuted);
 
-  // Actualizar canal actual cuando cambie la prop
+  // Mantener referencias actualizadas de volumen y mute para evitar recreación de efectos
   useEffect(() => {
-    if (initialChannel && initialChannel.id !== currentChannel?.id) {
-      setCurrentChannel(initialChannel);
+    volumeRef.current = volume;
+  }, [volume]);
+
+  useEffect(() => {
+    isMutedRef.current = isMuted;
+  }, [isMuted]);
+
+  // Actualizar canal actual cuando cambie la prop externa (comparando identificador, no referencia de objeto)
+  useEffect(() => {
+    if (initialChannel) {
+      const idActual = currentChannel?.id || currentChannel?.emby_channel_id || currentChannel?.name;
+      const idNuevo = initialChannel?.id || initialChannel?.emby_channel_id || initialChannel?.name;
+      if (idNuevo && idNuevo !== idActual) {
+        setCurrentChannel(initialChannel);
+      }
     }
-  }, [initialChannel]);
+  }, [initialChannel?.id, initialChannel?.emby_channel_id, initialChannel?.url, initialChannel?.stream_url]);
 
   // Sincronizar estado isPlaying con eventos nativos del elemento de video
   useEffect(() => {
@@ -156,8 +173,89 @@ export default function LiveTvPlayer({
     }, 4000);
   }, [showZappingDrawer]);
 
-  // Destruir limpiamente cualquier reproducción previa antes de adjuntar el nuevo canal
-  const destruirReproductorPrevio = useCallback((videoEl) => {
+  // 2. IGNORAR AbortError Y VALIDAR SI EL VIDEO REALMENTE SE DETUVO ANTES DE MOSTRAR ERROR
+  const iniciarReproduccionSegura = useCallback((video) => {
+    if (!video) return;
+
+    video.volume = volumeRef.current;
+    video.muted = isMutedRef.current;
+
+    const playPromise = video.play();
+    if (playPromise !== undefined) {
+      playPromise
+        .then(() => {
+          setIsPlaying(true);
+          setIsLoading(false);
+          setStreamError(null);
+        })
+        .catch((err) => {
+          if (err.name === 'AbortError') {
+            // Petición interrumpida por zapping rápido: ignorar silenciosamente
+            return;
+          }
+          console.warn('[FlixHN] Autoplay con audio bloqueado por el navegador:', err);
+          // Si el navegador bloquea autoplay con sonido, iniciar muteado
+          video.muted = true;
+          isMutedRef.current = true;
+          setIsMuted(true);
+
+          video
+            .play()
+            .then(() => {
+              setIsPlaying(true);
+              setIsLoading(false);
+              setStreamError(null);
+              setNeedsUnmutePrompt(true);
+            })
+            .catch((e) => {
+              if (e.name === 'AbortError') return;
+              console.warn('[FlixHN] Autoplay silenciado también falló:', e);
+              if (video.paused) {
+                setIsPlaying(false);
+              }
+            });
+        });
+    }
+  }, []);
+
+  // Botón flotante: "Activar Sonido"
+  const handleEnableSound = () => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    video.muted = false;
+    isMutedRef.current = false;
+    const targetVol = volume > 0 ? volume : 1.0;
+    video.volume = targetVol;
+    volumeRef.current = targetVol;
+    setVolume(targetVol);
+    setIsMuted(false);
+    setNeedsUnmutePrompt(false);
+    try {
+      localStorage.setItem('livetv_volume', String(targetVol));
+    } catch (e) {}
+  };
+
+  // 3. LIMPIEZA AL CAMBIAR DE CANAL (CH + / CH - O CLIC EN GUÍA) Y REPRODUCCIÓN HLS ESTABLE
+  const iniciarStreamLimpiamente = useCallback(async (channelToPlay) => {
+    const video = videoRef.current;
+    if (!channelToPlay || !video) return;
+
+    const tuneId = Symbol('tune');
+    currentTuneRef.current = tuneId;
+
+    bloqueadoPorCambioRef.current = true;
+    setStreamError(null);
+    setIsLoading(true);
+    intentosRecuperacionRef.current = 0;
+
+    // 1. Liberar sintonizador / codificación activa previa
+    if (currentPlaySessionRef.current) {
+      releaseActiveEncoding(currentPlaySessionRef.current);
+      currentPlaySessionRef.current = null;
+    }
+
+    // 2. Destruir limpiamente instancia HLS previa
     if (hlsRef.current) {
       try {
         hlsRef.current.stopLoad();
@@ -168,95 +266,18 @@ export default function LiveTvPlayer({
       }
       hlsRef.current = null;
     }
-    if (videoEl) {
-      try {
-        videoEl.pause();
-        videoEl.removeAttribute('src');
-        videoEl.load(); // Libera el MediaSource cerrado del DOM
-      } catch (e) {
-        console.warn('[FlixHN] Error reseteando elemento video:', e);
-      }
-    }
-  }, []);
 
-  // Intento de Reproducción con Sonido Activo y Captura de Bloqueo Autoplay
-  const iniciarReproduccionSegura = useCallback((video) => {
-    if (!video) return;
-
-    video.volume = volume;
-    video.muted = isMuted;
-
-    const playPromise = video.play();
-    if (playPromise !== undefined) {
-      playPromise
-        .then(() => {
-          setIsPlaying(true);
-        })
-        .catch((err) => {
-          console.warn('[FlixHN] Autoplay con audio bloqueado por el navegador:', err);
-          // Si el navegador bloquea el autoplay con sonido la primera vez (NotAllowedError)
-          if (err.name === 'NotAllowedError' || err.message?.includes('interact') || !video.muted) {
-            video.muted = true;
-            setIsMuted(true);
-            video
-              .play()
-              .then(() => {
-                setIsPlaying(true);
-                setNeedsUnmutePrompt(true);
-              })
-              .catch((e) => {
-                console.warn('[FlixHN] Autoplay silenciado también falló:', e);
-                setIsLoading(false);
-                setIsPlaying(false);
-              });
-          } else {
-            setIsLoading(false);
-            setIsPlaying(false);
-          }
-        });
-    }
-  }, [volume, isMuted]);
-
-  // Botón flotante: "Activar Sonido"
-  const handleEnableSound = () => {
-    const video = videoRef.current;
-    if (!video) return;
-
-    video.muted = false;
-    const targetVol = volume > 0 ? volume : 1.0;
-    video.volume = targetVol;
-    setVolume(targetVol);
-    setIsMuted(false);
-    setNeedsUnmutePrompt(false);
+    // 3. Resetear elemento de video sin disparar falsos errores
     try {
-      localStorage.setItem('livetv_volume', String(targetVol));
-    } catch (e) {}
-  };
-
-  // Inicialización y Carga de Stream HLS Live con Negociación Emby y Ciclo de Vida Limpio
-  const loadStream = useCallback(async (channelToPlay) => {
-    const video = videoRef.current;
-    if (!channelToPlay || !video) return;
-
-    const tuneId = Symbol('tune');
-    currentTuneRef.current = tuneId;
-
-    setIsLoading(true);
-    setStreamError(null);
-    reintentosMediaErrorRef.current = 0;
-
-    // 1. Liberar sintonizador / codificación activa previa
-    if (currentPlaySessionRef.current) {
-      releaseActiveEncoding(currentPlaySessionRef.current);
-      currentPlaySessionRef.current = null;
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+    } catch (e) {
+      console.warn('[FlixHN] Error reseteando elemento de video:', e);
     }
 
-    // 2. Destruir cualquier instancia previa ANTES de crear la nueva
-    destruirReproductorPrevio(video);
-
-    // Pequeña espera de 60ms para asegurar que el navegador liberó el MediaSource anterior
+    // Pequeña espera para asegurar que el navegador liberó el MediaSource anterior
     await new Promise((r) => setTimeout(r, 60));
-
     if (currentTuneRef.current !== tuneId) return;
 
     const targetChannelId = channelToPlay.emby_channel_id || channelToPlay.id || channelToPlay.tvg_id;
@@ -266,7 +287,7 @@ export default function LiveTvPlayer({
     let finalHlsUrl = null;
     let playSessionId = null;
 
-    // 3. Negociar PlaybackInfo con Emby a través del backend de FlixHN
+    // 4. Negociar PlaybackInfo con Emby a través del backend de FlixHN
     try {
       const res = await api.post('/livetv/playback-info', {
         channel_id: targetChannelId,
@@ -281,119 +302,104 @@ export default function LiveTvPlayer({
         playSessionId = res.data.play_session_id;
       }
     } catch (err) {
-      console.warn('[FlixHN] Falló consulta PlaybackInfo en backend, probando Emby directo:', err);
+      console.warn('[FlixHN] Falló consulta PlaybackInfo en backend, evaluando fallback:', err);
     }
 
     if (currentTuneRef.current !== tuneId) return;
 
-    // 4. Fallback directo a Emby API si el backend no pudo negociar
-    if (!finalHlsUrl) {
+    // 5. Fallback directo a Emby API si el backend no pudo negociar y hay emby_channel_id
+    if (!finalHlsUrl && (channelToPlay.emby_channel_id || targetChannelId)) {
       const serverHost = localStorage.getItem('media_server_url') || localStorage.getItem('emby_server_url') || 'http://45.4.87.126:6789';
       const apiKey = localStorage.getItem('emby_api_key') || localStorage.getItem('media_server_api_key') || '0fe0eb20e78f431d9fa474e05ab2d82f';
       const cleanBaseUrl = serverHost.replace(/\/emby\/?$/i, '');
       const embyChannelId = channelToPlay.emby_channel_id || targetChannelId;
 
-      if (embyChannelId) {
-        try {
-          const deviceProfile = {
-            Name: 'FlixHN Live Player',
-            MaxStreamingBitrate: 20000000,
-            DirectPlayProfiles: [
-              {
-                Container: 'ts,m3u8,mp4',
-                Type: 'Video',
-                VideoCodec: 'h264',
-                AudioCodec: 'aac,mp3',
-              },
-            ],
-            TranscodingProfiles: [
-              {
-                Container: 'ts',
-                Type: 'Video',
-                VideoCodec: 'h264',
-                AudioCodec: 'aac',
-                AudioBitrate: 192000,
-                MaxAudioChannels: '2',
-                Protocol: 'hls',
-                Context: 'Streaming',
-                BreakOnNonKeyFrames: true,
-              },
-            ],
-            ContainerProfiles: [],
-            CodecProfiles: [
-              { Type: 'Video', Codec: 'h264' },
-              {
-                Type: 'Audio',
-                Codec: 'aac',
-                Conditions: [{ Condition: 'LessThanEqual', Property: 'AudioChannels', Value: '2' }],
-              },
-            ],
-            ResponseProfiles: [],
-          };
-
-          const embyRes = await fetch(`${cleanBaseUrl}/emby/Items/${embyChannelId}/PlaybackInfo?api_key=${apiKey}`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Accept': 'application/json',
-              'X-Emby-Token': apiKey,
+      try {
+        const deviceProfile = {
+          Name: 'FlixHN Live Player',
+          MaxStreamingBitrate: 20000000,
+          DirectPlayProfiles: [
+            { Container: 'ts,m3u8,mp4', Type: 'Video', VideoCodec: 'h264', AudioCodec: 'aac,mp3' },
+          ],
+          TranscodingProfiles: [
+            {
+              Container: 'ts',
+              Type: 'Video',
+              VideoCodec: 'h264',
+              AudioCodec: 'aac',
+              AudioBitrate: 192000,
+              MaxAudioChannels: '2',
+              Protocol: 'hls',
+              Context: 'Streaming',
+              BreakOnNonKeyFrames: true,
             },
-            body: JSON.stringify({ DeviceProfile: deviceProfile }),
-          });
+          ],
+          CodecProfiles: [
+            { Type: 'Video', Codec: 'h264' },
+            { Type: 'Audio', Codec: 'aac', Conditions: [{ Condition: 'LessThanEqual', Property: 'AudioChannels', Value: '2' }] },
+          ],
+        };
 
-          if (currentTuneRef.current !== tuneId) return;
+        const embyRes = await fetch(`${cleanBaseUrl}/emby/Items/${embyChannelId}/PlaybackInfo?api_key=${apiKey}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'X-Emby-Token': apiKey,
+          },
+          body: JSON.stringify({ DeviceProfile: deviceProfile }),
+        });
 
-          if (embyRes.ok) {
-            const embyData = await embyRes.json();
-            playSessionId = embyData.PlaySessionId;
-            const ms = embyData.MediaSources?.[0];
-            const msId = ms?.Id || embyChannelId;
-            const liveStreamId = ms?.LiveStreamId;
-            const transUrl = ms?.TranscodingUrl;
+        if (currentTuneRef.current === tuneId && embyRes.ok) {
+          const embyData = await embyRes.json();
+          playSessionId = embyData.PlaySessionId;
+          const ms = embyData.MediaSources?.[0];
+          const msId = ms?.Id || embyChannelId;
+          const liveStreamId = ms?.LiveStreamId;
+          const transUrl = ms?.TranscodingUrl;
 
-            if (transUrl) {
-              const rawUrl = transUrl.startsWith('http')
-                ? transUrl
-                : `${cleanBaseUrl}${transUrl.startsWith('/') ? '' : '/'}${transUrl}`;
-              const parsed = new URL(rawUrl);
-              parsed.searchParams.set('MediaSourceId', msId);
-              parsed.searchParams.set('PlaySessionId', playSessionId || ('flixhn_' + Math.random().toString(36).substring(2, 9)));
-              if (liveStreamId) parsed.searchParams.set('LiveStreamId', liveStreamId);
-              parsed.searchParams.set('VideoCodec', 'h264');
-              parsed.searchParams.set('AudioCodec', 'aac');
-              parsed.searchParams.set('AudioBitrate', '192000');
-              parsed.searchParams.set('TranscodingMaxAudioChannels', '2');
-              parsed.searchParams.set('SegmentContainer', 'ts');
-              parsed.searchParams.set('BreakOnNonKeyFrames', 'True');
-              parsed.searchParams.set('DeviceId', deviceId);
-              parsed.searchParams.set('api_key', apiKey);
-              finalHlsUrl = parsed.toString();
-            } else {
-              const params = new URLSearchParams({
-                MediaSourceId: msId,
-                PlaySessionId: playSessionId || ('flixhn_' + Math.random().toString(36).substring(2, 9)),
-                VideoCodec: 'h264',
-                AudioCodec: 'aac',
-                AudioBitrate: '192000',
-                TranscodingMaxAudioChannels: '2',
-                SegmentContainer: 'ts',
-                BreakOnNonKeyFrames: 'True',
-                DeviceId: deviceId,
-                api_key: apiKey,
-              });
-              if (liveStreamId) params.set('LiveStreamId', liveStreamId);
-              finalHlsUrl = `${cleanBaseUrl}/emby/Videos/${embyChannelId}/master.m3u8?${params.toString()}`;
-            }
+          if (transUrl) {
+            const rawUrl = transUrl.startsWith('http')
+              ? transUrl
+              : `${cleanBaseUrl}${transUrl.startsWith('/') ? '' : '/'}${transUrl}`;
+            const parsed = new URL(rawUrl);
+            parsed.searchParams.set('MediaSourceId', msId);
+            parsed.searchParams.set('PlaySessionId', playSessionId || ('flixhn_' + Math.random().toString(36).substring(2, 9)));
+            if (liveStreamId) parsed.searchParams.set('LiveStreamId', liveStreamId);
+            parsed.searchParams.set('VideoCodec', 'h264');
+            parsed.searchParams.set('AudioCodec', 'aac');
+            parsed.searchParams.set('AudioBitrate', '192000');
+            parsed.searchParams.set('TranscodingMaxAudioChannels', '2');
+            parsed.searchParams.set('SegmentContainer', 'ts');
+            parsed.searchParams.set('BreakOnNonKeyFrames', 'True');
+            parsed.searchParams.set('DeviceId', deviceId);
+            parsed.searchParams.set('api_key', apiKey);
+            finalHlsUrl = parsed.toString();
+          } else {
+            const params = new URLSearchParams({
+              MediaSourceId: msId,
+              PlaySessionId: playSessionId || ('flixhn_' + Math.random().toString(36).substring(2, 9)),
+              VideoCodec: 'h264',
+              AudioCodec: 'aac',
+              AudioBitrate: '192000',
+              TranscodingMaxAudioChannels: '2',
+              SegmentContainer: 'ts',
+              BreakOnNonKeyFrames: 'True',
+              DeviceId: deviceId,
+              api_key: apiKey,
+            });
+            if (liveStreamId) params.set('LiveStreamId', liveStreamId);
+            finalHlsUrl = `${cleanBaseUrl}/emby/Videos/${embyChannelId}/master.m3u8?${params.toString()}`;
           }
-        } catch (e) {
-          console.warn('[FlixHN] Error en negociación directa con Emby:', e);
         }
+      } catch (e) {
+        console.warn('[FlixHN] Error en negociación directa con Emby:', e);
       }
     }
 
     if (currentTuneRef.current !== tuneId) return;
 
-    // 5. Último fallback: usar stream_url directo del canal
+    // 6. Último fallback: usar stream_url directo del canal
     if (!finalHlsUrl) {
       finalHlsUrl = directStreamUrl;
     }
@@ -401,12 +407,13 @@ export default function LiveTvPlayer({
     if (!finalHlsUrl) {
       setStreamError('No se encontró una señal de transmisión válida para este canal.');
       setIsLoading(false);
+      bloqueadoPorCambioRef.current = false;
       return;
     }
 
     currentPlaySessionRef.current = playSessionId;
 
-    // 6. Soporte HLS.js
+    // 7. Instanciar HLS.js con configuración robusta o fallback nativo
     const canPlayNativeHls = video.canPlayType('application/vnd.apple.mpegurl');
     const isHlsUrl =
       finalHlsUrl.includes('.m3u8') ||
@@ -417,13 +424,12 @@ export default function LiveTvPlayer({
     if (typeof Hls !== 'undefined' && Hls.isSupported() && (isHlsUrl || !canPlayNativeHls)) {
       const hls = new Hls({
         enableWorker: true,
-        lowLatencyMode: false, // Evita cortes en streams IPTV estándar
-        backBufferLength: 30,
+        lowLatencyMode: false,
         maxBufferLength: 20,
         maxMaxBufferLength: 40,
-        fragLoadingMaxRetry: 4,
-        manifestLoadingMaxRetry: 4,
-        levelLoadingMaxRetry: 4,
+        fragLoadingMaxRetry: 5,
+        manifestLoadingMaxRetry: 5,
+        levelLoadingMaxRetry: 5,
         startFragPrefetch: true,
         manifestLoadingTimeOut: 15000,
         levelLoadingTimeOut: 15000,
@@ -431,112 +437,106 @@ export default function LiveTvPlayer({
       });
 
       hlsRef.current = hls;
-
-      // Adjuntar media primero al elemento de video
+      hls.loadSource(finalHlsUrl);
       hls.attachMedia(video);
-
-      hls.on(Hls.Events.MEDIA_ATTACHED, () => {
-        if (currentTuneRef.current !== tuneId) return;
-        hls.loadSource(finalHlsUrl);
-      });
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         if (currentTuneRef.current !== tuneId) return;
+        bloqueadoPorCambioRef.current = false;
         iniciarReproduccionSegura(video);
       });
 
-      // Ocultar overlay "Sintonizando..." en cuanto haya cuadros de video reales
-      video.onplaying = () => {
-        setIsLoading(false);
-        setIsPlaying(true);
-        reintentosMediaErrorRef.current = 0;
-      };
-
-      // Recuperación inteligente ante errores fatales sin entrar en bucle infinito
       hls.on(Hls.Events.ERROR, (event, data) => {
         if (currentTuneRef.current !== tuneId) return;
+
+        // Ignorar cualquier error donde data.fatal === false
         if (!data.fatal) return;
 
-        switch (data.type) {
-          case Hls.ErrorTypes.NETWORK_ERROR:
-            console.warn('[FlixHN] Error de red, reintentando carga...', data);
+        console.warn('[FlixHN] HLS Fatal Error detectado:', data.type, data.details);
+
+        // Antes de mostrar cartel de error fatal, verificar si el video sigue avanzando activamente
+        if (!video.paused && video.readyState >= 3) {
+          console.log('[FlixHN] Error fatal ignorado: el video sigue reproduciendo cuadros activos (readyState >= 3)');
+          return;
+        }
+
+        intentosRecuperacionRef.current++;
+
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+          if (intentosRecuperacionRef.current <= 3) {
+            console.warn(`[FlixHN] Error de red, reintentando carga (${intentosRecuperacionRef.current}/3)...`);
             hls.startLoad();
-            break;
+            return;
+          }
+        } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          if (intentosRecuperacionRef.current <= 3) {
+            console.warn(`[FlixHN] Error de medios, recuperando decodificación (${intentosRecuperacionRef.current}/3)...`);
+            hls.recoverMediaError();
+            return;
+          }
+        }
 
-          case Hls.ErrorTypes.MEDIA_ERROR:
-            reintentosMediaErrorRef.current++;
-            if (reintentosMediaErrorRef.current <= 2) {
-              console.warn('[FlixHN] Recuperando decodificación de audio/video...');
-              hls.recoverMediaError();
-            } else {
-              // Si el MediaSource murió por completo, reconstruir limpia la instancia
-              console.warn('[FlixHN] Reiniciando instancia HLS completa por Media Error persistente...');
-              loadStream(channelToPlay);
-            }
-            break;
-
-          default:
-            console.warn('[FlixHN] Reiniciando sintonización por error fatal...', data);
-            if (reintentosMediaErrorRef.current <= 2) {
-              reintentosMediaErrorRef.current++;
-              loadStream(channelToPlay);
-            } else {
-              setStreamError('No se pudo establecer la conexión con la señal en directo de este canal.');
-              setIsLoading(false);
-            }
-            break;
+        // Solo marcar fuera del aire si tras 3 intentos el video permanece congelado
+        if (video.paused || video.readyState < 2) {
+          setIsLoading(false);
+          setStreamError('No se pudo establecer la conexión con la señal en directo de este canal.');
         }
       });
-    } else if (canPlayNativeHls) {
-      // Fallback nativo (Safari / iOS / SmartTV)
+    } else if (canPlayNativeHls || video.canPlayType('application/vnd.apple.mpegurl')) {
+      // Fallback nativo (Safari / iOS)
       video.src = finalHlsUrl;
-      video.addEventListener(
-        'loadedmetadata',
-        () => {
-          if (currentTuneRef.current !== tuneId) return;
-          iniciarReproduccionSegura(video);
-        },
-        { once: true }
-      );
-      video.onplaying = () => {
-        setIsLoading(false);
-        setIsPlaying(true);
-      };
-      video.addEventListener(
-        'error',
-        () => {
-          if (currentTuneRef.current !== tuneId) return;
-          setIsLoading(false);
-          setStreamError('Error al decodificar la señal de video nativa.');
-        },
-        { once: true }
-      );
+      bloqueadoPorCambioRef.current = false;
+      iniciarReproduccionSegura(video);
     } else {
       video.src = finalHlsUrl;
+      bloqueadoPorCambioRef.current = false;
       iniciarReproduccionSegura(video);
-      video.onplaying = () => {
-        setIsLoading(false);
-        setIsPlaying(true);
-      };
     }
-  }, [destruirReproductorPrevio, iniciarReproduccionSegura, releaseActiveEncoding]);
+  }, [iniciarReproduccionSegura, releaseActiveEncoding]);
 
-  // Recargar stream al cambiar de canal y limpiar sintonizador al desmontar
+  // Cadena URL estable para la dependencia exclusiva del useEffect
+  const canalActivoUrl = currentChannel?.url || currentChannel?.stream_url || (currentChannel?.id ? `channel-${currentChannel.id}` : '');
+
+  // 1. EVITAR EL BUCLE DE RE-RENDERIZADO EN REACT (useEffect)
   useEffect(() => {
-    loadStream(currentChannel);
+    if (!canalActivoUrl) return;
+
+    // Si es exactamente la misma URL y ya hay una instancia activa, NO reiniciar
+    if (urlActualRef.current === canalActivoUrl && hlsRef.current) {
+      return;
+    }
+
+    urlActualRef.current = canalActivoUrl;
+    iniciarStreamLimpiamente(currentChannel);
 
     return () => {
-      currentTuneRef.current = null;
+      // Cleanup solo al desmontar el componente o cambiar de URL
+      if (hlsRef.current) {
+        try {
+          hlsRef.current.destroy();
+        } catch (e) {}
+        hlsRef.current = null;
+      }
+      if (currentTuneRef.current) {
+        currentTuneRef.current = null;
+      }
       if (currentPlaySessionRef.current) {
         releaseActiveEncoding(currentPlaySessionRef.current);
         currentPlaySessionRef.current = null;
       }
-      destruirReproductorPrevio(videoRef.current);
-      if (controlsTimeoutRef.current) {
-        clearTimeout(controlsTimeoutRef.current);
-      }
     };
-  }, [currentChannel, loadStream, releaseActiveEncoding, destruirReproductorPrevio]);
+  }, [canalActivoUrl]); // Depender EXCLUSIVAMENTE de la cadena URL, nunca del objeto completo
+
+  // Botón manual de Reintentar Señal (evita bucles y fuerza re-sintonización)
+  const handleReintentar = useCallback(() => {
+    urlActualRef.current = null;
+    intentosRecuperacionRef.current = 0;
+    setStreamError(null);
+    setIsLoading(true);
+    if (currentChannel) {
+      iniciarStreamLimpiamente(currentChannel);
+    }
+  }, [currentChannel, iniciarStreamLimpiamente]);
 
   // Liberar codificación si el usuario cierra o recarga la pestaña
   useEffect(() => {
@@ -568,12 +568,14 @@ export default function LiveTvPlayer({
     const nextMuted = !isMuted;
     videoRef.current.muted = nextMuted;
     setIsMuted(nextMuted);
+    isMutedRef.current = nextMuted;
 
     if (!nextMuted) {
       setNeedsUnmutePrompt(false);
       const targetVol = volume === 0 ? 0.5 : volume;
       videoRef.current.volume = targetVol;
       setVolume(targetVol);
+      volumeRef.current = targetVol;
       try {
         localStorage.setItem('livetv_volume', String(targetVol));
       } catch (e) {}
@@ -584,6 +586,7 @@ export default function LiveTvPlayer({
   const handleVolumeChange = (e) => {
     const val = parseFloat(e.target.value);
     setVolume(val);
+    volumeRef.current = val;
     try {
       localStorage.setItem('livetv_volume', String(val));
     } catch (err) {}
@@ -593,6 +596,7 @@ export default function LiveTvPlayer({
       const nextMuted = val === 0;
       videoRef.current.muted = nextMuted;
       setIsMuted(nextMuted);
+      isMutedRef.current = nextMuted;
       if (val > 0) {
         setNeedsUnmutePrompt(false);
       }
@@ -734,14 +738,37 @@ export default function LiveTvPlayer({
         onClick={togglePlay}
         playsInline
         className="w-full h-full object-contain cursor-pointer"
-        onWaiting={() => setIsLoading(true)}
+        onWaiting={() => {
+          if (videoRef.current && videoRef.current.readyState < 3) {
+            setIsLoading(true);
+          }
+        }}
         onPlaying={() => {
           setIsLoading(false);
+          setStreamError(null);
           setIsPlaying(true);
+          intentosRecuperacionRef.current = 0;
+        }}
+        onTimeUpdate={() => {
+          const video = videoRef.current;
+          if (video && video.currentTime > 0) {
+            // Blindaje de señal: si el video tiene cuadros activos, forzar siempre quitar error y spinner
+            setStreamError(null);
+            setIsLoading(false);
+            if (!isPlaying && !video.paused) {
+              setIsPlaying(true);
+            }
+          }
         }}
         onError={() => {
-          setIsLoading(false);
-          setStreamError('Error al decodificar la señal de video.');
+          const video = videoRef.current;
+          if (video && !video.paused && video.readyState >= 3) {
+            return;
+          }
+          if (!hlsRef.current) {
+            setIsLoading(false);
+            setStreamError('Error al decodificar la señal de video.');
+          }
         }}
       />
 
@@ -812,7 +839,7 @@ export default function LiveTvPlayer({
           </div>
           <div className="flex items-center gap-3">
             <button
-              onClick={() => loadStream(currentChannel)}
+              onClick={handleReintentar}
               className="flex items-center gap-2 bg-[#E50914] hover:bg-[#F40612] text-white px-4 py-2 rounded-lg text-xs font-bold transition-colors cursor-pointer"
             >
               <RefreshCw className="w-3.5 h-3.5" />
