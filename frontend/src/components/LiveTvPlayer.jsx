@@ -10,8 +10,6 @@ if (typeof window !== 'undefined' && (!window.crypto || !window.crypto.randomUUI
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import Hls from 'hls.js';
-import * as mpegtsModule from 'mpegts.js';
-const mpegts = mpegtsModule.default || mpegtsModule;
 import {
   ArrowLeft,
   Play,
@@ -34,11 +32,33 @@ import {
 import useTelemetryHeartbeat from '../hooks/useTelemetryHeartbeat';
 import api from '../services/api';
 
+function obtenerMpegTs() {
+  return new Promise((resolve) => {
+    if (typeof window !== 'undefined' && window.mpegts) {
+      return resolve(window.mpegts);
+    }
+    const scriptExistente = document.getElementById('mpegts-cdn-script');
+    if (scriptExistente) {
+      scriptExistente.addEventListener('load', () => resolve(window.mpegts || null));
+      scriptExistente.addEventListener('error', () => resolve(null));
+      return;
+    }
+    const script = document.createElement('script');
+    script.id = 'mpegts-cdn-script';
+    script.src = 'https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js';
+    script.async = true;
+    script.onload = () => resolve(window.mpegts || null);
+    script.onerror = () => resolve(null);
+    document.head.appendChild(script);
+  });
+}
+
 // Detectar si la URL es flujo TS directo o si HLS.js falló por formato de contenedor
-function iniciarConMpegTs(url, video, onSuccess, onError) {
-  if (!mpegts.getFeatureList().mseLivePlayback) {
+async function iniciarConMpegTs(url, video, onSuccess, onError) {
+  const mpegts = await obtenerMpegTs();
+  if (!video || !mpegts || !mpegts.getFeatureList?.()?.mseLivePlayback) {
     if (typeof onError === 'function') {
-      onError('El navegador no soporta MSE Live Playback');
+      onError('El navegador no soporta MSE Live Playback o no se pudo cargar mpegts.js');
     }
     return null;
   }
@@ -522,10 +542,10 @@ export default function LiveTvPlayer({
     };
 
     // CASO A: Flujo MPEG-TS directo (.ts o continuo sin .m3u8) con mpegts.js
-    if (isDirectTs && !isHlsUrl && typeof mpegts !== 'undefined' && mpegts.isSupported()) {
+    if (isDirectTs && !isHlsUrl) {
       console.info('[FlixHN] Canal detectado como flujo continuo / MPEG-TS (.ts). Iniciando con mpegts.js:', finalHlsUrl);
       bloqueadoPorCambioRef.current = false;
-      mpegtsRef.current = iniciarConMpegTs(
+      iniciarConMpegTs(
         finalHlsUrl,
         video,
         () => {
@@ -549,7 +569,20 @@ export default function LiveTvPlayer({
             setErrorCanal(`Señal no compatible con navegador web (${motivoStr})`);
           }
         }
-      );
+      ).then((player) => {
+        if (currentTuneRef.current !== tuneId) {
+          if (player) {
+            try {
+              player.pause();
+              player.unload();
+              player.detachMediaElement();
+              player.destroy();
+            } catch (e) {}
+          }
+          return;
+        }
+        mpegtsRef.current = player;
+      });
       return;
     }
 
@@ -620,7 +653,7 @@ export default function LiveTvPlayer({
 
             if (currentTuneRef.current !== tuneId) return;
 
-            mpegtsRef.current = iniciarConMpegTs(
+            iniciarConMpegTs(
               url,
               videoRef.current,
               () => {
@@ -646,7 +679,20 @@ export default function LiveTvPlayer({
                   setErrorCanal(`Señal no compatible con navegador web (${motivoStr || motivoTecnico})`);
                 }
               }
-            );
+            ).then((player) => {
+              if (currentTuneRef.current !== tuneId) {
+                if (player) {
+                  try {
+                    player.pause();
+                    player.unload();
+                    player.detachMediaElement();
+                    player.destroy();
+                  } catch (e) {}
+                }
+                return;
+              }
+              mpegtsRef.current = player;
+            });
             return;
           }
         }
@@ -679,7 +725,7 @@ export default function LiveTvPlayer({
             } catch (e) {}
             hlsRef.current = null;
 
-            mpegtsRef.current = iniciarConMpegTs(
+            iniciarConMpegTs(
               url,
               videoRef.current,
               () => {
@@ -695,7 +741,20 @@ export default function LiveTvPlayer({
                   'Formato de video/audio del canal (HEVC/AC3) incompatible con este navegador. Prueba desde la App Android TV o activa transcodificación.'
                 );
               }
-            );
+            ).then((player) => {
+              if (currentTuneRef.current !== tuneId) {
+                if (player) {
+                  try {
+                    player.pause();
+                    player.unload();
+                    player.detachMediaElement();
+                    player.destroy();
+                  } catch (e) {}
+                }
+                return;
+              }
+              mpegtsRef.current = player;
+            });
           }
           return;
         }

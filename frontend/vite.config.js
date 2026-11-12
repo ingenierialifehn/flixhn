@@ -33,6 +33,7 @@ export default defineConfig({
   optimizeDeps: {
     noDiscovery: true,
     include: ['react', 'react-dom', 'react-dom/client', 'axios', 'hls.js', 'lucide-react'],
+    exclude: ['mpegts.js'],
   },
   server: {
     host: '0.0.0.0',
