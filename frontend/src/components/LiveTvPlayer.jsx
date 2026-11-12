@@ -13,6 +13,9 @@ import {
   Layers,
   Search,
   ChevronRight,
+  ChevronLeft,
+  SkipBack,
+  SkipForward,
   AlertCircle,
   RefreshCw,
 } from 'lucide-react';
@@ -58,6 +61,8 @@ export default function LiveTvPlayer({
   const controlsTimeoutRef = useRef(null);
   const currentPlaySessionRef = useRef(null);
   const currentDeviceIdRef = useRef('flixhn-web-client');
+  const reintentosMediaErrorRef = useRef(0);
+  const currentTuneRef = useRef(null);
 
   // Actualizar canal actual cuando cambie la prop
   useEffect(() => {
@@ -151,26 +156,44 @@ export default function LiveTvPlayer({
     }, 4000);
   }, [showZappingDrawer]);
 
+  // Destruir limpiamente cualquier reproducción previa antes de adjuntar el nuevo canal
+  const destruirReproductorPrevio = useCallback((videoEl) => {
+    if (hlsRef.current) {
+      try {
+        hlsRef.current.stopLoad();
+        hlsRef.current.detachMedia();
+        hlsRef.current.destroy();
+      } catch (e) {
+        console.warn('[FlixHN] Limpieza HLS previa:', e);
+      }
+      hlsRef.current = null;
+    }
+    if (videoEl) {
+      try {
+        videoEl.pause();
+        videoEl.removeAttribute('src');
+        videoEl.load(); // Libera el MediaSource cerrado del DOM
+      } catch (e) {
+        console.warn('[FlixHN] Error reseteando elemento video:', e);
+      }
+    }
+  }, []);
+
   // Intento de Reproducción con Sonido Activo y Captura de Bloqueo Autoplay
-  const attemptPlay = useCallback(() => {
-    const video = videoRef.current;
+  const iniciarReproduccionSegura = useCallback((video) => {
     if (!video) return;
 
-    // Iniciar con audio habilitado y volumen guardado
     video.volume = volume;
-    video.muted = false;
-    setIsMuted(false);
+    video.muted = isMuted;
 
     const playPromise = video.play();
     if (playPromise !== undefined) {
       playPromise
         .then(() => {
           setIsPlaying(true);
-          setIsLoading(false);
-          setNeedsUnmutePrompt(false);
         })
         .catch((err) => {
-          console.warn('Reproducción con audio bloqueada por el navegador:', err);
+          console.warn('[FlixHN] Autoplay con audio bloqueado por el navegador:', err);
           // Si el navegador bloquea el autoplay con sonido la primera vez (NotAllowedError)
           if (err.name === 'NotAllowedError' || err.message?.includes('interact') || !video.muted) {
             video.muted = true;
@@ -179,11 +202,10 @@ export default function LiveTvPlayer({
               .play()
               .then(() => {
                 setIsPlaying(true);
-                setIsLoading(false);
                 setNeedsUnmutePrompt(true);
               })
               .catch((e) => {
-                console.warn('Autoplay silenciado también falló:', e);
+                console.warn('[FlixHN] Autoplay silenciado también falló:', e);
                 setIsLoading(false);
                 setIsPlaying(false);
               });
@@ -193,7 +215,7 @@ export default function LiveTvPlayer({
           }
         });
     }
-  }, [volume]);
+  }, [volume, isMuted]);
 
   // Botón flotante: "Activar Sonido"
   const handleEnableSound = () => {
@@ -211,12 +233,17 @@ export default function LiveTvPlayer({
     } catch (e) {}
   };
 
-  // Inicialización y Carga de Stream HLS Live con Negociación Emby
+  // Inicialización y Carga de Stream HLS Live con Negociación Emby y Ciclo de Vida Limpio
   const loadStream = useCallback(async (channelToPlay) => {
-    if (!channelToPlay || !videoRef.current) return;
+    const video = videoRef.current;
+    if (!channelToPlay || !video) return;
+
+    const tuneId = Symbol('tune');
+    currentTuneRef.current = tuneId;
 
     setIsLoading(true);
     setStreamError(null);
+    reintentosMediaErrorRef.current = 0;
 
     // 1. Liberar sintonizador / codificación activa previa
     if (currentPlaySessionRef.current) {
@@ -224,36 +251,42 @@ export default function LiveTvPlayer({
       currentPlaySessionRef.current = null;
     }
 
-    // Destruir instancia Hls anterior si existe
-    if (hlsRef.current) {
-      hlsRef.current.destroy();
-      hlsRef.current = null;
-    }
+    // 2. Destruir cualquier instancia previa ANTES de crear la nueva
+    destruirReproductorPrevio(video);
 
-    const video = videoRef.current;
+    // Pequeña espera de 60ms para asegurar que el navegador liberó el MediaSource anterior
+    await new Promise((r) => setTimeout(r, 60));
+
+    if (currentTuneRef.current !== tuneId) return;
+
     const targetChannelId = channelToPlay.emby_channel_id || channelToPlay.id || channelToPlay.tvg_id;
     const deviceId = currentDeviceIdRef.current;
+    const directStreamUrl = channelToPlay.url || channelToPlay.stream_url;
 
     let finalHlsUrl = null;
     let playSessionId = null;
 
-    // 2. Negociar PlaybackInfo con Emby a través del backend de FlixHN
+    // 3. Negociar PlaybackInfo con Emby a través del backend de FlixHN
     try {
       const res = await api.post('/livetv/playback-info', {
         channel_id: targetChannelId,
         device_id: deviceId,
-        stream_url: channelToPlay.stream_url,
+        stream_url: directStreamUrl,
       });
+
+      if (currentTuneRef.current !== tuneId) return;
 
       if (res.data && res.data.hls_url) {
         finalHlsUrl = res.data.hls_url;
         playSessionId = res.data.play_session_id;
       }
     } catch (err) {
-      console.warn('LiveTvPlayer: Falló consulta PlaybackInfo en backend, probando Emby directo:', err);
+      console.warn('[FlixHN] Falló consulta PlaybackInfo en backend, probando Emby directo:', err);
     }
 
-    // 3. Fallback directo a Emby API si el backend no pudo negociar
+    if (currentTuneRef.current !== tuneId) return;
+
+    // 4. Fallback directo a Emby API si el backend no pudo negociar
     if (!finalHlsUrl) {
       const serverHost = localStorage.getItem('media_server_url') || localStorage.getItem('emby_server_url') || 'http://45.4.87.126:6789';
       const apiKey = localStorage.getItem('emby_api_key') || localStorage.getItem('media_server_api_key') || '0fe0eb20e78f431d9fa474e05ab2d82f';
@@ -308,6 +341,8 @@ export default function LiveTvPlayer({
             body: JSON.stringify({ DeviceProfile: deviceProfile }),
           });
 
+          if (currentTuneRef.current !== tuneId) return;
+
           if (embyRes.ok) {
             const embyData = await embyRes.json();
             playSessionId = embyData.PlaySessionId;
@@ -351,14 +386,16 @@ export default function LiveTvPlayer({
             }
           }
         } catch (e) {
-          console.warn('LiveTvPlayer: Error en negociación directa con Emby:', e);
+          console.warn('[FlixHN] Error en negociación directa con Emby:', e);
         }
       }
     }
 
-    // 4. Último fallback: usar stream_url directo del canal
+    if (currentTuneRef.current !== tuneId) return;
+
+    // 5. Último fallback: usar stream_url directo del canal
     if (!finalHlsUrl) {
-      finalHlsUrl = channelToPlay.stream_url;
+      finalHlsUrl = directStreamUrl;
     }
 
     if (!finalHlsUrl) {
@@ -369,90 +406,137 @@ export default function LiveTvPlayer({
 
     currentPlaySessionRef.current = playSessionId;
 
-    // 5. Configuración de HLS.js con tolerancia a paquetes en vivo y baja latencia desactivada
+    // 6. Soporte HLS.js
     const canPlayNativeHls = video.canPlayType('application/vnd.apple.mpegurl');
-    const isHlsUrl = finalHlsUrl.includes('.m3u8') || finalHlsUrl.includes('output=hls') || finalHlsUrl.includes('/master') || finalHlsUrl.includes('/Videos/');
+    const isHlsUrl =
+      finalHlsUrl.includes('.m3u8') ||
+      finalHlsUrl.includes('output=hls') ||
+      finalHlsUrl.includes('/master') ||
+      finalHlsUrl.includes('/Videos/');
 
-    if (Hls.isSupported() && (isHlsUrl || !canPlayNativeHls)) {
+    if (typeof Hls !== 'undefined' && Hls.isSupported() && (isHlsUrl || !canPlayNativeHls)) {
       const hls = new Hls({
         enableWorker: true,
-        lowLatencyMode: false,
+        lowLatencyMode: false, // Evita cortes en streams IPTV estándar
         backBufferLength: 30,
-        maxBufferLength: 30,
-        maxMaxBufferLength: 60,
-        manifestLoadingTimeOut: 15000,
+        maxBufferLength: 20,
+        maxMaxBufferLength: 40,
+        fragLoadingMaxRetry: 4,
         manifestLoadingMaxRetry: 4,
+        levelLoadingMaxRetry: 4,
+        startFragPrefetch: true,
+        manifestLoadingTimeOut: 15000,
         levelLoadingTimeOut: 15000,
         fragLoadingTimeOut: 20000,
-        fragLoadingMaxRetry: 6,
       });
 
       hlsRef.current = hls;
-      hls.loadSource(finalHlsUrl);
+
+      // Adjuntar media primero al elemento de video
       hls.attachMedia(video);
 
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        setIsLoading(false);
-        attemptPlay();
+      hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+        if (currentTuneRef.current !== tuneId) return;
+        hls.loadSource(finalHlsUrl);
       });
 
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        if (currentTuneRef.current !== tuneId) return;
+        iniciarReproduccionSegura(video);
+      });
+
+      // Ocultar overlay "Sintonizando..." en cuanto haya cuadros de video reales
+      video.onplaying = () => {
+        setIsLoading(false);
+        setIsPlaying(true);
+        reintentosMediaErrorRef.current = 0;
+      };
+
+      // Recuperación inteligente ante errores fatales sin entrar en bucle infinito
       hls.on(Hls.Events.ERROR, (event, data) => {
-        if (data.fatal) {
-          switch (data.type) {
-            case Hls.ErrorTypes.NETWORK_ERROR:
-              console.warn('HLS Live Network Error, intentando recuperar...', data);
-              hls.startLoad();
-              break;
-            case Hls.ErrorTypes.MEDIA_ERROR:
-              console.warn('HLS Live Media Error, intentando recuperar decodificación...', data);
+        if (currentTuneRef.current !== tuneId) return;
+        if (!data.fatal) return;
+
+        switch (data.type) {
+          case Hls.ErrorTypes.NETWORK_ERROR:
+            console.warn('[FlixHN] Error de red, reintentando carga...', data);
+            hls.startLoad();
+            break;
+
+          case Hls.ErrorTypes.MEDIA_ERROR:
+            reintentosMediaErrorRef.current++;
+            if (reintentosMediaErrorRef.current <= 2) {
+              console.warn('[FlixHN] Recuperando decodificación de audio/video...');
               hls.recoverMediaError();
-              break;
-            default:
-              console.error('HLS Live Fatal Error:', data);
+            } else {
+              // Si el MediaSource murió por completo, reconstruir limpia la instancia
+              console.warn('[FlixHN] Reiniciando instancia HLS completa por Media Error persistente...');
+              loadStream(channelToPlay);
+            }
+            break;
+
+          default:
+            console.warn('[FlixHN] Reiniciando sintonización por error fatal...', data);
+            if (reintentosMediaErrorRef.current <= 2) {
+              reintentosMediaErrorRef.current++;
+              loadStream(channelToPlay);
+            } else {
               setStreamError('No se pudo establecer la conexión con la señal en directo de este canal.');
               setIsLoading(false);
-              hls.destroy();
-              break;
-          }
-        } else {
-          // Microcortes o saltos leves de señal IPTV: mantener reproduciendo
-          console.warn('HLS Live aviso no fatal:', data.details);
+            }
+            break;
         }
       });
     } else if (canPlayNativeHls) {
+      // Fallback nativo (Safari / iOS / SmartTV)
       video.src = finalHlsUrl;
-      video.addEventListener('loadedmetadata', () => {
+      video.addEventListener(
+        'loadedmetadata',
+        () => {
+          if (currentTuneRef.current !== tuneId) return;
+          iniciarReproduccionSegura(video);
+        },
+        { once: true }
+      );
+      video.onplaying = () => {
         setIsLoading(false);
-        attemptPlay();
-      }, { once: true });
-      video.addEventListener('error', () => {
-        setIsLoading(false);
-        setStreamError('Error al decodificar la señal de video nativa.');
-      }, { once: true });
+        setIsPlaying(true);
+      };
+      video.addEventListener(
+        'error',
+        () => {
+          if (currentTuneRef.current !== tuneId) return;
+          setIsLoading(false);
+          setStreamError('Error al decodificar la señal de video nativa.');
+        },
+        { once: true }
+      );
     } else {
       video.src = finalHlsUrl;
-      attemptPlay();
+      iniciarReproduccionSegura(video);
+      video.onplaying = () => {
+        setIsLoading(false);
+        setIsPlaying(true);
+      };
     }
-  }, [releaseActiveEncoding, attemptPlay]);
+  }, [destruirReproductorPrevio, iniciarReproduccionSegura, releaseActiveEncoding]);
 
   // Recargar stream al cambiar de canal y limpiar sintonizador al desmontar
   useEffect(() => {
     loadStream(currentChannel);
 
     return () => {
+      currentTuneRef.current = null;
       if (currentPlaySessionRef.current) {
         releaseActiveEncoding(currentPlaySessionRef.current);
         currentPlaySessionRef.current = null;
       }
-      if (hlsRef.current) {
-        hlsRef.current.destroy();
-        hlsRef.current = null;
-      }
+      destruirReproductorPrevio(videoRef.current);
       if (controlsTimeoutRef.current) {
         clearTimeout(controlsTimeoutRef.current);
       }
     };
-  }, [currentChannel, loadStream, releaseActiveEncoding]);
+  }, [currentChannel, loadStream, releaseActiveEncoding, destruirReproductorPrevio]);
 
   // Liberar codificación si el usuario cierra o recarga la pestaña
   useEffect(() => {
@@ -525,6 +609,80 @@ export default function LiveTvPlayer({
     }
   };
 
+  // Navegación circular de canales: +1 (Siguiente) | -1 (Anterior)
+  const cambiarCanalRelativo = useCallback(
+    (direccion) => {
+      if (!channels || channels.length === 0) return;
+
+      const indiceActual = channels.findIndex(
+        (c) =>
+          (c.id && currentChannel?.id && c.id === currentChannel.id) ||
+          (c.channel_number && currentChannel?.channel_number && c.channel_number === currentChannel.channel_number) ||
+          c.name === currentChannel?.name
+      );
+
+      let nuevoIndice = (indiceActual >= 0 ? indiceActual : 0) + direccion;
+
+      // Navegación circular: si está en el último pasa al primero, y viceversa
+      if (nuevoIndice >= channels.length) nuevoIndice = 0;
+      if (nuevoIndice < 0) nuevoIndice = channels.length - 1;
+
+      const siguienteCanal = channels[nuevoIndice];
+      if (!siguienteCanal) return;
+
+      setCurrentChannel(siguienteCanal);
+      if (typeof onSelectChannel === 'function') {
+        onSelectChannel(siguienteCanal);
+      }
+    },
+    [channels, currentChannel, onSelectChannel]
+  );
+
+  // Atajos de Teclado y Control Remoto TV Box (ArrowUp, ArrowDown, PageUp, PageDown, ChannelUp, ChannelDown, etc.)
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // No interferir si el usuario está buscando o escribiendo en inputs
+      if (e.target && ['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
+
+      if (
+        e.key === 'ArrowUp' ||
+        e.key === 'PageUp' ||
+        e.key === 'ChannelUp' ||
+        e.key === 'ArrowRight'
+      ) {
+        e.preventDefault();
+        cambiarCanalRelativo(1);
+      } else if (
+        e.key === 'ArrowDown' ||
+        e.key === 'PageDown' ||
+        e.key === 'ChannelDown' ||
+        e.key === 'ArrowLeft'
+      ) {
+        e.preventDefault();
+        cambiarCanalRelativo(-1);
+      } else if (e.key === ' ' || e.key === 'k' || e.key === 'K') {
+        e.preventDefault();
+        togglePlay();
+      } else if (e.key === 'm' || e.key === 'M') {
+        e.preventDefault();
+        toggleMute();
+      } else if (e.key === 'f' || e.key === 'F') {
+        e.preventDefault();
+        toggleFullscreen();
+      } else if (e.key === 'Escape') {
+        if (showZappingDrawer) {
+          e.preventDefault();
+          setShowZappingDrawer(false);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [cambiarCanalRelativo, showZappingDrawer, togglePlay, toggleMute, toggleFullscreen]);
+
   // Zapping: Cambiar de canal sin salir del reproductor
   const handleZappingSelect = (ch) => {
     setCurrentChannel(ch);
@@ -553,6 +711,16 @@ export default function LiveTvPlayer({
   // Categorías únicas para Zapping
   const zappingCategories = ['all', ...new Set(channels.map((c) => c.group_title).filter(Boolean))];
 
+  // Cálculo del índice del canal actual para el indicador CH
+  const indiceCanalActivo = channels.findIndex(
+    (c) =>
+      (c.id && currentChannel?.id && c.id === currentChannel.id) ||
+      (c.channel_number && currentChannel?.channel_number && c.channel_number === currentChannel.channel_number) ||
+      c.name === currentChannel?.name
+  );
+  const numeroCanalMostrar =
+    currentChannel?.channel_number || (indiceCanalActivo >= 0 ? indiceCanalActivo + 1 : 1);
+
   return (
     <div
       ref={playerContainerRef}
@@ -562,6 +730,7 @@ export default function LiveTvPlayer({
       {/* Elemento de Video */}
       <video
         ref={videoRef}
+        id="liveVideoPlayer"
         onClick={togglePlay}
         playsInline
         className="w-full h-full object-contain cursor-pointer"
@@ -575,6 +744,29 @@ export default function LiveTvPlayer({
           setStreamError('Error al decodificar la señal de video.');
         }}
       />
+
+      {/* Flechas Laterales Flotantes para Zapping Rápido */}
+      <button
+        type="button"
+        onClick={() => cambiarCanalRelativo(-1)}
+        className={`absolute left-3 md:left-6 top-1/2 -translate-y-1/2 z-20 w-11 h-14 md:w-12 md:h-16 rounded-xl bg-black/40 hover:bg-black/80 border border-white/10 hover:border-white/30 backdrop-blur-md flex items-center justify-center text-white/70 hover:text-white transition-all duration-200 transform hover:scale-105 active:scale-95 cursor-pointer shadow-xl ${
+          showControls ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+        }`}
+        title="Canal Anterior (Flecha Izquierda / Pág Arriba)"
+      >
+        <ChevronLeft className="w-7 h-7 md:w-8 md:h-8" />
+      </button>
+
+      <button
+        type="button"
+        onClick={() => cambiarCanalRelativo(1)}
+        className={`absolute right-3 md:right-6 top-1/2 -translate-y-1/2 z-20 w-11 h-14 md:w-12 md:h-16 rounded-xl bg-black/40 hover:bg-black/80 border border-white/10 hover:border-white/30 backdrop-blur-md flex items-center justify-center text-white/70 hover:text-white transition-all duration-200 transform hover:scale-105 active:scale-95 cursor-pointer shadow-xl ${
+          showControls && !showZappingDrawer ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+        }`}
+        title="Siguiente Canal (Flecha Derecha / Pág Abajo)"
+      >
+        <ChevronRight className="w-7 h-7 md:w-8 md:h-8" />
+      </button>
 
       {/* Botón flotante para activar sonido si el navegador bloqueó autoplay inicial */}
       {needsUnmutePrompt && (
@@ -726,15 +918,44 @@ export default function LiveTvPlayer({
           showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
       >
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
           {/* Play/Pause */}
           <button
             type="button"
             onClick={togglePlay}
             className="p-2 hover:bg-white/15 rounded-full transition-colors cursor-pointer"
+            title={isPlaying ? 'Pausar' : 'Reproducir'}
           >
             {isPlaying ? <Pause className="w-6 h-6 fill-current" /> : <Play className="w-6 h-6 fill-current" />}
           </button>
+
+          {/* Controles de Zapping Rápido: Canal Anterior / Pill CH / Canal Siguiente */}
+          <div className="flex items-center gap-1 bg-black/50 border border-zinc-700/80 rounded-lg p-0.5 shadow-md">
+            {/* Botón Retroceder Canal (CH -) */}
+            <button
+              type="button"
+              onClick={() => cambiarCanalRelativo(-1)}
+              className="p-1.5 hover:bg-white/15 text-zinc-300 hover:text-white rounded-md transition-colors cursor-pointer flex items-center justify-center"
+              title="Canal Anterior (Flecha Izquierda / Pág Arriba)"
+            >
+              <SkipBack className="w-4 h-4 fill-current" />
+            </button>
+
+            {/* Indicador de Canal Activo: Pill compacto */}
+            <span className="px-2 py-0.5 text-[11px] font-mono font-bold text-zinc-200 bg-zinc-800/90 rounded border border-zinc-700 select-none">
+              CH {numeroCanalMostrar}
+            </span>
+
+            {/* Botón Avanzar Canal (CH +) */}
+            <button
+              type="button"
+              onClick={() => cambiarCanalRelativo(1)}
+              className="p-1.5 hover:bg-white/15 text-zinc-300 hover:text-white rounded-md transition-colors cursor-pointer flex items-center justify-center"
+              title="Siguiente Canal (Flecha Derecha / Pág Abajo)"
+            >
+              <SkipForward className="w-4 h-4 fill-current" />
+            </button>
+          </div>
 
           {/* Volumen */}
           <div className="flex items-center gap-2 group/vol">
