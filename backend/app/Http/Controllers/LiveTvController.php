@@ -161,22 +161,28 @@ class LiveTvController extends Controller
                 'X-MediaBrowser-Token' => $apiKey,
             ];
 
+            $playbackPayload = [
+                'DeviceProfile' => $deviceProfile,
+                'DeviceId' => $deviceId,
+                'AutoOpenLiveStream' => true,
+                'EnableDirectPlay' => false,
+                'EnableDirectStream' => false,
+                'AllowVideoStreamCopy' => false,
+                'AllowAudioStreamCopy' => false,
+            ];
+
             $playbackUrl = "{$cleanBaseUrl}/emby/Items/{$targetEmbyChannelId}/PlaybackInfo?api_key={$apiKey}";
             $response = Http::timeout(8)
                 ->connectTimeout(3)
                 ->withHeaders($headers)
-                ->post($playbackUrl, [
-                    'DeviceProfile' => $deviceProfile,
-                ]);
+                ->post($playbackUrl, $playbackPayload);
 
             if ($response->status() === 404) {
                 $altUrl = "{$cleanBaseUrl}/Items/{$targetEmbyChannelId}/PlaybackInfo?api_key={$apiKey}";
                 $response = Http::timeout(8)
                     ->connectTimeout(3)
                     ->withHeaders($headers)
-                    ->post($altUrl, [
-                        'DeviceProfile' => $deviceProfile,
-                    ]);
+                    ->post($altUrl, $playbackPayload);
             }
 
             if ($response->successful()) {
@@ -196,9 +202,15 @@ class LiveTvController extends Controller
                     'VideoCodec' => 'h264',
                     'AudioCodec' => 'aac',
                     'AudioBitrate' => '192000',
+                    'MaxAudioChannels' => '2',
                     'TranscodingMaxAudioChannels' => '2',
+                    'VideoBitrate' => '8000000',
                     'SegmentContainer' => 'ts',
+                    'MinSegments' => '1',
                     'BreakOnNonKeyFrames' => 'True',
+                    'EnableAutoStreamCopy' => 'false',
+                    'AllowVideoStreamCopy' => 'false',
+                    'AllowAudioStreamCopy' => 'false',
                     'DeviceId' => $deviceId,
                     'api_key' => $apiKey,
                 ];
@@ -267,9 +279,15 @@ class LiveTvController extends Controller
             'VideoCodec' => 'h264',
             'AudioCodec' => 'aac',
             'AudioBitrate' => '192000',
+            'MaxAudioChannels' => '2',
             'TranscodingMaxAudioChannels' => '2',
+            'VideoBitrate' => '8000000',
             'SegmentContainer' => 'ts',
+            'MinSegments' => '1',
             'BreakOnNonKeyFrames' => 'True',
+            'EnableAutoStreamCopy' => 'false',
+            'AllowVideoStreamCopy' => 'false',
+            'AllowAudioStreamCopy' => 'false',
             'DeviceId' => $deviceId,
             'api_key' => $apiKey,
         ];

@@ -452,7 +452,16 @@ export default function LiveTvPlayer({
             'Accept': 'application/json',
             'X-Emby-Token': apiKey,
           },
-          body: JSON.stringify({ DeviceProfile: deviceProfile }),
+          body: JSON.stringify({
+            DeviceProfile: deviceProfile,
+            DeviceId: deviceId,
+            AutoOpenLiveStream: true,
+            EnableDirectPlay: false,
+            EnableDirectStream: false,
+            EnableAutoStreamCopy: false,
+            AllowVideoStreamCopy: false,
+            AllowAudioStreamCopy: false,
+          }),
         });
 
         if (currentTuneRef.current === tuneId && embyRes.ok) {
@@ -474,9 +483,15 @@ export default function LiveTvPlayer({
             parsed.searchParams.set('VideoCodec', 'h264');
             parsed.searchParams.set('AudioCodec', 'aac');
             parsed.searchParams.set('AudioBitrate', '192000');
+            parsed.searchParams.set('MaxAudioChannels', '2');
             parsed.searchParams.set('TranscodingMaxAudioChannels', '2');
+            parsed.searchParams.set('VideoBitrate', '8000000');
             parsed.searchParams.set('SegmentContainer', 'ts');
+            parsed.searchParams.set('MinSegments', '1');
             parsed.searchParams.set('BreakOnNonKeyFrames', 'True');
+            parsed.searchParams.set('EnableAutoStreamCopy', 'false');
+            parsed.searchParams.set('AllowVideoStreamCopy', 'false');
+            parsed.searchParams.set('AllowAudioStreamCopy', 'false');
             parsed.searchParams.set('DeviceId', deviceId);
             parsed.searchParams.set('api_key', apiKey);
             finalHlsUrl = parsed.toString();
@@ -487,9 +502,15 @@ export default function LiveTvPlayer({
               VideoCodec: 'h264',
               AudioCodec: 'aac',
               AudioBitrate: '192000',
+              MaxAudioChannels: '2',
               TranscodingMaxAudioChannels: '2',
+              VideoBitrate: '8000000',
               SegmentContainer: 'ts',
+              MinSegments: '1',
               BreakOnNonKeyFrames: 'True',
+              EnableAutoStreamCopy: 'false',
+              AllowVideoStreamCopy: 'false',
+              AllowAudioStreamCopy: 'false',
               DeviceId: deviceId,
               api_key: apiKey,
             });
@@ -632,19 +653,71 @@ export default function LiveTvPlayer({
 
         console.warn('[FlixHN] HLS Error Fatal:', data.details, motivoTecnico, `(${tiempoTranscurrido}ms desde inicio)`);
 
-        // DETECCIÓN DE CÓDEC INCOMPATIBLE (H.265 / AC3) O CONTENEDOR NO SOPORTADO
+        // DETECCIÓN DE CÓDEC INCOMPATIBLE (H.265 / AC3) O FALLO EN MEDIASOURCE
         if (
-          data.details === 'mediaSourceRequiresReset' ||
           data.details === 'bufferAddCodecError' ||
           data.details === 'bufferIncompatibleCodecsError' ||
+          data.details === 'mediaSourceRequiresReset' ||
           data.details === 'manifestParsingError'
         ) {
           console.warn('[FlixHN] Detalle técnico MSE:', data.details, motivoTecnico);
 
-          // Si falló inmediatamente al arrancar (< 2.5s) o bufferAddCodecError directo:
-          // es incompatibilidad de códec/contenedor con MediaSource, no caída temporal
-          if (tiempoTranscurrido < 2500 || data.details === 'bufferAddCodecError') {
-            console.info('[FlixHN] Falla temprana detectada en HLS (< 2.5s). Cambiando automáticamente a motor MPEG-TS / Fallback...');
+          // 1. Primero intentar recuperación nativa de HLS (!hls._triedCodecSwap)
+          if (!hls._triedCodecSwap) {
+            hls._triedCodecSwap = true;
+            console.warn('[FlixHN] Intentando swapAudioCodec + recoverMediaError en HLS...');
+            try {
+              hls.swapAudioCodec();
+            } catch (swapErr) {
+              console.warn('[FlixHN] swapAudioCodec aviso:', swapErr);
+            }
+            hls.recoverMediaError();
+            return;
+          }
+
+          // 2. Si vuelve a fallar y la URL es .m3u8 (!hls._triedForcedTranscode)
+          const isHlsManifest = url.includes('.m3u8') || url.includes('/master') || url.includes('/Videos/');
+          if (!hls._triedForcedTranscode && isHlsManifest) {
+            hls._triedForcedTranscode = true;
+            console.warn('[FlixHN] Recargando fuente en HLS forzando transcodificación H264/AAC...');
+            try {
+              const forcedUrl = new URL(url, window.location.href);
+              forcedUrl.searchParams.set('EnableAutoStreamCopy', 'false');
+              forcedUrl.searchParams.set('AllowVideoStreamCopy', 'false');
+              forcedUrl.searchParams.set('AllowAudioStreamCopy', 'false');
+              forcedUrl.searchParams.set('VideoCodec', 'h264');
+              forcedUrl.searchParams.set('AudioCodec', 'aac');
+              forcedUrl.searchParams.set('AudioBitrate', '192000');
+              forcedUrl.searchParams.set('MaxAudioChannels', '2');
+              forcedUrl.searchParams.set('TranscodingMaxAudioChannels', '2');
+              forcedUrl.searchParams.set('VideoBitrate', '8000000');
+              forcedUrl.searchParams.set('SegmentContainer', 'ts');
+              forcedUrl.searchParams.set('MinSegments', '1');
+              forcedUrl.searchParams.set('BreakOnNonKeyFrames', 'True');
+              forcedUrl.searchParams.set('PlaySessionId', `flixhn_tc_${Date.now()}`);
+
+              const newHlsUrl = forcedUrl.toString();
+              console.info('[FlixHN] URL con transcodificación forzada:', newHlsUrl);
+              hls.loadSource(newHlsUrl);
+              hls.startLoad();
+              return;
+            } catch (urlErr) {
+              console.warn('[FlixHN] Error construyendo URL forzada para HLS:', urlErr);
+            }
+          }
+
+          // 3. NUNCA pasar una URL que contenga .m3u8, /master o /Videos/ a iniciarConMpegTs().
+          // Solo usar iniciarConMpegTs() si se dispone de un directStreamUrl que sea un flujo .ts directo y no un manifiesto HLS.
+          const isTsDirectStream = Boolean(
+            directStreamUrl &&
+            !directStreamUrl.includes('.m3u8') &&
+            !directStreamUrl.includes('/master') &&
+            !directStreamUrl.includes('/Videos/') &&
+            /\.ts($|\?)/i.test(directStreamUrl)
+          );
+
+          if (isTsDirectStream) {
+            console.info('[FlixHN] Fallback a flujo directo MPEG-TS (.ts)...', directStreamUrl);
             try {
               hls.stopLoad();
               hls.detachMedia();
@@ -655,7 +728,7 @@ export default function LiveTvPlayer({
             if (currentTuneRef.current !== tuneId) return;
 
             iniciarConMpegTs(
-              url,
+              directStreamUrl,
               videoRef.current,
               () => {
                 if (currentTuneRef.current !== tuneId) return;
@@ -668,9 +741,7 @@ export default function LiveTvPlayer({
                 setCargando(false);
                 const motivoStr = String(motivo || '');
                 const esIncompatibilidadCodec =
-                  /codec|notsupported|hevc|hvc1|ac-3|ec-3|eac3|media_mse_error|formaterror|unsupported/i.test(motivoStr) ||
-                  data.details === 'bufferAddCodecError' ||
-                  data.details === 'mediaSourceRequiresReset';
+                  /codec|notsupported|hevc|hvc1|ac-3|ec-3|eac3|media_mse_error|formaterror|unsupported/i.test(motivoStr);
 
                 if (esIncompatibilidadCodec) {
                   setErrorCanal(
@@ -696,68 +767,25 @@ export default function LiveTvPlayer({
             });
             return;
           }
+
+          // Si no hay flujo .ts directo y falló HLS tras reintentos, destruir HLS y mostrar el mensaje correspondiente
+          try {
+            hls.stopLoad();
+            hls.detachMedia();
+            hls.destroy();
+          } catch (e) {}
+          hlsRef.current = null;
+
+          setCargando(false);
+          setErrorCanal(
+            'Formato de video/audio del canal (HEVC/AC3) incompatible con este navegador. Prueba desde la App Android TV o activa transcodificación.'
+          );
+          return;
         }
 
         // Reiniciar contador si han pasado más de 15 segundos de reproducción estable
         if (ahora - lastResetTime > 15000) {
           resetCount = 0;
-        }
-
-        // CASO: MediaSource cerrado tras reproducción activa (> 2.5s)
-        if (data.details === 'mediaSourceRequiresReset') {
-          resetCount++;
-          lastResetTime = ahora;
-
-          if (resetCount <= 2) {
-            console.warn(`[FlixHN] MediaSource cerrado durante reproducción, re-adjuntando video (${resetCount}/2)...`);
-            hls.detachMedia();
-            setTimeout(() => {
-              if (hlsRef.current === hls && videoRef.current && currentTuneRef.current === tuneId) {
-                hls.attachMedia(videoRef.current);
-                hls.loadSource(url);
-              }
-            }, 150);
-          } else {
-            console.error('[FlixHN] No se pudo estabilizar el MediaSource tras reintentos. Probando fallback MPEG-TS...');
-            try {
-              hls.stopLoad();
-              hls.detachMedia();
-              hls.destroy();
-            } catch (e) {}
-            hlsRef.current = null;
-
-            iniciarConMpegTs(
-              url,
-              videoRef.current,
-              () => {
-                if (currentTuneRef.current !== tuneId) return;
-                setCargando(false);
-                setErrorCanal(false);
-                setIsPlaying(true);
-              },
-              (motivo) => {
-                if (currentTuneRef.current !== tuneId) return;
-                setCargando(false);
-                setErrorCanal(
-                  'Formato de video/audio del canal (HEVC/AC3) incompatible con este navegador. Prueba desde la App Android TV o activa transcodificación.'
-                );
-              }
-            ).then((player) => {
-              if (currentTuneRef.current !== tuneId) {
-                if (player) {
-                  try {
-                    player.pause();
-                    player.unload();
-                    player.detachMediaElement();
-                    player.destroy();
-                  } catch (e) {}
-                }
-                return;
-              }
-              mpegtsRef.current = player;
-            });
-          }
-          return;
         }
 
         // RESTO DE ERRORES FATALES
