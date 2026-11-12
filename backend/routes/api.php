@@ -72,9 +72,11 @@ Route::post('/auth/password/forgot', [PasswordResetController::class, 'forgot'])
 Route::post('/auth/password/verify-code', [PasswordResetController::class, 'verifyCode']);
 Route::post('/auth/password/reset', [PasswordResetController::class, 'resetPassword']);
 
-// Acceso pÃºblico al portal Live TV y proxy de streaming
+// Acceso público al portal Live TV y proxy de streaming
 Route::get('/livetv/channels', [LiveTvController::class, 'getChannels']);
 Route::get('/livetv/proxy', [LiveTvController::class, 'proxy']);
+Route::match(['get', 'post'], '/livetv/playback-info', [LiveTvController::class, 'getPlaybackInfo']);
+Route::match(['delete', 'post'], '/livetv/active-encoding', [LiveTvController::class, 'stopActiveEncoding']);
 
 // Streaming directo para archivos locales OTT y catÃ¡logo On-Net (Soporta Range: bytes para MP4/MKV)
 Route::get('/media/{id}/stream', [App\Http\Controllers\MediaStreamController::class, 'stream'])->name('media.stream');

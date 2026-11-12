@@ -8,17 +8,16 @@ import {
   VolumeX,
   Maximize,
   Minimize,
-  Radio,
   Tv,
   X,
   Layers,
   Search,
   ChevronRight,
   AlertCircle,
-  Loader2,
   RefreshCw,
 } from 'lucide-react';
 import useTelemetryHeartbeat from '../hooks/useTelemetryHeartbeat';
+import api from '../services/api';
 
 export default function LiveTvPlayer({
   channel: initialChannel,
@@ -26,10 +25,25 @@ export default function LiveTvPlayer({
   onClose,
   onSelectChannel,
 }) {
+  // Volumen guardado o 1.0 por defecto
+  const getSavedVolume = () => {
+    try {
+      const v = localStorage.getItem('livetv_volume') ?? localStorage.getItem('volume');
+      if (v !== null) {
+        const num = parseFloat(v);
+        if (!isNaN(num) && num >= 0 && num <= 1) {
+          return num;
+        }
+      }
+    } catch (e) {}
+    return 1.0;
+  };
+
   const [currentChannel, setCurrentChannel] = useState(initialChannel);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
-  const [volume, setVolume] = useState(1);
+  const [volume, setVolume] = useState(getSavedVolume);
+  const [needsUnmutePrompt, setNeedsUnmutePrompt] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
@@ -42,6 +56,8 @@ export default function LiveTvPlayer({
   const playerContainerRef = useRef(null);
   const hlsRef = useRef(null);
   const controlsTimeoutRef = useRef(null);
+  const currentPlaySessionRef = useRef(null);
+  const currentDeviceIdRef = useRef('flixhn-web-client');
 
   // Actualizar canal actual cuando cambie la prop
   useEffect(() => {
@@ -67,7 +83,26 @@ export default function LiveTvPlayer({
     };
   }, []);
 
-  // Telemetría en tiempo real: Heartbeat cada 15 segundos y stop al desmontar
+  // Notificar a Emby para liberar la codificación activa
+  const releaseActiveEncoding = useCallback((playSessionId, deviceId = 'flixhn-web-client') => {
+    if (!playSessionId) return;
+
+    // 1. Notificar al backend de FlixHN
+    api.delete('/livetv/active-encoding', {
+      params: { PlaySessionId: playSessionId, DeviceId: deviceId },
+    }).catch(() => {});
+
+    // 2. Notificar directamente a Emby si hay conectividad
+    try {
+      const serverHost = localStorage.getItem('media_server_url') || localStorage.getItem('emby_server_url') || 'http://45.4.87.126:6789';
+      const apiKey = localStorage.getItem('emby_api_key') || localStorage.getItem('media_server_api_key') || '0fe0eb20e78f431d9fa474e05ab2d82f';
+      const cleanBase = serverHost.replace(/\/emby\/?$/i, '');
+      const deleteUrl = `${cleanBase}/emby/Videos/ActiveEncodings?DeviceId=${encodeURIComponent(deviceId)}&PlaySessionId=${encodeURIComponent(playSessionId)}&api_key=${encodeURIComponent(apiKey)}`;
+      fetch(deleteUrl, { method: 'DELETE', keepalive: true, mode: 'no-cors' }).catch(() => {});
+    } catch (e) {}
+  }, []);
+
+  // Telemetría en tiempo real: Heartbeat cada 15 segundos y stop al desmontar (Cero alert nativo)
   const channelTitle = currentChannel
     ? `${currentChannel.channel_number ? `CH ${currentChannel.channel_number} - ` : ''}${currentChannel.name || 'Canal en Vivo'}`
     : 'Canal en Vivo';
@@ -94,8 +129,11 @@ export default function LiveTvPlayer({
       }
     },
     onBlocked: () => {
-      alert('El acceso a la transmisión en directo ha sido suspendido para este dispositivo por el administrador.');
-      if (typeof onClose === 'function') onClose();
+      // Reemplazo estricto de alert() por mensaje en interfaz
+      setStreamError('El acceso a la transmisión en directo ha sido suspendido para este dispositivo por el administrador.');
+      if (typeof onClose === 'function') {
+        setTimeout(onClose, 3000);
+      }
     },
     enabled: !!currentChannel,
   });
@@ -113,12 +151,78 @@ export default function LiveTvPlayer({
     }, 4000);
   }, [showZappingDrawer]);
 
-  // Inicialización y Carga de Stream HLS Live
-  const loadStream = useCallback((channelToPlay) => {
-    if (!channelToPlay?.stream_url || !videoRef.current) return;
+  // Intento de Reproducción con Sonido Activo y Captura de Bloqueo Autoplay
+  const attemptPlay = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    // Iniciar con audio habilitado y volumen guardado
+    video.volume = volume;
+    video.muted = false;
+    setIsMuted(false);
+
+    const playPromise = video.play();
+    if (playPromise !== undefined) {
+      playPromise
+        .then(() => {
+          setIsPlaying(true);
+          setIsLoading(false);
+          setNeedsUnmutePrompt(false);
+        })
+        .catch((err) => {
+          console.warn('Reproducción con audio bloqueada por el navegador:', err);
+          // Si el navegador bloquea el autoplay con sonido la primera vez (NotAllowedError)
+          if (err.name === 'NotAllowedError' || err.message?.includes('interact') || !video.muted) {
+            video.muted = true;
+            setIsMuted(true);
+            video
+              .play()
+              .then(() => {
+                setIsPlaying(true);
+                setIsLoading(false);
+                setNeedsUnmutePrompt(true);
+              })
+              .catch((e) => {
+                console.warn('Autoplay silenciado también falló:', e);
+                setIsLoading(false);
+                setIsPlaying(false);
+              });
+          } else {
+            setIsLoading(false);
+            setIsPlaying(false);
+          }
+        });
+    }
+  }, [volume]);
+
+  // Botón flotante: "Activar Sonido"
+  const handleEnableSound = () => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    video.muted = false;
+    const targetVol = volume > 0 ? volume : 1.0;
+    video.volume = targetVol;
+    setVolume(targetVol);
+    setIsMuted(false);
+    setNeedsUnmutePrompt(false);
+    try {
+      localStorage.setItem('livetv_volume', String(targetVol));
+    } catch (e) {}
+  };
+
+  // Inicialización y Carga de Stream HLS Live con Negociación Emby
+  const loadStream = useCallback(async (channelToPlay) => {
+    if (!channelToPlay || !videoRef.current) return;
 
     setIsLoading(true);
     setStreamError(null);
+
+    // 1. Liberar sintonizador / codificación activa previa
+    if (currentPlaySessionRef.current) {
+      releaseActiveEncoding(currentPlaySessionRef.current);
+      currentPlaySessionRef.current = null;
+    }
 
     // Destruir instancia Hls anterior si existe
     if (hlsRef.current) {
@@ -127,36 +231,169 @@ export default function LiveTvPlayer({
     }
 
     const video = videoRef.current;
-    const streamUrl = channelToPlay.stream_url;
+    const targetChannelId = channelToPlay.emby_channel_id || channelToPlay.id || channelToPlay.tvg_id;
+    const deviceId = currentDeviceIdRef.current;
 
-    // Detectar si el navegador tiene soporte nativo HLS (Safari/iOS)
+    let finalHlsUrl = null;
+    let playSessionId = null;
+
+    // 2. Negociar PlaybackInfo con Emby a través del backend de FlixHN
+    try {
+      const res = await api.post('/livetv/playback-info', {
+        channel_id: targetChannelId,
+        device_id: deviceId,
+        stream_url: channelToPlay.stream_url,
+      });
+
+      if (res.data && res.data.hls_url) {
+        finalHlsUrl = res.data.hls_url;
+        playSessionId = res.data.play_session_id;
+      }
+    } catch (err) {
+      console.warn('LiveTvPlayer: Falló consulta PlaybackInfo en backend, probando Emby directo:', err);
+    }
+
+    // 3. Fallback directo a Emby API si el backend no pudo negociar
+    if (!finalHlsUrl) {
+      const serverHost = localStorage.getItem('media_server_url') || localStorage.getItem('emby_server_url') || 'http://45.4.87.126:6789';
+      const apiKey = localStorage.getItem('emby_api_key') || localStorage.getItem('media_server_api_key') || '0fe0eb20e78f431d9fa474e05ab2d82f';
+      const cleanBaseUrl = serverHost.replace(/\/emby\/?$/i, '');
+      const embyChannelId = channelToPlay.emby_channel_id || targetChannelId;
+
+      if (embyChannelId) {
+        try {
+          const deviceProfile = {
+            Name: 'FlixHN Live Player',
+            MaxStreamingBitrate: 20000000,
+            DirectPlayProfiles: [
+              {
+                Container: 'ts,m3u8,mp4',
+                Type: 'Video',
+                VideoCodec: 'h264',
+                AudioCodec: 'aac,mp3',
+              },
+            ],
+            TranscodingProfiles: [
+              {
+                Container: 'ts',
+                Type: 'Video',
+                VideoCodec: 'h264',
+                AudioCodec: 'aac',
+                AudioBitrate: 192000,
+                MaxAudioChannels: '2',
+                Protocol: 'hls',
+                Context: 'Streaming',
+                BreakOnNonKeyFrames: true,
+              },
+            ],
+            ContainerProfiles: [],
+            CodecProfiles: [
+              { Type: 'Video', Codec: 'h264' },
+              {
+                Type: 'Audio',
+                Codec: 'aac',
+                Conditions: [{ Condition: 'LessThanEqual', Property: 'AudioChannels', Value: '2' }],
+              },
+            ],
+            ResponseProfiles: [],
+          };
+
+          const embyRes = await fetch(`${cleanBaseUrl}/emby/Items/${embyChannelId}/PlaybackInfo?api_key=${apiKey}`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+              'X-Emby-Token': apiKey,
+            },
+            body: JSON.stringify({ DeviceProfile: deviceProfile }),
+          });
+
+          if (embyRes.ok) {
+            const embyData = await embyRes.json();
+            playSessionId = embyData.PlaySessionId;
+            const ms = embyData.MediaSources?.[0];
+            const msId = ms?.Id || embyChannelId;
+            const liveStreamId = ms?.LiveStreamId;
+            const transUrl = ms?.TranscodingUrl;
+
+            if (transUrl) {
+              const rawUrl = transUrl.startsWith('http')
+                ? transUrl
+                : `${cleanBaseUrl}${transUrl.startsWith('/') ? '' : '/'}${transUrl}`;
+              const parsed = new URL(rawUrl);
+              parsed.searchParams.set('MediaSourceId', msId);
+              parsed.searchParams.set('PlaySessionId', playSessionId || ('flixhn_' + Math.random().toString(36).substring(2, 9)));
+              if (liveStreamId) parsed.searchParams.set('LiveStreamId', liveStreamId);
+              parsed.searchParams.set('VideoCodec', 'h264');
+              parsed.searchParams.set('AudioCodec', 'aac');
+              parsed.searchParams.set('AudioBitrate', '192000');
+              parsed.searchParams.set('TranscodingMaxAudioChannels', '2');
+              parsed.searchParams.set('SegmentContainer', 'ts');
+              parsed.searchParams.set('BreakOnNonKeyFrames', 'True');
+              parsed.searchParams.set('DeviceId', deviceId);
+              parsed.searchParams.set('api_key', apiKey);
+              finalHlsUrl = parsed.toString();
+            } else {
+              const params = new URLSearchParams({
+                MediaSourceId: msId,
+                PlaySessionId: playSessionId || ('flixhn_' + Math.random().toString(36).substring(2, 9)),
+                VideoCodec: 'h264',
+                AudioCodec: 'aac',
+                AudioBitrate: '192000',
+                TranscodingMaxAudioChannels: '2',
+                SegmentContainer: 'ts',
+                BreakOnNonKeyFrames: 'True',
+                DeviceId: deviceId,
+                api_key: apiKey,
+              });
+              if (liveStreamId) params.set('LiveStreamId', liveStreamId);
+              finalHlsUrl = `${cleanBaseUrl}/emby/Videos/${embyChannelId}/master.m3u8?${params.toString()}`;
+            }
+          }
+        } catch (e) {
+          console.warn('LiveTvPlayer: Error en negociación directa con Emby:', e);
+        }
+      }
+    }
+
+    // 4. Último fallback: usar stream_url directo del canal
+    if (!finalHlsUrl) {
+      finalHlsUrl = channelToPlay.stream_url;
+    }
+
+    if (!finalHlsUrl) {
+      setStreamError('No se encontró una señal de transmisión válida para este canal.');
+      setIsLoading(false);
+      return;
+    }
+
+    currentPlaySessionRef.current = playSessionId;
+
+    // 5. Configuración de HLS.js con tolerancia a paquetes en vivo y baja latencia desactivada
     const canPlayNativeHls = video.canPlayType('application/vnd.apple.mpegurl');
-    const isHlsUrl = streamUrl.includes('.m3u8') || streamUrl.includes('output=hls');
+    const isHlsUrl = finalHlsUrl.includes('.m3u8') || finalHlsUrl.includes('output=hls') || finalHlsUrl.includes('/master') || finalHlsUrl.includes('/Videos/');
 
-    if (Hls.isSupported() && isHlsUrl) {
+    if (Hls.isSupported() && (isHlsUrl || !canPlayNativeHls)) {
       const hls = new Hls({
         enableWorker: true,
-        lowLatencyMode: true,
-        backBufferLength: 60,
-        liveSyncDurationCount: 3,
-        liveMaxLatencyDurationCount: 6,
-        maxBufferLength: 10,
-        maxMaxBufferLength: 20,
-        maxBufferSize: 30 * 1000 * 1000,
-        fragLoadingTimeOut: 15000,
+        lowLatencyMode: false,
+        backBufferLength: 30,
+        maxBufferLength: 30,
+        maxMaxBufferLength: 60,
         manifestLoadingTimeOut: 15000,
+        manifestLoadingMaxRetry: 4,
+        levelLoadingTimeOut: 15000,
+        fragLoadingTimeOut: 20000,
+        fragLoadingMaxRetry: 6,
       });
 
       hlsRef.current = hls;
-      hls.loadSource(streamUrl);
+      hls.loadSource(finalHlsUrl);
       hls.attachMedia(video);
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         setIsLoading(false);
-        video.play().then(() => setIsPlaying(true)).catch((err) => {
-          console.warn('Reproducción automática bloqueada por navegador:', err);
-          setIsPlaying(false);
-        });
+        attemptPlay();
       });
 
       hls.on(Hls.Events.ERROR, (event, data) => {
@@ -167,7 +404,7 @@ export default function LiveTvPlayer({
               hls.startLoad();
               break;
             case Hls.ErrorTypes.MEDIA_ERROR:
-              console.warn('HLS Live Media Error, intentando recuperar...', data);
+              console.warn('HLS Live Media Error, intentando recuperar decodificación...', data);
               hls.recoverMediaError();
               break;
             default:
@@ -177,27 +414,36 @@ export default function LiveTvPlayer({
               hls.destroy();
               break;
           }
+        } else {
+          // Microcortes o saltos leves de señal IPTV: mantener reproduciendo
+          console.warn('HLS Live aviso no fatal:', data.details);
         }
       });
-    } else if (canPlayNativeHls || !isHlsUrl) {
-      video.src = streamUrl;
-      video.play().then(() => {
+    } else if (canPlayNativeHls) {
+      video.src = finalHlsUrl;
+      video.addEventListener('loadedmetadata', () => {
         setIsLoading(false);
-        setIsPlaying(true);
-      }).catch(() => {
+        attemptPlay();
+      }, { once: true });
+      video.addEventListener('error', () => {
         setIsLoading(false);
-      });
+        setStreamError('Error al decodificar la señal de video nativa.');
+      }, { once: true });
     } else {
-      setStreamError('El formato de transmisión de este canal no es compatible directamente con este navegador.');
-      setIsLoading(false);
+      video.src = finalHlsUrl;
+      attemptPlay();
     }
-  }, []);
+  }, [releaseActiveEncoding, attemptPlay]);
 
-  // Recargar stream al cambiar de canal
+  // Recargar stream al cambiar de canal y limpiar sintonizador al desmontar
   useEffect(() => {
     loadStream(currentChannel);
 
     return () => {
+      if (currentPlaySessionRef.current) {
+        releaseActiveEncoding(currentPlaySessionRef.current);
+        currentPlaySessionRef.current = null;
+      }
       if (hlsRef.current) {
         hlsRef.current.destroy();
         hlsRef.current = null;
@@ -206,40 +452,66 @@ export default function LiveTvPlayer({
         clearTimeout(controlsTimeoutRef.current);
       }
     };
-  }, [currentChannel, loadStream]);
+  }, [currentChannel, loadStream, releaseActiveEncoding]);
+
+  // Liberar codificación si el usuario cierra o recarga la pestaña
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (currentPlaySessionRef.current) {
+        releaseActiveEncoding(currentPlaySessionRef.current);
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [releaseActiveEncoding]);
 
   // Play / Pausa
   const togglePlay = () => {
     if (!videoRef.current) return;
     if (videoRef.current.paused) {
-      videoRef.current.play();
-      setIsPlaying(true);
+      videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
     } else {
       videoRef.current.pause();
       setIsPlaying(false);
     }
   };
 
-  // Mute
+  // Mute / Unmute
   const toggleMute = () => {
     if (!videoRef.current) return;
     const nextMuted = !isMuted;
     videoRef.current.muted = nextMuted;
     setIsMuted(nextMuted);
-    if (!nextMuted && volume === 0) {
-      setVolume(0.5);
-      videoRef.current.volume = 0.5;
+
+    if (!nextMuted) {
+      setNeedsUnmutePrompt(false);
+      const targetVol = volume === 0 ? 0.5 : volume;
+      videoRef.current.volume = targetVol;
+      setVolume(targetVol);
+      try {
+        localStorage.setItem('livetv_volume', String(targetVol));
+      } catch (e) {}
     }
   };
 
-  // Cambio de Volumen
+  // Cambio de Volumen con slider
   const handleVolumeChange = (e) => {
     const val = parseFloat(e.target.value);
     setVolume(val);
+    try {
+      localStorage.setItem('livetv_volume', String(val));
+    } catch (err) {}
+
     if (videoRef.current) {
       videoRef.current.volume = val;
-      videoRef.current.muted = val === 0;
-      setIsMuted(val === 0);
+      const nextMuted = val === 0;
+      videoRef.current.muted = nextMuted;
+      setIsMuted(nextMuted);
+      if (val > 0) {
+        setNeedsUnmutePrompt(false);
+      }
     }
   };
 
@@ -303,6 +575,20 @@ export default function LiveTvPlayer({
           setStreamError('Error al decodificar la señal de video.');
         }}
       />
+
+      {/* Botón flotante para activar sonido si el navegador bloqueó autoplay inicial */}
+      {needsUnmutePrompt && (
+        <div className="absolute top-20 left-1/2 -translate-x-1/2 z-40 animate-bounce">
+          <button
+            type="button"
+            onClick={handleEnableSound}
+            className="flex items-center gap-2 bg-[#E50914] hover:bg-[#b80710] text-white px-5 py-2.5 rounded-full shadow-2xl font-bold text-xs md:text-sm tracking-wide cursor-pointer transition-all transform hover:scale-105 active:scale-95 border border-white/20"
+          >
+            <Volume2 className="w-5 h-5 animate-pulse" />
+            <span>Activar Sonido</span>
+          </button>
+        </div>
+      )}
 
       {/* Spinner de Carga Central */}
       {isLoading && !streamError && (
@@ -456,6 +742,7 @@ export default function LiveTvPlayer({
               type="button"
               onClick={toggleMute}
               className="p-2 hover:bg-white/15 rounded-full transition-colors cursor-pointer"
+              title={isMuted ? 'Activar sonido' : 'Silenciar'}
             >
               {isMuted || volume === 0 ? <VolumeX className="w-5 h-5 text-red-500" /> : <Volume2 className="w-5 h-5" />}
             </button>
@@ -506,7 +793,7 @@ export default function LiveTvPlayer({
             </div>
             <button
               onClick={() => setShowZappingDrawer(false)}
-              className="p-1 text-zinc-400 hover:text-white rounded"
+              className="p-1 text-zinc-400 hover:text-white rounded cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>
