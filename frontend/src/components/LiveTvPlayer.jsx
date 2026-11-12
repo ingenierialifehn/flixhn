@@ -10,7 +10,8 @@ if (typeof window !== 'undefined' && (!window.crypto || !window.crypto.randomUUI
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import Hls from 'hls.js';
-import mpegts from 'mpegts.js';
+import * as mpegtsModule from 'mpegts.js';
+const mpegts = mpegtsModule.default || mpegtsModule;
 import {
   ArrowLeft,
   Play,
