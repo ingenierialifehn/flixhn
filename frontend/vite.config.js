@@ -8,7 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   resolve: {
-    dedupe: ['react', 'react-dom'],
+    dedupe: ['react', 'react-dom', 'react/jsx-runtime', 'react/jsx-dev-runtime'],
     alias: {
       react: path.resolve(__dirname, 'node_modules/react'),
       'react-dom': path.resolve(__dirname, 'node_modules/react-dom'),
@@ -24,9 +24,7 @@ export default defineConfig({
       name: 'suppress-watcher-eio',
       configureServer(server) {
         server.watcher.on('error', (err) => {
-          if (err?.code === 'EIO') {
-            return; // Manejo silencioso de errores temporales de I/O en Docker para Windows
-          }
+          if (err?.code === 'EIO') return;
           console.error('Vite Watcher Error:', err);
         });
       },
@@ -34,7 +32,8 @@ export default defineConfig({
   ],
   cacheDir: '/tmp/.vite',
   optimizeDeps: {
-    include: ['react', 'react-dom', 'hls.js'],
+    force: true,
+    include: ['react', 'react-dom', 'react/jsx-dev-runtime', 'hls.js'],
     exclude: ['mpegts.js'],
   },
   server: {
