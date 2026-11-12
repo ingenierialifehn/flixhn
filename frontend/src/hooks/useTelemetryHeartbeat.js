@@ -35,6 +35,7 @@ export const getPersistentDeviceId = () => {
 export function useTelemetryHeartbeat({
   mediaType = 'vod', // 'vod' | 'livetv'
   mediaId,
+  channelId,
   title,
   poster,
   currentTime = 0,
@@ -44,12 +45,16 @@ export function useTelemetryHeartbeat({
   onBlocked,
   enabled = true,
 } = {}) {
+  // Manejo seguro del identificador (soporta channelId o mediaId)
+  const effectiveId = channelId ?? mediaId ?? null;
+
   // Todos los useRef arriba:
   const heartbeatRef = useRef(null);
   const isPlayingRef = useRef(playbackState === 'playing');
   const latestProps = useRef({
     mediaType,
-    mediaId,
+    mediaId: effectiveId,
+    channelId: effectiveId,
     title,
     poster,
     currentTime,
@@ -66,7 +71,8 @@ export function useTelemetryHeartbeat({
     isPlayingRef.current = playbackState === 'playing';
     latestProps.current = {
       mediaType,
-      mediaId,
+      mediaId: effectiveId,
+      channelId: effectiveId,
       title,
       poster,
       currentTime,
@@ -82,6 +88,11 @@ export function useTelemetryHeartbeat({
   const sendHeartbeat = useCallback(async () => {
     const p = latestProps.current;
     if (!p.enabled || !p.title || p.playbackState === 'stopped') {
+      return;
+    }
+
+    // Si es LiveTV y aún no cuenta con channelId/mediaId, evitar enviar latidos incompletos
+    if (p.mediaType === 'livetv' && !p.channelId && !p.mediaId) {
       return;
     }
 
@@ -163,6 +174,11 @@ export function useTelemetryHeartbeat({
       return;
     }
 
+    // Para LiveTV: si channelId no existe todavía, salir del efecto de forma segura sin romper hooks
+    if (mediaType === 'livetv' && !effectiveId) {
+      return;
+    }
+
     // Enviar latido inmediato ante cambios de estado o inicio
     sendHeartbeat();
 
@@ -176,7 +192,7 @@ export function useTelemetryHeartbeat({
         heartbeatRef.current = null;
       }
     };
-  }, [enabled, title, playbackState, sendHeartbeat]);
+  }, [enabled, title, playbackState, mediaType, effectiveId, sendHeartbeat]);
 
   // Limpieza al desmontar el componente o cerrar la pestaña
   useEffect(() => {

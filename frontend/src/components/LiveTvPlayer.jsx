@@ -151,6 +151,43 @@ export default function LiveTvPlayer({
   const [zappingSearch, setZappingSearch] = useState('');
   const [selectedZappingCategory, setSelectedZappingCategory] = useState('all');
 
+  // Telemetría en tiempo real: Invocación en bloque superior absoluto (sin returns previos ni condicionales)
+  const channelTitle = currentChannel
+    ? `${currentChannel.channel_number ? `CH ${currentChannel.channel_number} - ` : ''}${currentChannel.name || 'Canal en Vivo'}`
+    : 'Canal en Vivo';
+
+  const channelPoster = currentChannel?.logo_url || currentChannel?.logo || currentChannel?.tvg_logo || '';
+
+  useTelemetryHeartbeat({
+    mediaType: 'livetv',
+    mediaId: currentChannel?.id ?? null,
+    channelId: currentChannel?.id ?? null,
+    title: channelTitle,
+    poster: channelPoster,
+    currentTime: () => videoRef.current?.currentTime || 0,
+    duration: 0,
+    playbackState: isPlaying ? 'playing' : 'paused',
+    onRemoteCommand: (command) => {
+      if (command === 'pause') {
+        videoRef.current?.pause();
+        setIsPlaying(false);
+      } else if (command === 'resume') {
+        videoRef.current?.play().catch(() => {});
+        setIsPlaying(true);
+      } else if (command === 'stop' || command === 'kick') {
+        if (typeof onClose === 'function') onClose();
+      }
+    },
+    onBlocked: () => {
+      // Reemplazo estricto de alert() por mensaje en interfaz
+      setStreamError('El acceso a la transmisión en directo ha sido suspendido para este dispositivo por el administrador.');
+      if (typeof onClose === 'function') {
+        setTimeout(onClose, 3000);
+      }
+    },
+    enabled: !!currentChannel,
+  });
+
   // Mantener referencias actualizadas de volumen y mute para evitar recreación de efectos
   useEffect(() => {
     volumeRef.current = volume;
@@ -206,42 +243,6 @@ export default function LiveTvPlayer({
       fetch(deleteUrl, { method: 'DELETE', keepalive: true, mode: 'no-cors' }).catch(() => {});
     } catch (e) {}
   }, []);
-
-  // Telemetría en tiempo real: Heartbeat cada 15 segundos y stop al desmontar (Cero alert nativo)
-  const channelTitle = currentChannel
-    ? `${currentChannel.channel_number ? `CH ${currentChannel.channel_number} - ` : ''}${currentChannel.name || 'Canal en Vivo'}`
-    : 'Canal en Vivo';
-
-  const channelPoster = currentChannel?.logo_url || '';
-
-  useTelemetryHeartbeat({
-    mediaType: 'livetv',
-    mediaId: currentChannel?.id,
-    title: channelTitle,
-    poster: channelPoster,
-    currentTime: () => videoRef.current?.currentTime || 0,
-    duration: 0,
-    playbackState: isPlaying ? 'playing' : 'paused',
-    onRemoteCommand: (command) => {
-      if (command === 'pause') {
-        videoRef.current?.pause();
-        setIsPlaying(false);
-      } else if (command === 'resume') {
-        videoRef.current?.play().catch(() => {});
-        setIsPlaying(true);
-      } else if (command === 'stop' || command === 'kick') {
-        if (typeof onClose === 'function') onClose();
-      }
-    },
-    onBlocked: () => {
-      // Reemplazo estricto de alert() por mensaje en interfaz
-      setStreamError('El acceso a la transmisión en directo ha sido suspendido para este dispositivo por el administrador.');
-      if (typeof onClose === 'function') {
-        setTimeout(onClose, 3000);
-      }
-    },
-    enabled: !!currentChannel,
-  });
 
   // Manejo de Inactividad de Ratón para Ocultar Controles
   const handleMouseMove = useCallback(() => {
