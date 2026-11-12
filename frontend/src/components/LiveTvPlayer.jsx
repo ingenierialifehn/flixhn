@@ -1,3 +1,13 @@
+// Polyfill para crypto.randomUUID en entornos HTTP no seguros
+if (typeof window !== 'undefined' && (!window.crypto || !window.crypto.randomUUID)) {
+  if (!window.crypto) window.crypto = {};
+  window.crypto.randomUUID = function () {
+    return '10000000-1000-4000-8000-100000000000'.replace(/[018]/g, (c) =>
+      (+c ^ (Math.random() * 16 >> (+c / 4))).toString(16)
+    );
+  };
+}
+
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import Hls from 'hls.js';
 import {
@@ -65,6 +75,7 @@ export default function LiveTvPlayer({
   const currentPlaySessionRef = useRef(null);
   const currentDeviceIdRef = useRef('flixhn-web-client');
   const currentTuneRef = useRef(null);
+  const iniciarStreamLimpiamenteRef = useRef(null);
   const volumeRef = useRef(volume);
   const isMutedRef = useRef(isMuted);
 
@@ -237,9 +248,14 @@ export default function LiveTvPlayer({
   };
 
   // 3. LIMPIEZA AL CAMBIAR DE CANAL (CH + / CH - O CLIC EN GUÍA) Y REPRODUCCIÓN HLS ESTABLE
-  const iniciarStreamLimpiamente = useCallback(async (channelToPlay) => {
+  const iniciarStreamLimpiamente = useCallback(async (channelParam) => {
     const video = videoRef.current;
-    if (!channelToPlay || !video) return;
+    if (!channelParam || !video) return;
+
+    // Acepta tanto un objeto canal como una URL directa de stream
+    const channelToPlay = typeof channelParam === 'string'
+      ? (currentChannel || { url: channelParam, stream_url: channelParam, name: 'Canal en Vivo' })
+      : channelParam;
 
     const tuneId = Symbol('tune');
     currentTuneRef.current = tuneId;
@@ -282,27 +298,31 @@ export default function LiveTvPlayer({
 
     const targetChannelId = channelToPlay.emby_channel_id || channelToPlay.id || channelToPlay.tvg_id;
     const deviceId = currentDeviceIdRef.current;
-    const directStreamUrl = channelToPlay.url || channelToPlay.stream_url;
+    const directStreamUrl = typeof channelParam === 'string' ? channelParam : (channelToPlay.url || channelToPlay.stream_url);
 
-    let finalHlsUrl = null;
+    let finalHlsUrl = typeof channelParam === 'string' && (channelParam.includes('.m3u8') || channelParam.includes('/master') || channelParam.includes('/Videos/') || channelParam.includes('output=hls'))
+      ? channelParam
+      : null;
     let playSessionId = null;
 
-    // 4. Negociar PlaybackInfo con Emby a través del backend de FlixHN
-    try {
-      const res = await api.post('/livetv/playback-info', {
-        channel_id: targetChannelId,
-        device_id: deviceId,
-        stream_url: directStreamUrl,
-      });
+    // 4. Negociar PlaybackInfo con Emby a través del backend de FlixHN (solo si no se pasó ya una URL directa)
+    if (!finalHlsUrl) {
+      try {
+        const res = await api.post('/livetv/playback-info', {
+          channel_id: targetChannelId,
+          device_id: deviceId,
+          stream_url: directStreamUrl,
+        });
 
-      if (currentTuneRef.current !== tuneId) return;
+        if (currentTuneRef.current !== tuneId) return;
 
-      if (res.data && res.data.hls_url) {
-        finalHlsUrl = res.data.hls_url;
-        playSessionId = res.data.play_session_id;
+        if (res.data && res.data.hls_url) {
+          finalHlsUrl = res.data.hls_url;
+          playSessionId = res.data.play_session_id;
+        }
+      } catch (err) {
+        console.warn('[FlixHN] Falló consulta PlaybackInfo en backend, evaluando fallback:', err);
       }
-    } catch (err) {
-      console.warn('[FlixHN] Falló consulta PlaybackInfo en backend, evaluando fallback:', err);
     }
 
     if (currentTuneRef.current !== tuneId) return;
@@ -425,8 +445,12 @@ export default function LiveTvPlayer({
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: false,
-        maxBufferLength: 20,
-        maxMaxBufferLength: 40,
+        backBufferLength: 15,
+        maxBufferLength: 25,
+        maxMaxBufferLength: 45,
+        maxBufferHole: 1.5,        // Tolera huecos de hasta 1.5s en streams IPTV sin cerrar MediaSource
+        nudgeOffset: 0.2,
+        nudgeMaxRetry: 10,
         fragLoadingMaxRetry: 5,
         manifestLoadingMaxRetry: 5,
         levelLoadingMaxRetry: 5,
@@ -437,7 +461,8 @@ export default function LiveTvPlayer({
       });
 
       hlsRef.current = hls;
-      hls.loadSource(finalHlsUrl);
+      const url = finalHlsUrl;
+      hls.loadSource(url);
       hls.attachMedia(video);
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -446,40 +471,79 @@ export default function LiveTvPlayer({
         iniciarReproduccionSegura(video);
       });
 
+      let resetCount = 0;
+      let lastResetTime = 0;
+
+      const setCargando = (val) => setIsLoading(Boolean(val));
+      const setErrorCanal = (err) => {
+        if (!err) {
+          setStreamError(null);
+        } else if (typeof err === 'string') {
+          setStreamError(err);
+        } else {
+          setStreamError('No se pudo establecer la conexión con la señal en directo de este canal.');
+        }
+      };
+
       hls.on(Hls.Events.ERROR, (event, data) => {
         if (currentTuneRef.current !== tuneId) return;
-
-        // Ignorar cualquier error donde data.fatal === false
         if (!data.fatal) return;
 
-        console.warn('[FlixHN] HLS Fatal Error detectado:', data.type, data.details);
+        const ahora = Date.now();
+        // Reiniciar contador si han pasado más de 15 segundos de reproducción estable
+        if (ahora - lastResetTime > 15000) {
+          resetCount = 0;
+        }
 
-        // Antes de mostrar cartel de error fatal, verificar si el video sigue avanzando activamente
-        if (!video.paused && video.readyState >= 3) {
-          console.log('[FlixHN] Error fatal ignorado: el video sigue reproduciendo cuadros activos (readyState >= 3)');
+        // CASO ESPECIAL: El navegador cerró el MediaSource (típico en IPTV en vivo con saltos de PTS/DTS)
+        if (data.details === 'mediaSourceRequiresReset') {
+          resetCount++;
+          lastResetTime = ahora;
+
+          if (resetCount <= 3) {
+            console.warn(`[FlixHN] MediaSource cerrado, re-adjuntando video (${resetCount}/3)...`);
+            hls.detachMedia();
+            setTimeout(() => {
+              if (hlsRef.current === hls && videoRef.current) {
+                hls.attachMedia(videoRef.current);
+                hls.loadSource(url);
+              }
+            }, 150);
+          } else {
+            console.error('[FlixHN] No se pudo estabilizar el MediaSource tras 3 reinicios.');
+            setCargando(false);
+            setErrorCanal(true);
+          }
           return;
         }
 
-        intentosRecuperacionRef.current++;
-
-        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-          if (intentosRecuperacionRef.current <= 3) {
-            console.warn(`[FlixHN] Error de red, reintentando carga (${intentosRecuperacionRef.current}/3)...`);
+        // RESTO DE ERRORES FATALES
+        switch (data.type) {
+          case Hls.ErrorTypes.NETWORK_ERROR:
+            console.warn('[FlixHN] Error de red, reintentando carga...');
             hls.startLoad();
-            return;
-          }
-        } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-          if (intentosRecuperacionRef.current <= 3) {
-            console.warn(`[FlixHN] Error de medios, recuperando decodificación (${intentosRecuperacionRef.current}/3)...`);
-            hls.recoverMediaError();
-            return;
-          }
-        }
+            break;
 
-        // Solo marcar fuera del aire si tras 3 intentos el video permanece congelado
-        if (video.paused || video.readyState < 2) {
-          setIsLoading(false);
-          setStreamError('No se pudo establecer la conexión con la señal en directo de este canal.');
+          case Hls.ErrorTypes.MEDIA_ERROR:
+            resetCount++;
+            lastResetTime = ahora;
+            if (resetCount <= 2) {
+              console.warn(`[FlixHN] Recuperando decodificación (${resetCount}/2)...`);
+              hls.recoverMediaError();
+            } else {
+              // Reconstruir completamente la instancia HLS
+              if (iniciarStreamLimpiamenteRef.current) {
+                iniciarStreamLimpiamenteRef.current(url);
+              } else {
+                iniciarStreamLimpiamente(url);
+              }
+            }
+            break;
+
+          default:
+            setCargando(false);
+            setErrorCanal(true);
+            break;
         }
       });
     } else if (canPlayNativeHls || video.canPlayType('application/vnd.apple.mpegurl')) {
@@ -492,7 +556,9 @@ export default function LiveTvPlayer({
       bloqueadoPorCambioRef.current = false;
       iniciarReproduccionSegura(video);
     }
-  }, [iniciarReproduccionSegura, releaseActiveEncoding]);
+  }, [currentChannel, iniciarReproduccionSegura, releaseActiveEncoding]);
+
+  iniciarStreamLimpiamenteRef.current = iniciarStreamLimpiamente;
 
   // Cadena URL estable para la dependencia exclusiva del useEffect
   const canalActivoUrl = currentChannel?.url || currentChannel?.stream_url || (currentChannel?.id ? `channel-${currentChannel.id}` : '');

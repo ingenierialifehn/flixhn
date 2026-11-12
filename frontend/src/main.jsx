@@ -1,3 +1,13 @@
+// Polyfill para crypto.randomUUID en entornos HTTP no seguros (RFC 4122 v4)
+if (typeof window !== 'undefined' && (!window.crypto || !window.crypto.randomUUID)) {
+  if (!window.crypto) window.crypto = {};
+  window.crypto.randomUUID = function () {
+    return '10000000-1000-4000-8000-100000000000'.replace(/[018]/g, (c) =>
+      (+c ^ (Math.random() * 16 >> (+c / 4))).toString(16)
+    );
+  };
+}
+
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.jsx';
