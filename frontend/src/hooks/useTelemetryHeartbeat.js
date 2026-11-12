@@ -45,13 +45,23 @@ export function useTelemetryHeartbeat({
   onBlocked,
   enabled = true,
 } = {}) {
-  // Manejo seguro del identificador (soporta channelId o mediaId)
-  const effectiveId = channelId ?? mediaId ?? null;
-
-  // Todos los useRef arriba:
+  // 1. REGLA ESTRICTA DE HOOKS: Todos los useRef al inicio absoluto del cuerpo de la función
+  // NINGÚN if (...) return antes de llamar a los Hooks de React.
   const heartbeatRef = useRef(null);
   const isPlayingRef = useRef(playbackState === 'playing');
-  const latestProps = useRef({
+  const deviceIdRef = useRef(null);
+  const latestProps = useRef({});
+
+  // Inicializar identificador de dispositivo persistente en ref
+  if (!deviceIdRef.current) {
+    deviceIdRef.current = getPersistentDeviceId();
+  }
+  const deviceId = deviceIdRef.current;
+
+  const effectiveId = channelId ?? mediaId ?? null;
+
+  // Mantener las propiedades actualizadas en la referencia mutable
+  latestProps.current = {
     mediaType,
     mediaId: effectiveId,
     channelId: effectiveId,
@@ -63,36 +73,25 @@ export function useTelemetryHeartbeat({
     onRemoteCommand,
     onBlocked,
     enabled,
-  });
+  };
 
-  const deviceId = getPersistentDeviceId();
-
+  // 2. Sincronización continua de estado de reproducción
   useEffect(() => {
     isPlayingRef.current = playbackState === 'playing';
-    latestProps.current = {
-      mediaType,
-      mediaId: effectiveId,
-      channelId: effectiveId,
-      title,
-      poster,
-      currentTime,
-      duration,
-      playbackState,
-      onRemoteCommand,
-      onBlocked,
-      enabled,
-    };
   });
 
-  // Función de envío de latido
+  // 3. Callback para envío de latido con validaciones internas
   const sendHeartbeat = useCallback(async () => {
     const p = latestProps.current;
+
+    // Validación interna: no enviar si está deshabilitado, sin título o detenido
     if (!p.enabled || !p.title || p.playbackState === 'stopped') {
       return;
     }
 
-    // Si es LiveTV y aún no cuenta con channelId/mediaId, evitar enviar latidos incompletos
-    if (p.mediaType === 'livetv' && !p.channelId && !p.mediaId) {
+    // Validación interna: si es LiveTV y aún no cuenta con channelId/mediaId, no enviar latidos incompletos
+    const currentId = p.channelId ?? p.mediaId;
+    if (p.mediaType === 'livetv' && !currentId) {
       return;
     }
 
@@ -129,7 +128,7 @@ export function useTelemetryHeartbeat({
     }
   }, [deviceId]);
 
-  // Función de detención de sesión
+  // 4. Callback para envío de señal de detención al desmontar o salir
   const sendStop = useCallback(() => {
     const token =
       typeof localStorage !== 'undefined'
@@ -141,12 +140,12 @@ export function useTelemetryHeartbeat({
     const baseUrl = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '');
     const url = `${baseUrl}/telemetry/stop`;
 
-    // 1. Envío prioritario con cliente Axios
+    // Envío prioritario con Axios
     try {
       api.post('/telemetry/stop', payload).catch(() => {});
     } catch (e) {}
 
-    // 2. Fetch con keepalive para eventos de cierre de ventana / navegación
+    // Fetch con keepalive para eventos de cierre de ventana / navegación
     if (typeof fetch !== 'undefined') {
       try {
         fetch(url, {
@@ -168,20 +167,22 @@ export function useTelemetryHeartbeat({
     }
   }, [deviceId]);
 
-  // Intervalo de 15 segundos MIENTRAS el video esté en reproducción activa o pausado
+  // 5. Intervalo de 15 segundos MIENTRAS el video esté en reproducción activa o pausado
+  // TODAS las validaciones de guardado van DENTRO del cuerpo del useEffect
   useEffect(() => {
     if (!enabled || !title || playbackState === 'stopped') {
       return;
     }
 
-    // Para LiveTV: si channelId no existe todavía, salir del efecto de forma segura sin romper hooks
+    // Validación interna para LiveTV sin canal definido aún
     if (mediaType === 'livetv' && !effectiveId) {
       return;
     }
 
-    // Enviar latido inmediato ante cambios de estado o inicio
+    // Enviar latido inicial de inmediato
     sendHeartbeat();
 
+    // Intervalo de latido recurrente cada 15s
     heartbeatRef.current = setInterval(() => {
       sendHeartbeat();
     }, 15000);
@@ -194,7 +195,7 @@ export function useTelemetryHeartbeat({
     };
   }, [enabled, title, playbackState, mediaType, effectiveId, sendHeartbeat]);
 
-  // Limpieza al desmontar el componente o cerrar la pestaña
+  // 6. Limpieza al desmontar el componente o cerrar la pestaña / ventana
   useEffect(() => {
     const handleUnload = () => {
       sendStop();
