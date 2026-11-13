@@ -78,8 +78,11 @@ Route::get('/livetv/proxy', [LiveTvController::class, 'proxy']);
 Route::match(['get', 'post'], '/livetv/playback-info', [LiveTvController::class, 'getPlaybackInfo']);
 Route::match(['delete', 'post'], '/livetv/active-encoding', [LiveTvController::class, 'stopActiveEncoding']);
 
-// Streaming directo para archivos locales OTT y catÃ¡logo On-Net (Soporta Range: bytes para MP4/MKV)
-Route::get('/media/{id}/stream', [App\Http\Controllers\MediaStreamController::class, 'stream'])->name('media.stream');
+// Streaming directo para archivos locales OTT y catálogo On-Net (Soporta Range: bytes para MP4/MKV)
+Route::match(['get', 'head'], '/media/{id}/stream', [App\Http\Controllers\MediaStreamController::class, 'stream'])->name('media.stream');
+Route::match(['get', 'head'], '/episodes/{id}/stream', [App\Http\Controllers\MediaStreamController::class, 'streamEpisode'])->name('episodes.stream');
+Route::get('/media/{id}/play', [App\Http\Controllers\MediaStreamController::class, 'playMedia'])->name('media.play');
+Route::get('/episodes/{id}/play', [App\Http\Controllers\MediaStreamController::class, 'playEpisode'])->name('episodes.play');
 Route::match(['get', 'head'], '/stream/{id}', [App\Http\Controllers\MediaStreamController::class, 'stream'])->name('stream.direct');
 Route::match(['get', 'head'], '/media/stream', [App\Http\Controllers\MediaStreamController::class, 'stream']);
 
@@ -145,11 +148,13 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/users/{id}/reset-password', [AdminUserController::class, 'resetPassword']);
         Route::delete('/users/{id}', [AdminUserController::class, 'destroy']);
 
-        // ParÃ¡metros y ConfiguraciÃ³n de Red / Conexiones
+        // Parámetros y Configuración de Red / Conexiones y Almacenamiento Local
         Route::get('/network', [NetworkSettingController::class, 'index']);
         Route::post('/network', [NetworkSettingController::class, 'updateSettings']);
         Route::get('/network-settings', [NetworkSettingController::class, 'index']);
         Route::post('/network-settings', [NetworkSettingController::class, 'updateSettings']);
+        Route::get('/local-storage/status', [NetworkSettingController::class, 'localStorageStatus']);
+        Route::post('/media/scan-local', [AdminTitleController::class, 'scanLocalMedia']);
 
         // ParÃ¡metros y Motor de TranscodificaciÃ³n / Mapeo de Tonos
         Route::get('/transcoding', [TranscodingSettingController::class, 'index']);

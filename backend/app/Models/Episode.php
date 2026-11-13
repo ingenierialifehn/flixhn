@@ -29,6 +29,8 @@ class Episode extends Model
         'tvdb_id',
         'is_locked',
         'locked_fields',
+        'file_path',
+        'source_type',
     ];
 
     protected $appends = [
@@ -38,8 +40,13 @@ class Episode extends Model
 
     public function getStreamUrlAttribute(): ?string
     {
-        $path = $this->attributes['stream_path'] ?? null;
+        $path = $this->attributes['stream_path'] ?? $this->attributes['file_path'] ?? null;
         if (!$path) return null;
+
+        // Si es archivo local directo
+        if ($this->id && (($this->attributes['source_type'] ?? null) === 'local' || !empty($this->attributes['file_path']) || str_starts_with($path, '/') || str_starts_with($path, 'storage/') || preg_match('/^[a-zA-Z]:/', $path))) {
+            return "/api/episodes/{$this->id}/stream";
+        }
 
         // Normalización para URLs remotas de Emby Server
         if (str_contains($path, '/Videos/')) {
@@ -73,12 +80,19 @@ class Episode extends Model
             return $path;
         }
 
-        // Si es una ruta física local de archivo, devolver el endpoint nativo de streaming
         if ($this->id && (str_starts_with($path, '/') || str_starts_with($path, 'storage/') || preg_match('/^[a-zA-Z]:/', $path))) {
-            return "/api/media/{$this->id}/stream";
+            return "/api/episodes/{$this->id}/stream";
         }
 
         return $path;
+    }
+
+    public function getThumbnailUrlAttribute(?string $value): ?string
+    {
+        if (empty($value) || str_contains($value, '45.4.87.126:6789')) {
+            return '/placeholder-poster.png';
+        }
+        return $value;
     }
 
     public function setStreamUrlAttribute(?string $value): void

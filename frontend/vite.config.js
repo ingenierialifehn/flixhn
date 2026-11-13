@@ -3,7 +3,11 @@ import path from 'node:path';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-const appRoot = '/app';
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const appRoot = fs.existsSync('/app/index.html') ? '/app' : __dirname;
 
 export default defineConfig({
   root: appRoot,
@@ -28,7 +32,7 @@ export default defineConfig({
       },
     },
   ],
-  cacheDir: '/tmp/.vite',
+  cacheDir: fs.existsSync('/tmp') ? '/tmp/.vite' : undefined,
   optimizeDeps: {
     force: true,
     include: ['react', 'react-dom', 'react/jsx-dev-runtime', 'hls.js'],

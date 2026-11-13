@@ -47,6 +47,8 @@ class Title extends Model
         'is_locked',
         'locked_fields',
         'provider',
+        'file_path',
+        'source_type',
     ];
 
     protected $appends = [
@@ -109,8 +111,13 @@ class Title extends Model
 
     public function getStreamUrlAttribute(): ?string
     {
-        $path = $this->attributes['stream_path'] ?? null;
+        $path = $this->attributes['stream_path'] ?? $this->attributes['file_path'] ?? null;
         if (!$path) return null;
+
+        // Si el origen es almacenamiento local directo, devolver el endpoint de streaming nativo
+        if ($this->id && (($this->attributes['source_type'] ?? null) === 'local' || !empty($this->attributes['file_path']) || str_starts_with($path, '/') || str_starts_with($path, 'storage/') || preg_match('/^[a-zA-Z]:/', $path))) {
+            return "/api/media/{$this->id}/stream";
+        }
 
         // Normalización para URLs remotas de Emby Server
         if (str_contains($path, '/Videos/')) {
@@ -144,7 +151,6 @@ class Title extends Model
             return $path;
         }
 
-        // Si es una ruta física local de archivo (descarga OTT o ingesta On-Net), devolver el endpoint nativo de streaming
         if ($this->id && (str_starts_with($path, '/') || str_starts_with($path, 'storage/') || preg_match('/^[a-zA-Z]:/', $path))) {
             return "/api/media/{$this->id}/stream";
         }
@@ -154,8 +160,16 @@ class Title extends Model
 
     public function getPosterUrlAttribute(?string $value): ?string
     {
-        if (empty($value)) {
-            return '/img/placeholder-poster.png';
+        if (empty($value) || str_contains($value, '45.4.87.126:6789')) {
+            return '/placeholder-poster.png';
+        }
+        return $value;
+    }
+
+    public function getBackdropUrlAttribute(?string $value): ?string
+    {
+        if (empty($value) || str_contains($value, '45.4.87.126:6789')) {
+            return '/placeholder-poster.png';
         }
         return $value;
     }

@@ -22,9 +22,10 @@ export const resolvePosterUrl = (url) => {
     !trimmed ||
     trimmed === 'null' ||
     trimmed === 'undefined' ||
-    trimmed === '[object Object]'
+    trimmed === '[object Object]' ||
+    trimmed.includes('45.4.87.126:6789')
   ) {
-    return DEFAULT_FALLBACK_POSTER;
+    return '/placeholder-poster.png';
   }
 
   // 1. Si ya es una URL absoluta HTTP o HTTPS (TMDb, Emby remoto, CDNs externos)

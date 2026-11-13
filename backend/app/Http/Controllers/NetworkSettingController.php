@@ -32,6 +32,15 @@ class NetworkSettingController extends Controller
         'internet_streaming_bitrate_limit' => '',
         'media_server_url' => 'http://45.4.87.126:6789',
         'media_server_api_key' => '',
+        'media_source_mode' => 'local', // 'local' | 'remote'
+        'local_media_paths' => [
+            '/mnt/media_library/Disk2',
+            '/mnt/media_library/Disk3',
+            '/mnt/media_library/Disk4',
+            '/mnt/media_library/Disk5',
+            '/mnt/media_library/Disk6',
+            '/mnt/media_library/Disk7',
+        ],
     ];
 
     protected array $types = [
@@ -54,6 +63,8 @@ class NetworkSettingController extends Controller
         'internet_streaming_bitrate_limit' => 'string',
         'media_server_url' => 'string',
         'media_server_api_key' => 'string',
+        'media_source_mode' => 'string',
+        'local_media_paths' => 'json',
     ];
 
     /**
@@ -148,11 +159,28 @@ class NetworkSettingController extends Controller
                 'internet_streaming_bitrate_limit' => 'nullable',
                 'media_server_url' => 'nullable|string',
                 'media_server_api_key' => 'nullable|string',
+                'media_source_mode' => 'nullable|string|in:local,remote',
+                'local_media_paths' => 'nullable',
             ]);
 
             foreach ($this->types as $key => $type) {
-                $val = $validated[$key] ?? ($this->defaults[$key] ?? null);
-                ServerSetting::set($key, $val, 'network', $type);
+                if (array_key_exists($key, $validated)) {
+                    $val = $validated[$key];
+                    if ($key === 'local_media_paths' && is_array($val)) {
+                        $val = json_encode($val);
+                    }
+                    ServerSetting::set($key, $val, 'network', $type);
+                } elseif (isset($this->defaults[$key])) {
+                    $val = $this->defaults[$key];
+                    if ($key === 'local_media_paths' && is_array($val)) {
+                        $val = json_encode($val);
+                    }
+                    ServerSetting::set($key, $val, 'network', $type);
+                }
+            }
+
+            if (isset($validated['media_source_mode'])) {
+                ServerSetting::set('media_source_mode', $validated['media_source_mode'], 'media', 'string');
             }
 
             // Sincronizar simultáneamente con el conector de medios
@@ -193,6 +221,25 @@ class NetworkSettingController extends Controller
                 'status' => 'error',
                 'success' => false,
                 'message' => 'Error al guardar la configuración: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Consulta de estado y espacio libre en tiempo real de los discos locales (/mnt/media_library/Disk2-7).
+     * GET /api/admin/local-storage/status
+     */
+    public function localStorageStatus(\App\Services\LocalMediaScannerService $scanner): JsonResponse
+    {
+        try {
+            $status = $scanner->getStorageStatus();
+            return response()->json($status);
+        } catch (\Throwable $e) {
+            Log::error('NetworkSettingController::localStorageStatus Error: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Error consultando discos locales: ' . $e->getMessage(),
+                'disks' => [],
             ], 500);
         }
     }

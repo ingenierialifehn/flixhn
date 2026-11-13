@@ -109,6 +109,38 @@ class MediaNodeController extends Controller
     public function sync(int $id, \App\Services\RemoteMediaConnectorService $remoteService, MediaSyncService $syncService): JsonResponse
     {
         $node = MediaNode::findOrFail($id);
+        $sourceMode = ServerSetting::get('media_source_mode', 'local');
+
+        // Si el sistema está en modo local o el nodo es el servidor físico local PowerEdge
+        if ($sourceMode === 'local' || str_contains(strtolower($node->name), 'poweredge') || str_contains(strtolower($node->name), 'server01')) {
+            try {
+                $scanner = app(\App\Services\LocalMediaScannerService::class);
+                $stats = $scanner->scan();
+                $totalIndexed = ($stats['total_movies'] ?? 0) + ($stats['total_series'] ?? 0) + ($stats['total_episodes'] ?? 0);
+
+                return response()->json([
+                    'status' => 'success',
+                    'success' => true,
+                    'message' => "Nodo '{$node->name}' sincronizado con almacenamiento local directo: {$stats['total_movies']} películas, {$stats['total_series']} series y {$stats['total_episodes']} episodios indexados.",
+                    'total_synced' => $totalIndexed,
+                    'metrics' => [
+                        'total_titles' => ($stats['total_movies'] ?? 0) + ($stats['total_series'] ?? 0),
+                        'total_movies' => $stats['total_movies'] ?? 0,
+                        'total_series' => $stats['total_series'] ?? 0,
+                        'total_episodes' => $stats['total_episodes'] ?? 0,
+                        'total_files_scanned' => $stats['total_files_scanned'] ?? 0,
+                    ],
+                    'stats' => $stats,
+                ]);
+            } catch (\Throwable $e) {
+                return response()->json([
+                    'status' => 'error',
+                    'success' => false,
+                    'message' => "Error al escanear almacenamiento local en '{$node->name}': " . $e->getMessage(),
+                ], 500);
+            }
+        }
+
         $baseUrl = "http://{$node->ip_address}:{$node->port}";
 
         try {
@@ -119,12 +151,13 @@ class MediaNodeController extends Controller
                 return $resp;
             }
 
-            // Fallback
-            $stats = $syncService->syncEmby($baseUrl, $node->api_key);
+            // Fallback a escáner local
+            $scanner = app(\App\Services\LocalMediaScannerService::class);
+            $stats = $scanner->scan();
             return response()->json([
                 'status' => 'success',
                 'success' => true,
-                'message' => "Catálogo de '{$node->name}' sincronizado exitosamente.",
+                'message' => "Catálogo de '{$node->name}' sincronizado con biblioteca local: {$stats['total_movies']} películas, {$stats['total_series']} series y {$stats['total_episodes']} episodios.",
                 'stats' => $stats,
             ]);
         } catch (\Throwable $e) {

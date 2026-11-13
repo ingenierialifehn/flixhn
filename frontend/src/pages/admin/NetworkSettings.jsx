@@ -19,6 +19,9 @@ import {
   Power,
   X,
   Loader2,
+  HardDrive,
+  Database,
+  FolderCheck,
 } from 'lucide-react';
 
 const DEFAULT_SETTINGS = {
@@ -41,6 +44,15 @@ const DEFAULT_SETTINGS = {
   internet_streaming_bitrate_limit: '',
   media_server_url: 'http://45.4.87.126:6789',
   media_server_api_key: '',
+  media_source_mode: 'local', // 'local' (Almacenamiento Local Directo) | 'remote' (Emby Remoto)
+  local_media_paths: [
+    '/mnt/media_library/Disk2',
+    '/mnt/media_library/Disk3',
+    '/mnt/media_library/Disk4',
+    '/mnt/media_library/Disk5',
+    '/mnt/media_library/Disk6',
+    '/mnt/media_library/Disk7',
+  ],
 };
 
 const NetworkSettings = () => {
@@ -53,6 +65,21 @@ const NetworkSettings = () => {
   const [mediaSyncResult, setMediaSyncResult] = useState(null);
   const [toast, setToast] = useState(null); // { type: 'success' | 'error', message: string }
   const fileInputRef = useRef(null);
+
+  // Verificación en tiempo real de espacio y discos de bibliotecas locales
+  const [storageStatus, setStorageStatus] = useState(null);
+  const [loadingStorage, setLoadingStorage] = useState(false);
+
+  // Modal de confirmación integrado (Cero alert() ni window.confirm())
+  const [confirmModal, setConfirmModal] = useState({
+    isOpen: false,
+    title: '',
+    message: '',
+    confirmText: 'Confirmar',
+    cancelText: 'Cancelar',
+    isDanger: true,
+    onConfirm: null,
+  });
 
   // Soporte Multi-Servidor (Punto 9)
   const [nodes, setNodes] = useState([]);
@@ -67,6 +94,20 @@ const NetworkSettings = () => {
   });
   const [addingNode, setAddingNode] = useState(false);
   const [actionNodeId, setActionNodeId] = useState(null);
+
+  const fetchStorageStatus = async () => {
+    setLoadingStorage(true);
+    try {
+      const res = await api.get('/admin/local-storage/status');
+      if (res.data) {
+        setStorageStatus(res.data);
+      }
+    } catch (err) {
+      console.warn('Error al verificar almacenamiento local:', err);
+    } finally {
+      setLoadingStorage(false);
+    }
+  };
 
   const fetchNodes = async () => {
     setLoadingNodes(true);
@@ -84,12 +125,16 @@ const NetworkSettings = () => {
 
   useEffect(() => {
     fetchNodes();
+    fetchStorageStatus();
   }, []);
 
   const handleAddNode = async (e) => {
     if (e) e.preventDefault();
     if (!newNode.name.trim() || !newNode.ip_address.trim()) {
-      alert('Ingresa el nombre y la dirección IP/Host del nuevo servidor.');
+      setToast({
+        type: 'error',
+        message: 'Ingresa el nombre y la dirección IP/Host del nuevo servidor.',
+      });
       return;
     }
     setAddingNode(true);
@@ -103,7 +148,10 @@ const NetworkSettings = () => {
       setNewNode({ name: '', ip_address: '', port: 6789, api_key: '', is_master: false });
       fetchNodes();
     } catch (err) {
-      alert(err.response?.data?.message || 'Error al conectar el nuevo servidor');
+      setToast({
+        type: 'error',
+        message: err.response?.data?.message || 'Error al conectar el nuevo servidor',
+      });
     } finally {
       setAddingNode(false);
     }
@@ -124,7 +172,10 @@ const NetworkSettings = () => {
       }));
       fetchNodes();
     } catch (err) {
-      alert(err.response?.data?.message || 'Error al activar el servidor');
+      setToast({
+        type: 'error',
+        message: err.response?.data?.message || 'Error al activar el servidor',
+      });
     } finally {
       setActionNodeId(null);
     }
@@ -134,29 +185,53 @@ const NetworkSettings = () => {
     setActionNodeId(node.id);
     try {
       const res = await api.post(`/admin/nodes/${node.id}/sync`);
+      const successMsg = res.data?.message || `Catálogo del servidor "${node.name}" sincronizado exitosamente.`;
       setToast({
         type: 'success',
-        message: res.data?.message || `Catálogo del servidor "${node.name}" sincronizado exitosamente.`,
+        message: successMsg,
       });
+      setMediaSyncResult({
+        type: 'success',
+        message: successMsg,
+        metrics: res.data?.metrics || null,
+      });
+      fetchStorageStatus();
     } catch (err) {
-      alert(err.response?.data?.message || 'Error al sincronizar el servidor');
+      setToast({
+        type: 'error',
+        message: err.response?.data?.message || 'Error al sincronizar el servidor',
+      });
     } finally {
       setActionNodeId(null);
     }
   };
 
-  const handleDeleteNode = async (node) => {
-    if (!window.confirm(`¿Seguro que deseas desvincular el servidor "${node.name}"?`)) return;
-    try {
-      await api.delete(`/admin/nodes/${node.id}`);
-      setToast({
-        type: 'success',
-        message: 'Servidor desvinculado correctamente.',
-      });
-      fetchNodes();
-    } catch (err) {
-      alert(err.response?.data?.message || 'Error al eliminar el servidor');
-    }
+  const handleDeleteNode = (node) => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Desvincular Servidor de Medios',
+      message: `¿Seguro que deseas desvincular el servidor "${node.name}" (${node.ip_address}:${node.port}) del clúster?`,
+      confirmText: 'Desvincular',
+      cancelText: 'Cancelar',
+      isDanger: true,
+      onConfirm: async () => {
+        try {
+          await api.delete(`/admin/nodes/${node.id}`);
+          setToast({
+            type: 'success',
+            message: 'Servidor desvinculado correctamente.',
+          });
+          fetchNodes();
+        } catch (err) {
+          setToast({
+            type: 'error',
+            message: err.response?.data?.message || 'Error al eliminar el servidor',
+          });
+        } finally {
+          setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+        }
+      },
+    });
   };
 
   // Cargar configuración de red desde el backend (soporta /admin/network-settings y fallback a /admin/network)
@@ -193,6 +268,8 @@ const NetworkSettings = () => {
             : '',
           media_server_url: s.media_server_url || s.emby_server_url || DEFAULT_SETTINGS.media_server_url,
           media_server_api_key: s.media_server_api_key || s.emby_api_key || '',
+          media_source_mode: s.media_source_mode || DEFAULT_SETTINGS.media_source_mode,
+          local_media_paths: s.local_media_paths || DEFAULT_SETTINGS.local_media_paths,
         });
       })
       .catch((err) => {
@@ -235,22 +312,45 @@ const NetworkSettings = () => {
     setTestingMedia(true);
     setMediaSyncResult(null);
 
+    const isLocal = formData.media_source_mode === 'local';
+
     try {
-      const res = await api.post('/admin/media/sync', {
-        server_url: formData.media_server_url,
-        api_key: formData.media_server_api_key,
-      });
+      const endpoint = isLocal ? '/admin/media/scan-local' : '/admin/media/sync';
+      const payload = isLocal
+        ? { source_mode: 'local' }
+        : {
+            server_url: formData.media_server_url,
+            api_key: formData.media_server_api_key,
+            source_mode: 'remote',
+          };
+
+      const res = await api.post(endpoint, payload);
 
       if (res.data?.success) {
-        const successMsg = 'Catálogo sincronizado exitosamente con el servidor';
+        const stats = res.data.stats || res.data.metrics;
+        let successMsg = res.data.message;
+        if (!successMsg && stats) {
+          successMsg = `Escaneo finalizado: ${stats.total_movies || 0} películas, ${stats.total_series || 0} series y ${stats.total_episodes || 0} episodios indexados.`;
+        }
+        if (!successMsg) {
+          successMsg = isLocal
+            ? 'Catálogo físico local sincronizado exitosamente.'
+            : 'Catálogo sincronizado exitosamente con el servidor.';
+        }
+
         setToast({
           type: 'success',
           message: successMsg,
         });
         setMediaSyncResult({
           type: 'success',
-          message: res.data.message || `${successMsg} (${res.data.total_synced || 0} títulos).`,
+          message: successMsg,
+          metrics: stats || null,
         });
+
+        if (isLocal) {
+          fetchStorageStatus();
+        }
 
         // Actualizar datos del servidor de medios si fueron normalizados
         if (res.data?.server_url) {
@@ -264,7 +364,9 @@ const NetworkSettings = () => {
           setToast((t) => (t?.message === successMsg ? null : t));
         }, 6000);
       } else {
-        const errorMsg = res.data?.message || 'No se pudo comunicar con el servidor remoto. Verifica que la IP y la API Key sean correctas.';
+        const errorMsg = res.data?.message || (isLocal
+          ? 'Error al escanear los discos locales. Verifica los permisos de /mnt/media_library.'
+          : 'No se pudo comunicar con el servidor remoto. Verifica que la IP y la API Key sean correctas.');
         setMediaSyncResult({
           type: 'error',
           message: errorMsg,
@@ -276,7 +378,9 @@ const NetworkSettings = () => {
       }
     } catch (err) {
       console.error('Error al sincronizar servidor de medios:', err);
-      const errorMsg = err.response?.data?.message || 'No se pudo comunicar con el servidor remoto. Verifica que la IP y la API Key sean correctas.';
+      const errorMsg = err.response?.data?.message || (isLocal
+        ? 'Error al ejecutar el escaneo local de discos.'
+        : 'No se pudo comunicar con el servidor remoto. Verifica que la IP y la API Key sean correctas.');
       setMediaSyncResult({
         type: 'error',
         message: errorMsg,
@@ -424,19 +528,26 @@ const NetworkSettings = () => {
         {/* Contenedor Principal de Campos */}
         <div className="w-full bg-white dark:bg-[#181818] border border-zinc-200 dark:border-zinc-800 rounded-2xl p-6 sm:p-8 shadow-sm space-y-8">
 
-          {/* SECCIÓN DESTACADA: Servidor de Medios y Contenidos (IP y Token de Acceso) */}
+          {/* SECCIÓN DESTACADA: Servidor de Medios y Almacenamiento Local Directo */}
           <div className="p-5 rounded-2xl bg-zinc-50 dark:bg-[#1c1c1c] border border-zinc-200 dark:border-zinc-800 space-y-5">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-zinc-200 dark:border-zinc-800/80">
               <div className="flex items-center gap-3">
                 <div className="p-2 rounded-xl bg-[#E50914] text-white shadow-md">
-                  <Server className="w-5 h-5" />
+                  {formData.media_source_mode === 'local' ? (
+                    <HardDrive className="w-5 h-5" />
+                  ) : (
+                    <Server className="w-5 h-5" />
+                  )}
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-zinc-900 dark:text-white">
-                    Servidor de Contenidos Multimedia (IP / Token de Red)
+                  <h3 className="text-base font-bold text-zinc-900 dark:text-white flex items-center gap-2">
+                    <span>Origen de Medios Multimedia</span>
+                    <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-[#E50914]/10 text-[#E50914] border border-[#E50914]/20">
+                      {formData.media_source_mode === 'local' ? 'Local Directo' : 'Emby Remoto'}
+                    </span>
                   </h3>
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    Dirección IP del nodo de almacenamiento y credencial de autorización para sincronizar el catálogo.
+                    Selecciona si los archivos multimedia residen en los discos físicos de este servidor o en un nodo Emby remoto.
                   </p>
                 </div>
               </div>
@@ -448,8 +559,76 @@ const NetworkSettings = () => {
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold text-white bg-[#E50914] hover:bg-[#F40612] disabled:opacity-50 transition-all shadow-md active:scale-95 cursor-pointer"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${testingMedia ? 'animate-spin' : ''}`} />
-                <span>{testingMedia ? 'Conectando...' : 'Probar y Sincronizar Catálogo'}</span>
+                <span>
+                  {testingMedia
+                    ? (formData.media_source_mode === 'local' ? 'Escaneando discos...' : 'Conectando...')
+                    : (formData.media_source_mode === 'local' ? 'Probar y Sincronizar Catálogo Local' : 'Probar y Sincronizar Catálogo')}
+                </span>
               </button>
+            </div>
+
+            {/* Selector de Modo de Origen Multimedia */}
+            <div className="space-y-2">
+              <label className="block text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">
+                Modo de Origen Multimedia
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Opción 1: Almacenamiento Local Directo */}
+                <button
+                  type="button"
+                  onClick={() => handleChange('media_source_mode', 'local')}
+                  className={`p-4 rounded-xl border text-left transition-all cursor-pointer flex items-start gap-3.5 ${
+                    formData.media_source_mode === 'local'
+                      ? 'bg-[#E50914]/10 border-[#E50914] ring-2 ring-[#E50914]/20'
+                      : 'bg-white dark:bg-[#232323] border-zinc-200 dark:border-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-700'
+                  }`}
+                >
+                  <div className={`p-2 rounded-lg ${formData.media_source_mode === 'local' ? 'bg-[#E50914] text-white' : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500'}`}>
+                    <HardDrive className="w-5 h-5" />
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-bold text-zinc-900 dark:text-white">
+                        Almacenamiento Local Directo
+                      </span>
+                      {formData.media_source_mode === 'local' && (
+                        <Check className="w-4 h-4 text-[#E50914]" />
+                      )}
+                    </div>
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
+                      Este servidor (/mnt/media_library/Disk2-7). Streaming HTTP 206 nativo sin dependencias de Emby e indexación automática TMDb.
+                    </p>
+                  </div>
+                </button>
+
+                {/* Opción 2: Servidor Remoto / Emby */}
+                <button
+                  type="button"
+                  onClick={() => handleChange('media_source_mode', 'remote')}
+                  className={`p-4 rounded-xl border text-left transition-all cursor-pointer flex items-start gap-3.5 ${
+                    formData.media_source_mode === 'remote'
+                      ? 'bg-[#E50914]/10 border-[#E50914] ring-2 ring-[#E50914]/20'
+                      : 'bg-white dark:bg-[#232323] border-zinc-200 dark:border-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-700'
+                  }`}
+                >
+                  <div className={`p-2 rounded-lg ${formData.media_source_mode === 'remote' ? 'bg-[#E50914] text-white' : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500'}`}>
+                    <Server className="w-5 h-5" />
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-bold text-zinc-900 dark:text-white">
+                        Servidor Remoto / Emby
+                      </span>
+                      {formData.media_source_mode === 'remote' && (
+                        <Check className="w-4 h-4 text-[#E50914]" />
+                      )}
+                    </div>
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
+                      Conexión externa vía API Key y puerto HTTP hacia un servidor Emby/Jellyfin remoto (ej. 45.4.87.126:6789).
+                    </p>
+                  </div>
+                </button>
+              </div>
             </div>
 
             {/* Alerta de resultado de sincronización de medios */}
@@ -479,58 +658,186 @@ const NetworkSettings = () => {
               </div>
             )}
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              {/* URL / IP del Servidor */}
-              <div className="space-y-1.5">
-                <label
-                  htmlFor="media_server_url"
-                  className="block text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300"
-                >
-                  IP y Puerto del Servidor de Medios
-                </label>
-                <input
-                  type="text"
-                  id="media_server_url"
-                  value={formData.media_server_url}
-                  onChange={(e) => handleChange('media_server_url', e.target.value)}
-                  placeholder="ej. http://45.4.87.126:6789 o http://65.187.110.22:6789"
-                  className="w-full px-4 py-2.5 text-sm font-mono rounded-xl bg-white dark:bg-[#232323] border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-white placeholder-zinc-400 dark:placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-[#E50914] focus:border-[#E50914] transition-all"
-                />
-                <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                  Dirección URL o IP pública/LAN y puerto donde está alojado el servidor de contenido multimedia.
-                </p>
-              </div>
-
-              {/* API Key o Token de Acceso */}
-              <div className="space-y-1.5">
-                <label
-                  htmlFor="media_server_api_key"
-                  className="block text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300"
-                >
-                  API Key / Token de Acceso (Autorización HTTP)
-                </label>
-                <div className="relative">
-                  <input
-                    type={showApiKey ? 'text' : 'password'}
-                    id="media_server_api_key"
-                    value={formData.media_server_api_key}
-                    onChange={(e) => handleChange('media_server_api_key', e.target.value)}
-                    placeholder="Introduce el Token o API Key generado en el servidor"
-                    className="w-full pl-4 pr-11 py-2.5 text-sm font-mono rounded-xl bg-white dark:bg-[#232323] border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-white placeholder-zinc-400 dark:placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-[#E50914] focus:border-[#E50914] transition-all"
-                  />
+            {/* VISTA 1: GESTOR DE RUTAS DE BIBLIOTECAS LOCALES (Modo Local Directo) */}
+            {formData.media_source_mode === 'local' ? (
+              <div className="space-y-4 pt-2">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3.5 rounded-xl bg-white dark:bg-[#232323] border border-zinc-200 dark:border-zinc-800">
+                  <div className="flex items-center gap-3">
+                    <Database className="w-4 h-4 text-emerald-500" />
+                    <div>
+                      <p className="text-xs font-bold text-zinc-900 dark:text-white">
+                        Gestor de Discos Físicos Locales (/mnt/media_library/)
+                      </p>
+                      <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                        {storageStatus
+                          ? `${storageStatus.online_disks || 0} de ${storageStatus.total_disks || 6} discos montados • ${storageStatus.free_space_formatted || '0 B'} libres de ${storageStatus.total_space_formatted || '0 B'}`
+                          : 'Verificando discos montados en tiempo real...'}
+                      </p>
+                    </div>
+                  </div>
                   <button
                     type="button"
-                    onClick={() => setShowApiKey(!showApiKey)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-white transition-colors cursor-pointer"
+                    onClick={fetchStorageStatus}
+                    disabled={loadingStorage}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 transition-all cursor-pointer disabled:opacity-50"
                   >
-                    {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    <RefreshCw className={`w-3.5 h-3.5 ${loadingStorage ? 'animate-spin' : ''}`} />
+                    <span>Verificar Discos</span>
                   </button>
                 </div>
-                <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                  Token necesario para autorizar las solicitudes y evitar respuestas HTTP 401 Unauthorized.
-                </p>
+
+                {/* Grid de Discos Locales Disk2 a Disk7 */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {(storageStatus?.disks || [
+                    { name: 'Disk2', path: '/mnt/media_library/Disk2', status: 'pending' },
+                    { name: 'Disk3', path: '/mnt/media_library/Disk3', status: 'pending' },
+                    { name: 'Disk4', path: '/mnt/media_library/Disk4', status: 'pending' },
+                    { name: 'Disk5', path: '/mnt/media_library/Disk5', status: 'pending' },
+                    { name: 'Disk6', path: '/mnt/media_library/Disk6', status: 'pending' },
+                    { name: 'Disk7', path: '/mnt/media_library/Disk7', status: 'pending' },
+                  ]).map((disk) => {
+                    const isOnline = disk.is_mounted || disk.status === 'online';
+                    const usedPct = disk.used_percent || 0;
+
+                    return (
+                      <div
+                        key={disk.path}
+                        className={`p-3.5 rounded-xl border space-y-2.5 transition-all ${
+                          isOnline
+                            ? 'bg-white dark:bg-[#232323] border-zinc-200 dark:border-zinc-800 shadow-xs'
+                            : 'bg-zinc-100/60 dark:bg-[#1a1a1a]/60 border-dashed border-zinc-300 dark:border-zinc-800/80 opacity-80'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <HardDrive className={`w-4 h-4 ${isOnline ? 'text-emerald-500' : 'text-zinc-400'}`} />
+                            <span className="text-xs font-bold font-mono text-zinc-900 dark:text-white">
+                              {disk.name}
+                            </span>
+                          </div>
+                          <span
+                            className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                              isOnline
+                                ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
+                                : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-500 border border-zinc-300 dark:border-zinc-700'
+                            }`}
+                          >
+                            {isOnline ? 'Montado / Online' : 'Sin montar'}
+                          </span>
+                        </div>
+
+                        <p className="text-[11px] font-mono text-zinc-500 dark:text-zinc-400 truncate" title={disk.path}>
+                          {disk.path}
+                        </p>
+
+                        {/* Barra de progreso de almacenamiento */}
+                        {isOnline && (
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between text-[10px] text-zinc-500 dark:text-zinc-400">
+                              <span>Espacio libre: {disk.free_formatted || '0 B'}</span>
+                              <span className="font-semibold">{usedPct}% usado</span>
+                            </div>
+                            <div className="w-full h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-700 overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all ${
+                                  usedPct > 90
+                                    ? 'bg-red-500'
+                                    : usedPct > 75
+                                    ? 'bg-amber-500'
+                                    : 'bg-emerald-500'
+                                }`}
+                                style={{ width: `${Math.min(100, usedPct)}%` }}
+                              />
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Carpetas detectadas */}
+                        {isOnline && disk.detected_folders && disk.detected_folders.length > 0 && (
+                          <div className="pt-1 flex flex-wrap gap-1">
+                            {disk.detected_folders.slice(0, 4).map((f) => (
+                              <span
+                                key={f}
+                                className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-[#1a1a1a] text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700/60"
+                              >
+                                {f}
+                              </span>
+                            ))}
+                            {disk.detected_folders.length > 4 && (
+                              <span className="text-[10px] font-medium px-1 py-0.5 rounded text-zinc-400">
+                                +{disk.detected_folders.length - 4} más
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Aviso informativo de almacenamiento local directo */}
+                <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-700 dark:text-blue-400 text-xs flex items-start gap-2.5">
+                  <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  <p>
+                    <strong>Almacenamiento Local Directo activo:</strong> FlixHN lee directamente los archivos físicos desde los discos locales. No se requiere token de Emby. Las transmisiones se sirven mediante HTTP 206 Partial Content y los metadatos y carátulas se indexan con la API de TMDb.
+                  </p>
+                </div>
               </div>
-            </div>
+            ) : (
+              /* VISTA 2: CONFIGURACIÓN EMBY REMOTO */
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5 pt-2">
+                {/* URL / IP del Servidor */}
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor="media_server_url"
+                    className="block text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300"
+                  >
+                    IP y Puerto del Servidor de Medios (Emby)
+                  </label>
+                  <input
+                    type="text"
+                    id="media_server_url"
+                    value={formData.media_server_url}
+                    onChange={(e) => handleChange('media_server_url', e.target.value)}
+                    placeholder="ej. http://45.4.87.126:6789"
+                    className="w-full px-4 py-2.5 text-sm font-mono rounded-xl bg-white dark:bg-[#232323] border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-white placeholder-zinc-400 dark:placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-[#E50914] focus:border-[#E50914] transition-all"
+                  />
+                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                    Dirección URL o IP pública/LAN y puerto donde está alojado el servidor Emby remoto.
+                  </p>
+                </div>
+
+                {/* API Key o Token de Acceso */}
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor="media_server_api_key"
+                    className="block text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300"
+                  >
+                    API Key / Token de Acceso (Autorización HTTP)
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showApiKey ? 'text' : 'password'}
+                      id="media_server_api_key"
+                      value={formData.media_server_api_key}
+                      onChange={(e) => handleChange('media_server_api_key', e.target.value)}
+                      placeholder="Introduce el Token o API Key de Emby"
+                      className="w-full pl-4 pr-11 py-2.5 text-sm font-mono rounded-xl bg-white dark:bg-[#232323] border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-white placeholder-zinc-400 dark:placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-[#E50914] focus:border-[#E50914] transition-all"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowApiKey(!showApiKey)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-white transition-colors cursor-pointer"
+                    >
+                      {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                    Token necesario para autorizar las solicitudes a la API de Emby.
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* SECCIÓN MULTI-SERVIDOR: Clúster de Nodos de Streaming (Punto 9) */}
@@ -1194,6 +1501,44 @@ const NetworkSettings = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {/* Modal de Confirmación Integrado (Reemplaza window.confirm y alert) */}
+      {confirmModal.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs animate-fadeIn">
+          <div className="w-full max-w-md bg-white dark:bg-[#1a1a1a] rounded-2xl p-6 border border-zinc-200 dark:border-zinc-800 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-red-500/20 text-[#E50914] border border-red-500/30">
+                <AlertCircle className="w-5 h-5" />
+              </div>
+              <h3 className="text-base font-bold text-zinc-900 dark:text-white">
+                {confirmModal.title}
+              </h3>
+            </div>
+            <p className="text-xs text-zinc-600 dark:text-zinc-300 leading-relaxed">
+              {confirmModal.message}
+            </p>
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-zinc-200 dark:border-zinc-800">
+              <button
+                type="button"
+                onClick={() => setConfirmModal((prev) => ({ ...prev, isOpen: false }))}
+                className="px-4 py-2 text-xs font-semibold rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 transition-colors cursor-pointer"
+              >
+                {confirmModal.cancelText || 'Cancelar'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (typeof confirmModal.onConfirm === 'function') {
+                    confirmModal.onConfirm();
+                  }
+                }}
+                className="px-5 py-2 text-xs font-bold text-white bg-[#E50914] hover:bg-[#F40612] rounded-xl shadow-md transition-all cursor-pointer active:scale-95"
+              >
+                {confirmModal.confirmText || 'Confirmar'}
+              </button>
+            </div>
           </div>
         </div>
       )}

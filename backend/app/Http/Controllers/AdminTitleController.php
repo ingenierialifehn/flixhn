@@ -245,11 +245,35 @@ class AdminTitleController extends Controller
     }
 
     /**
-     * Sincronizar catálogo automáticamente desde el servidor de medios remoto por IP y API Key.
+     * Sincronizar catálogo automáticamente desde el servidor de medios local o remoto.
      * POST /api/admin/media/sync
      */
     public function syncRemoteMedia(Request $request, \App\Services\RemoteMediaConnectorService $remoteService): JsonResponse
     {
+        $sourceMode = $request->input('source_mode') ?: \App\Models\ServerSetting::get('media_source_mode', 'local');
+
+        if ($sourceMode === 'local') {
+            $scanner = app(\App\Services\LocalMediaScannerService::class);
+            $stats = $scanner->scan($request->input('path'));
+            $totalIndexed = ($stats['total_movies'] ?? 0) + ($stats['total_series'] ?? 0) + ($stats['total_episodes'] ?? 0);
+
+            return response()->json([
+                'success' => true,
+                'status' => 'success',
+                'source' => 'local_storage',
+                'message' => "Catálogo local sincronizado: {$stats['total_movies']} películas, {$stats['total_series']} series y {$stats['total_episodes']} episodios indexados.",
+                'total_synced' => $totalIndexed,
+                'metrics' => [
+                    'total_titles' => ($stats['total_movies'] ?? 0) + ($stats['total_series'] ?? 0),
+                    'total_movies' => $stats['total_movies'] ?? 0,
+                    'total_series' => $stats['total_series'] ?? 0,
+                    'total_episodes' => $stats['total_episodes'] ?? 0,
+                    'total_files_scanned' => $stats['total_files_scanned'] ?? 0,
+                ],
+                'stats' => $stats,
+            ]);
+        }
+
         $serverUrl = $request->input('server_url');
         $apiKey = $request->input('api_key');
 
@@ -262,6 +286,30 @@ class AdminTitleController extends Controller
      */
     public function syncMedia(Request $request, \App\Services\RemoteMediaConnectorService $remoteService, \App\Services\MediaSyncService $syncService): JsonResponse
     {
+        $sourceMode = $request->input('source_mode') ?: \App\Models\ServerSetting::get('media_source_mode', 'local');
+
+        if ($sourceMode === 'local') {
+            $scanner = app(\App\Services\LocalMediaScannerService::class);
+            $stats = $scanner->scan($request->input('path'));
+            $totalIndexed = ($stats['total_movies'] ?? 0) + ($stats['total_series'] ?? 0) + ($stats['total_episodes'] ?? 0);
+
+            return response()->json([
+                'success' => true,
+                'status' => 'success',
+                'source' => 'local_storage',
+                'message' => "Catálogo local sincronizado: {$stats['total_movies']} películas, {$stats['total_series']} series y {$stats['total_episodes']} episodios indexados.",
+                'total_synced' => $totalIndexed,
+                'metrics' => [
+                    'total_titles' => ($stats['total_movies'] ?? 0) + ($stats['total_series'] ?? 0),
+                    'total_movies' => $stats['total_movies'] ?? 0,
+                    'total_series' => $stats['total_series'] ?? 0,
+                    'total_episodes' => $stats['total_episodes'] ?? 0,
+                    'total_files_scanned' => $stats['total_files_scanned'] ?? 0,
+                ],
+                'stats' => $stats,
+            ]);
+        }
+
         $serverUrl = $request->input('server_url');
         $apiKey = $request->input('api_key');
 
@@ -272,12 +320,59 @@ class AdminTitleController extends Controller
             return $response;
         }
 
-        // Fallback a escaneo local si no hay conexión remota
-        $localResult = $syncService->sync($serverUrl, $apiKey);
-        return response()->json(array_merge($localResult, [
+        // Fallback a escaneo local
+        $scanner = app(\App\Services\LocalMediaScannerService::class);
+        $stats = $scanner->scan();
+        $totalIndexed = ($stats['total_movies'] ?? 0) + ($stats['total_series'] ?? 0) + ($stats['total_episodes'] ?? 0);
+
+        return response()->json([
             'success' => true,
-            'total_synced' => $localResult['metrics']['total_titles'] ?? 0,
-        ]));
+            'status' => 'success',
+            'source' => 'local_storage',
+            'message' => "Catálogo local sincronizado en fallback: {$stats['total_movies']} películas, {$stats['total_series']} series y {$stats['total_episodes']} episodios indexados.",
+            'total_synced' => $totalIndexed,
+            'metrics' => [
+                'total_titles' => ($stats['total_movies'] ?? 0) + ($stats['total_series'] ?? 0),
+                'total_movies' => $stats['total_movies'] ?? 0,
+                'total_series' => $stats['total_series'] ?? 0,
+                'total_episodes' => $stats['total_episodes'] ?? 0,
+            ],
+            'stats' => $stats,
+        ]);
+    }
+
+    /**
+     * Endpoint directo para escanear discos locales físicos (/mnt/media_library/Disk2-7).
+     * POST /api/admin/media/scan-local
+     */
+    public function scanLocalMedia(Request $request, \App\Services\LocalMediaScannerService $scanner): JsonResponse
+    {
+        try {
+            $stats = $scanner->scan($request->input('path'));
+            $totalIndexed = ($stats['total_movies'] ?? 0) + ($stats['total_series'] ?? 0) + ($stats['total_episodes'] ?? 0);
+
+            return response()->json([
+                'success' => true,
+                'status' => 'success',
+                'message' => "Escaneo local finalizado: {$stats['total_movies']} películas, {$stats['total_series']} series y {$stats['total_episodes']} episodios indexados.",
+                'total_synced' => $totalIndexed,
+                'metrics' => [
+                    'total_titles' => ($stats['total_movies'] ?? 0) + ($stats['total_series'] ?? 0),
+                    'total_movies' => $stats['total_movies'] ?? 0,
+                    'total_series' => $stats['total_series'] ?? 0,
+                    'total_episodes' => $stats['total_episodes'] ?? 0,
+                    'total_files_scanned' => $stats['total_files_scanned'] ?? 0,
+                ],
+                'stats' => $stats,
+            ]);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('AdminTitleController::scanLocalMedia Error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'status' => 'error',
+                'message' => 'Error durante el escaneo local: ' . $e->getMessage(),
+            ], 500);
+        }
     }
 
     /**

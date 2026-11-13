@@ -50,46 +50,32 @@ class MediaStreamController extends Controller
 
         $mediaItem = null;
 
-        // 1. Obtener el modelo MediaItem
+        // 1. Obtener la ruta física del archivo priorizando Title y Episode
         if ($targetId) {
-            $mediaItem = MediaItem::find($targetId);
-
-            // Si se suministró un ID de Title, buscar el mediaItem vinculado
-            if (!$mediaItem) {
-                $mediaItem = MediaItem::where('title_id', $targetId)->first();
+            $title = Title::find($targetId);
+            if ($title) {
+                $rawPath = $title->file_path ?: $title->stream_path ?: $title->source_path;
             }
 
-            // Si aún no se encuentra, verificar en Title o Episode
-            if (!$mediaItem) {
-                $title = Title::find($targetId);
-                if ($title) {
-                    if ($title->mediaItem) {
-                        $mediaItem = $title->mediaItem;
-                    } elseif (!empty($title->stream_path) || !empty($title->source_path)) {
-                        $mediaItem = new MediaItem([
-                            'id' => $title->id,
-                            'title' => $title->name,
-                            'file_path' => $title->stream_path ?: $title->source_path,
-                            'stream_url' => $title->stream_url,
-                        ]);
-                    }
+            if (empty($rawPath)) {
+                $episode = Episode::find($targetId);
+                if ($episode) {
+                    $rawPath = $episode->file_path ?: $episode->stream_path;
                 }
             }
 
-            if (!$mediaItem) {
-                $episode = Episode::find($targetId);
-                if ($episode && (!empty($episode->stream_path) || !empty($episode->source_path))) {
-                    $mediaItem = new MediaItem([
-                        'id' => $episode->id,
-                        'title' => $episode->title,
-                        'file_path' => $episode->stream_path ?: $episode->source_path,
-                    ]);
+            if (empty($rawPath)) {
+                $mediaItem = MediaItem::find($targetId) ?: MediaItem::where('title_id', $targetId)->first();
+                if ($mediaItem) {
+                    $rawPath = $mediaItem->file_path;
                 }
             }
         }
 
         // 2. Determinar la ruta y resolver el archivo real
-        $rawPath = $mediaItem ? $mediaItem->file_path : ($request->query('path') ?: $request->query('file'));
+        if (empty($rawPath)) {
+            $rawPath = $request->query('path') ?: $request->query('file');
+        }
         $realFile = null;
 
         if (!empty($rawPath)) {
@@ -223,6 +209,73 @@ class MediaStreamController extends Controller
     }
 
     /**
+     * Endpoint específico de streaming directo para episodios de series.
+     * GET/HEAD /api/episodes/{id}/stream
+     */
+    public function streamEpisode(Request $request, $id)
+    {
+        $episode = Episode::find($id);
+        if ($episode) {
+            $filePath = $episode->file_path ?: $episode->stream_path;
+            if (!empty($filePath)) {
+                $resolved = $this->resolvePhysicalFilePath($filePath);
+                if ($resolved && file_exists($resolved) && !is_dir($resolved) && @filesize($resolved) > 1024) {
+                    return $this->serveStreamWithByteRange($request, $resolved);
+                }
+            }
+        }
+
+        return $this->stream($request, $id);
+    }
+
+    /**
+     * Endpoint de reproducción para películas / títulos.
+     * Devuelve la URL de streaming directo cuando el contenido es local.
+     * GET /api/media/{id}/play
+     */
+    public function playMedia(Request $request, $id)
+    {
+        $title = Title::findOrFail($id);
+        $streamUrl = url("/api/media/{$title->id}/stream");
+        $filePath = $title->file_path ?: $title->stream_path;
+
+        return response()->json([
+            'status' => 'success',
+            'id' => $title->id,
+            'title' => $title->name,
+            'type' => $title->type,
+            'source_type' => $title->source_type ?? 'local',
+            'stream_url' => $streamUrl,
+            'file_path' => $filePath,
+            'is_direct_playable' => true,
+        ]);
+    }
+
+    /**
+     * Endpoint de reproducción para episodios de series.
+     * GET /api/episodes/{id}/play
+     */
+    public function playEpisode(Request $request, $id)
+    {
+        $episode = Episode::with('title')->findOrFail($id);
+        $streamUrl = url("/api/episodes/{$episode->id}/stream");
+        $filePath = $episode->file_path ?: $episode->stream_path;
+
+        return response()->json([
+            'status' => 'success',
+            'id' => $episode->id,
+            'episode_number' => $episode->episode_number,
+            'season_id' => $episode->season_id,
+            'title' => $episode->title,
+            'series_title' => $episode->title?->name,
+            'source_type' => $episode->source_type ?? 'local',
+            'stream_url' => $streamUrl,
+            'file_path' => $filePath,
+            'is_direct_playable' => true,
+        ]);
+    }
+
+    /**
      * Obtener o generar dinámicamente un sample MP4 funcional y válido para pruebas y fallback.
      */
     protected function getFallbackSamplePath(): ?string
@@ -300,6 +353,12 @@ class MediaStreamController extends Controller
         // Lista de carpetas candidatas prioritarias en el servidor
         $candidates = [
             $normalized,
+            "/mnt/media_library/Disk2/{$fileName}",
+            "/mnt/media_library/Disk3/{$fileName}",
+            "/mnt/media_library/Disk4/{$fileName}",
+            "/mnt/media_library/Disk5/{$fileName}",
+            "/mnt/media_library/Disk6/{$fileName}",
+            "/mnt/media_library/Disk7/{$fileName}",
             storage_path(ltrim($normalized, '/')),
             storage_path('media/' . $fileName),
             storage_path('media/movies/' . $fileName),
@@ -451,9 +510,13 @@ class MediaStreamController extends Controller
     {
         $fileSize = (int) @filesize($filePath);
         $extension = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
-        $mimeType = in_array($extension, ['mp4', 'm4v', 'mkv'])
-            ? 'video/mp4'
-            : ($this->mimeTypes[$extension] ?? 'video/mp4');
+        $mimeType = match ($extension) {
+            'mp4', 'm4v' => 'video/mp4',
+            'mkv' => 'video/x-matroska',
+            'webm' => 'video/webm',
+            'avi' => 'video/x-msvideo',
+            default => ($this->mimeTypes[$extension] ?? 'video/mp4'),
+        };
 
         // Manejo de preflight OPTIONS
         if ($request->isMethod('OPTIONS')) {
@@ -508,6 +571,7 @@ class MediaStreamController extends Controller
             'Content-Length' => (string) $length,
             'Accept-Ranges' => 'bytes',
             'Cache-Control' => 'no-cache, private',
+            'X-Accel-Buffering' => 'no',
             'Access-Control-Allow-Origin' => '*',
             'Access-Control-Allow-Methods' => 'GET, HEAD, OPTIONS',
             'Access-Control-Allow-Headers' => 'Range, Origin, Accept, Content-Type, Authorization, X-Requested-With',

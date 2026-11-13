@@ -30,21 +30,62 @@ class PlaybackController extends Controller
 
         if ($episodeId) {
             $episode = Episode::find($episodeId);
-            if ($episode && !empty($episode->stream_path)) {
-                if (preg_match('#/Videos/([a-zA-Z0-9_-]+)#i', $episode->stream_path, $m)) {
-                    $targetItemId = $m[1];
-                }
+        }
+
+        if ($titleId) {
+            $title = Title::find($titleId);
+        }
+
+        $sourceMode = \App\Models\ServerSetting::get('media_source_mode', 'local');
+        $isLocalContent = ($sourceMode === 'local')
+            || ($title && (($title->source_type ?? 'local') === 'local' || !empty($title->file_path)))
+            || ($episode && (($episode->source_type ?? 'local') === 'local' || !empty($episode->file_path)));
+
+        // Si el contenido o el servidor está en modo local directo, servir sin contactar a Emby
+        if ($isLocalContent && ($episode || $title)) {
+            $activeModel = $episode ?: $title;
+            $isEp = !empty($episode);
+            $streamRoute = $isEp ? "/api/episodes/{$activeModel->id}/stream" : "/api/media/{$activeModel->id}/stream";
+            $directUrl = url($streamRoute);
+            $filePath = $activeModel->file_path ?: $activeModel->stream_path ?: ($activeModel->source_path ?? '');
+            if (!$filePath && $title && $title->mediaItem) {
+                $filePath = $title->mediaItem->file_path;
+            }
+            $ext = strtolower(pathinfo($filePath ?: 'video.mp4', PATHINFO_EXTENSION) ?: 'mp4');
+            $isHls = ($ext === 'm3u8');
+            $isDirect = in_array($ext, ['mp4', 'm4v', 'webm', 'mkv', 'avi']) || !$isHls;
+
+            return response()->json([
+                'status' => 'success',
+                'is_local' => true,
+                'is_ott' => false,
+                'source_type' => 'local',
+                'item_id' => null,
+                'title_id' => $title ? $title->id : null,
+                'episode_id' => $episode ? $episode->id : null,
+                'media_source_id' => null,
+                'play_session_id' => null,
+                'container' => $ext,
+                'is_available' => true,
+                'is_direct_playable' => $isDirect,
+                'hls_url' => $directUrl,
+                'direct_url' => $directUrl,
+                'stream_url' => $directUrl,
+                'file_path' => $filePath,
+            ]);
+        }
+
+        if ($episode && !empty($episode->stream_path)) {
+            if (preg_match('#/Videos/([a-zA-Z0-9_-]+)#i', $episode->stream_path, $m)) {
+                $targetItemId = $m[1];
             }
         }
 
-        if (!$targetItemId && $titleId) {
-            $title = Title::find($titleId);
-            if ($title) {
-                if (!empty($title->source_path) && preg_match('#remote://([a-zA-Z0-9_-]+)#i', $title->source_path, $m)) {
-                    $targetItemId = $m[1];
-                } elseif (!empty($title->stream_path) && preg_match('#/Videos/([a-zA-Z0-9_-]+)#i', $title->stream_path, $m)) {
-                    $targetItemId = $m[1];
-                }
+        if (!$targetItemId && $title) {
+            if (!empty($title->source_path) && preg_match('#remote://([a-zA-Z0-9_-]+)#i', $title->source_path, $m)) {
+                $targetItemId = $m[1];
+            } elseif (!empty($title->stream_path) && preg_match('#/Videos/([a-zA-Z0-9_-]+)#i', $title->stream_path, $m)) {
+                $targetItemId = $m[1];
             }
         }
 

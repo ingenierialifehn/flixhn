@@ -247,7 +247,9 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
         return `${parsed.protocol}//${parsed.host}`;
       } catch (e) {}
     }
-    return 'http://45.4.87.126:6789';
+    const custom = localStorage.getItem('media_server_url') || localStorage.getItem('emby_server_url');
+    if (custom) return custom;
+    return window.location.origin;
   }, [rawStreamPath]);
 
   const isOtt = isDownloadedOtt || (!activeMedia?.emby_id && !targetItemId);
@@ -258,6 +260,16 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
   const streamUrl = React.useMemo(() => {
     const media = currentEpisode || title;
     if (!media) return '';
+
+    // Si es contenido local directo (o sin Emby ID), usar los endpoints nativos de streaming de FlixHN
+    if (media.source_type === 'local' || media.provider === 'local' || !targetItemId) {
+      if (currentEpisode?.id) {
+        return `${window.location.origin}/api/episodes/${currentEpisode.id}/stream`;
+      }
+      if (title?.id) {
+        return `${window.location.origin}/api/media/${title.id}/stream`;
+      }
+    }
 
     // Si posee emby_id válido, construir la URL de Emby
     if (targetItemId) {
@@ -272,11 +284,12 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
       return url;
     }
 
-    // Si NO posee emby_id (ej. título descargado OTT o local):
-    // Utilizar la URL absoluta correcta del endpoint de streaming
+    // Fallback estándar
     let mediaUrl = media.stream_url;
     if (!mediaUrl || mediaUrl.includes('/undefined') || (mediaUrl.startsWith('/media/') && !mediaUrl.startsWith('/api/'))) {
-      if (media.id) {
+      if (currentEpisode?.id) {
+        mediaUrl = `/api/episodes/${currentEpisode.id}/stream`;
+      } else if (media.id) {
         mediaUrl = `/api/media/${media.id}/stream`;
       }
     }
@@ -324,14 +337,8 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
     }
   }, [activeProfile, title, currentEpisode]);
 
-  // Inicialización de Reproducción con Consulta previa a PlaybackInfo (Flujo Oficial Emby / HLS)
+  // Inicialización de Reproducción con Consulta previa a PlaybackInfo (Streaming Local / HLS)
   useEffect(() => {
-    if (isOtt) {
-      setIsLoading(false);
-      setPlaybackError(null);
-      return;
-    }
-
     const video = videoRef.current;
     if (!video || (!streamUrl && !targetItemId)) return;
 
@@ -1029,36 +1036,6 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
   const episodeLabel = currentEpisode
     ? `T${currentEpisode.season_number || 1} E${currentEpisode.episode_number || 1} - ${currentEpisode.title}`
     : null;
-
-  if (isOtt && activeMedia) {
-    return (
-      <div
-        ref={playerContainerRef}
-        className="fixed inset-0 z-50 bg-black flex flex-col items-center justify-center select-none overflow-hidden"
-      >
-        <button
-          onClick={handleClose}
-          className="absolute top-6 left-6 z-50 w-11 h-11 rounded-full bg-black/70 hover:bg-neutral-800 text-white flex items-center justify-center transition-all shadow-md active:scale-95 cursor-pointer hover:text-[#E50914]"
-          title="Salir del reproductor"
-          type="button"
-        >
-          <ArrowLeft className="w-6 h-6 stroke-[2.5]" />
-        </button>
-
-        <video
-          ref={videoRef}
-          controls
-          autoPlay
-          playsInline
-          src={ottStreamUrl}
-          className="w-full h-full object-contain"
-          onError={(e) => {
-            console.error('Error cargando stream OTT nativo:', e);
-          }}
-        />
-      </div>
-    );
-  }
 
   return (
     <div
