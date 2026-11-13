@@ -1,3 +1,8 @@
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import api from '../services/api';
+import { Tv, WifiOff, AlertCircle, Search } from 'lucide-react';
+import LiveTvPlayer from '../components/LiveTvPlayer';
+
 // Polyfill para crypto.randomUUID en entornos HTTP no seguros
 if (typeof window !== 'undefined' && (!window.crypto || !window.crypto.randomUUID)) {
   if (!window.crypto) window.crypto = {};
@@ -8,10 +13,87 @@ if (typeof window !== 'undefined' && (!window.crypto || !window.crypto.randomUUI
   };
 }
 
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import api from '../services/api';
-import { Tv, WifiOff, AlertCircle, Search } from 'lucide-react';
-import LiveTvPlayer from '../components/LiveTvPlayer';
+// Sanitización y corrección de codificación UTF-8 / mojibake para categorías y nombres
+function fixEncoding(text) {
+  if (!text || typeof text !== 'string') return text || '';
+  return text
+    .replace(/M├║sica/gi, 'Música')
+    .replace(/M├ºsica/gi, 'Música')
+    .replace(/MÃºsica/gi, 'Música')
+    .replace(/├║/g, 'ú')
+    .replace(/├│/g, 'ó')
+    .replace(/├í/g, 'á')
+    .replace(/├®/g, 'é')
+    .replace(/├¡/g, 'í')
+    .replace(/├▒/g, 'ñ')
+    .replace(/├Ñ/g, 'Ñ')
+    .replace(/Ãº/g, 'ú')
+    .replace(/Ã³/g, 'ó')
+    .replace(/Ã¡/g, 'á')
+    .replace(/Ã©/g, 'é')
+    .replace(/Ã­/g, 'í')
+    .replace(/Ã±/g, 'ñ')
+    .trim();
+}
+
+// Helper para extraer iniciales legibles del canal
+function getChannelInitials(name) {
+  if (!name) return 'TV';
+  const clean = name.replace(/^(HD|SD|FHD|4K|\d+)\s*/i, '').trim();
+  const words = clean.split(/\s+/).filter(Boolean);
+  if (words.length >= 2) {
+    return (words[0][0] + words[1][0]).toUpperCase();
+  }
+  return clean.slice(0, 3).toUpperCase() || 'TV';
+}
+
+const GRADIENT_PALETTES = [
+  'from-red-950/70 via-[#181818] to-black',
+  'from-rose-950/80 via-[#161616] to-black',
+  'from-zinc-900 via-neutral-900 to-black',
+  'from-red-900/40 via-zinc-900 to-black',
+  'from-slate-900 via-zinc-900 to-black',
+];
+
+function getGradient(name, id) {
+  const seed = typeof id === 'number' ? id : (name || '').split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
+  return GRADIENT_PALETTES[Math.abs(seed) % GRADIENT_PALETTES.length];
+}
+
+// Componente para tarjeta de logo del canal con avatar/badge estilizado de FlixHN ante fallback
+function ChannelLogoCard({ channel }) {
+  const [imgError, setImgError] = useState(false);
+  const logoSrc = channel.logo_url || channel.logo || channel.icon_url || channel.tvg_logo;
+  const initials = getChannelInitials(channel.name);
+  const gradient = getGradient(channel.name, channel.id);
+
+  if (!logoSrc || imgError) {
+    return (
+      <div className={`w-full h-full flex flex-col items-center justify-center p-2 rounded bg-gradient-to-br ${gradient} border border-red-500/20 shadow-inner group-hover:border-red-500/40 transition-all select-none`}>
+        <div className="w-10 h-10 rounded-full bg-red-600/20 border border-red-500/30 flex items-center justify-center shadow-lg mb-1 group-hover:scale-105 group-hover:bg-red-600/30 transition-transform">
+          <span className="text-xs font-black tracking-wider text-red-400 group-hover:text-red-300">
+            {initials}
+          </span>
+        </div>
+        <span className="text-[10px] font-bold text-zinc-300 text-center line-clamp-1 group-hover:text-white px-1">
+          {channel.name}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-full h-full flex items-center justify-center p-2 relative bg-[#121212] rounded">
+      <img
+        src={logoSrc}
+        alt={channel.name}
+        loading="lazy"
+        className="max-h-full max-w-full object-contain filter drop-shadow select-none transition-transform duration-200 group-hover:scale-105"
+        onError={() => setImgError(true)}
+      />
+    </div>
+  );
+}
 
 export default function LiveTv({ onPlayChannel }) {
   // =========================================================================
@@ -41,11 +123,21 @@ export default function LiveTv({ onPlayChannel }) {
           res = await api.get('/channels');
         }
 
-        const data = Array.isArray(res.data) ? res.data : (res.data?.channels || []);
+        const rawData = Array.isArray(res.data) ? res.data : (res.data?.channels || []);
+        const sanitizedData = rawData.map((ch) => {
+          const cleanName = fixEncoding(ch.name);
+          const cleanGroup = fixEncoding(ch.group_title || ch.category || 'General');
+          return {
+            ...ch,
+            name: cleanName,
+            group_title: cleanGroup,
+            category: cleanGroup,
+          };
+        });
 
         if (isMountedRef.current) {
-          setChannels(data);
-          const uniqueGroups = ['Todos', ...new Set(data.map((ch) => ch.group_title || ch.category).filter(Boolean))];
+          setChannels(sanitizedData);
+          const uniqueGroups = ['Todos', ...new Set(sanitizedData.map((ch) => ch.group_title).filter(Boolean))];
           setCategories(uniqueGroups);
         }
       } catch (err) {
@@ -267,32 +359,8 @@ export default function LiveTv({ onPlayChannel }) {
                 </div>
 
                 {/* Logo o Icono con persistencia local y fallback seguro */}
-                <div className="h-24 w-full bg-[#121212] rounded-md flex items-center justify-center p-2.5 my-1 relative overflow-hidden border border-zinc-800/60 group-hover:border-zinc-700/80 transition-all">
-                  {channelLogo ? (
-                    <>
-                      <img
-                        src={channelLogo}
-                        alt={channel.name}
-                        loading="lazy"
-                        className="max-h-full max-w-full object-contain filter drop-shadow select-none transition-transform duration-200 group-hover:scale-105"
-                        onError={(e) => {
-                          e.currentTarget.style.display = 'none';
-                          const fallback = e.currentTarget.parentElement?.querySelector('.channel-fallback-icon');
-                          if (fallback) {
-                            fallback.classList.remove('hidden');
-                            fallback.classList.add('flex');
-                          }
-                        }}
-                      />
-                      <div className="channel-fallback-icon hidden items-center justify-center w-full h-full">
-                        <Tv className="w-8 h-8 text-zinc-600 group-hover:text-red-500 transition-colors" />
-                      </div>
-                    </>
-                  ) : (
-                    <div className="flex items-center justify-center w-full h-full">
-                      <Tv className="w-8 h-8 text-zinc-600 group-hover:text-red-500 transition-colors" />
-                    </div>
-                  )}
+                <div className="h-24 w-full bg-[#121212] rounded-md flex items-center justify-center my-1 relative overflow-hidden border border-zinc-800/60 group-hover:border-zinc-700/80 transition-all">
+                  <ChannelLogoCard channel={channel} />
                 </div>
 
                 {/* Título y Categoría */}

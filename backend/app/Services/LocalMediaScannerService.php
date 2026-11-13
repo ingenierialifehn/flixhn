@@ -52,6 +52,7 @@ class LocalMediaScannerService
         'mkv',
         'avi',
         'webm',
+        'ts',
         'm4v',
     ];
 
@@ -166,8 +167,13 @@ class LocalMediaScannerService
      * @param bool $cleanRemote Limpiar registros huérfanos o remotos de Emby
      * @return array Estadísticas del escaneo
      */
-    public function scan($customPaths = null, bool $cleanRemote = false): array
+    public function scan($customPaths = null, bool $cleanRemote = true): array
     {
+        @set_time_limit(0);
+        @ini_set('max_execution_time', '0');
+        @ini_set('memory_limit', '1024M');
+        @ignore_user_abort(true);
+
         $targetPaths = [];
         if (!empty($customPaths)) {
             $targetPaths = is_array($customPaths) ? $customPaths : [$customPaths];
@@ -187,9 +193,8 @@ class LocalMediaScannerService
             'paths_scanned' => [],
         ];
 
-        if ($cleanRemote) {
-            $stats['purged_remote'] = $this->cleanRemoteEmbyRecords();
-        }
+        // Purgar siempre registros huérfanos de servidores remotos/Emby para dar prioridad absoluta a medios locales
+        $stats['purged_remote'] = $this->cleanRemoteEmbyRecords();
 
         $categories = $this->ensureDefaultCategories();
 
@@ -207,31 +212,55 @@ class LocalMediaScannerService
         ServerSetting::set('last_local_scan_at', now()->toIso8601String(), 'media');
         ServerSetting::set('last_sync_at', now()->toIso8601String(), 'media');
 
+        // Limpiar la caché del catálogo principal inmediatamente para que /browse muestre los nuevos contenidos
+        \Illuminate\Support\Facades\Cache::forget('catalog_home_base');
+        \Illuminate\Support\Facades\Cache::forget('catalog_home_kids');
+        \Illuminate\Support\Facades\Cache::forget('catalog_home');
+        \Illuminate\Support\Facades\Cache::forget('titles_all');
+        \Illuminate\Support\Facades\Cache::forget('catalog_all');
+
         Log::info("LocalMediaScannerService::scan: Finalizado con éxito. Películas: {$stats['total_movies']}, Series: {$stats['total_series']}, Episodios: {$stats['total_episodes']}, Total archivos: {$stats['total_files_scanned']}");
 
         return $stats;
     }
 
     /**
-     * Elimina registros remotos huérfanos de Emby (45.4.87.126) si el usuario elige purgar el catálogo remoto.
+     * Elimina registros remotos huérfanos de Emby (45.4.87.126 o remote://) para que no bloqueen el catálogo local.
      */
     public function cleanRemoteEmbyRecords(): int
     {
         $purged = 0;
-        $remoteTitles = Title::where('provider', '!=', 'local')
-            ->where(function ($q) {
-                $q->where('stream_path', 'LIKE', '%45.4.87.126%')
-                  ->orWhere('source_path', 'LIKE', '%45.4.87.126%')
-                  ->orWhere('source_path', 'LIKE', 'remote://%')
-                  ->orWhere('poster_url', 'LIKE', '%45.4.87.126%');
-            })
-            ->get();
+        $remoteTitles = Title::where(function ($q) {
+            $q->where('stream_path', 'LIKE', '%45.4.87.126%')
+              ->orWhere('source_path', 'LIKE', '%45.4.87.126%')
+              ->orWhere('source_path', 'LIKE', 'remote://%')
+              ->orWhere('poster_url', 'LIKE', '%45.4.87.126%')
+              ->orWhere('provider', 'emby')
+              ->orWhere(function ($sub) {
+                  $sub->where('provider', '!=', 'local')
+                      ->where('source_type', '!=', 'local')
+                      ->where('source_path', 'NOT LIKE', '/mnt/%')
+                      ->where('file_path', 'NOT LIKE', '/mnt/%');
+              });
+        })->get();
 
         $integrity = app(MediaIntegrityService::class);
         foreach ($remoteTitles as $rt) {
             Log::info("cleanRemoteEmbyRecords: Purgando título remoto huérfano [ID {$rt->id}: {$rt->name}]");
             $integrity->purgeTitle($rt);
             $purged++;
+        }
+
+        // Purgar también ítems de medios huérfanos remotos
+        try {
+            MediaItem::where(function ($q) {
+                $q->where('file_path', 'LIKE', '%45.4.87.126%')
+                  ->orWhere('file_path', 'LIKE', 'remote://%')
+                  ->orWhere('stream_url', 'LIKE', '%45.4.87.126%')
+                  ->orWhere('provider', 'emby');
+            })->delete();
+        } catch (\Throwable $e) {
+            Log::debug("cleanRemoteEmbyRecords: MediaItem delete: " . $e->getMessage());
         }
 
         return $purged;
@@ -454,13 +483,25 @@ class LocalMediaScannerService
             $backdropNames[] = "{$baseClean}-thumb";
         }
 
+        // Indexar archivos de la carpeta en minúsculas para resolución case-insensitive instantánea
+        $entries = @scandir($normalizedDir) ?: [];
+        $filesLower = [];
+        foreach ($entries as $e) {
+            if ($e !== '.' && $e !== '..') {
+                $filesLower[strtolower($e)] = $e;
+            }
+        }
+
         // 1. Buscar poster
         foreach ($posterNames as $name) {
             foreach ($imageExtensions as $ext) {
-                $cand = "{$normalizedDir}/{$name}.{$ext}";
-                if (file_exists($cand) && !is_dir($cand) && @filesize($cand) > 500) {
-                    $result['poster'] = '/api/media/local-image?path=' . urlencode($cand);
-                    break 2;
+                $target = strtolower("{$name}.{$ext}");
+                if (isset($filesLower[$target])) {
+                    $cand = "{$normalizedDir}/" . $filesLower[$target];
+                    if (@filesize($cand) > 500) {
+                        $result['poster'] = '/api/media/local-image?path=' . urlencode($cand);
+                        break 2;
+                    }
                 }
             }
         }
@@ -468,10 +509,13 @@ class LocalMediaScannerService
         // 2. Buscar backdrop
         foreach ($backdropNames as $name) {
             foreach ($imageExtensions as $ext) {
-                $cand = "{$normalizedDir}/{$name}.{$ext}";
-                if (file_exists($cand) && !is_dir($cand) && @filesize($cand) > 500) {
-                    $result['backdrop'] = '/api/media/local-image?path=' . urlencode($cand);
-                    break 2;
+                $target = strtolower("{$name}.{$ext}");
+                if (isset($filesLower[$target])) {
+                    $cand = "{$normalizedDir}/" . $filesLower[$target];
+                    if (@filesize($cand) > 500) {
+                        $result['backdrop'] = '/api/media/local-image?path=' . urlencode($cand);
+                        break 2;
+                    }
                 }
             }
         }
@@ -593,29 +637,10 @@ class LocalMediaScannerService
         $posterUrl = $localArt['poster'];
         $backdropUrl = $localArt['backdrop'];
 
-        // 3. Si no hay carátula local o faltan metadatos, y TMDB_API_KEY está configurada, consultar TMDb como respaldo
-        if ((empty($posterUrl) || empty($overview)) && !empty(env('TMDB_API_KEY')) && !str_starts_with(env('TMDB_API_KEY'), 'tmdb_live_key')) {
-            $tmdbData = $this->queryTmdb($finalTitle, $finalYear, 'movie');
-            if (empty($posterUrl) && !empty($tmdbData['poster_url'])) {
-                $posterUrl = $tmdbData['poster_url'];
-            }
-            if (empty($backdropUrl) && !empty($tmdbData['backdrop_url'])) {
-                $backdropUrl = $tmdbData['backdrop_url'];
-            }
-            if (empty($overview) && !empty($tmdbData['overview'])) {
-                $overview = $tmdbData['overview'];
-            }
-            if (!empty($tmdbData['tmdb_id']) && empty($tmdbId)) {
-                $tmdbId = $tmdbData['tmdb_id'];
-            }
-            if (!empty($tmdbData['genre']) && $genre === 'Películas') {
-                $genre = $tmdbData['genre'];
-            }
-        }
-
+        // Metadatos rápidos locales: NO hacer peticiones HTTP externas durante escaneo inicial
         $posterUrl = $posterUrl ?: '/placeholder-poster.png';
         $backdropUrl = $backdropUrl ?: '/placeholder-poster.png';
-        $overview = $overview ?: "Película {$finalTitle} ({$finalYear}) disponible en FlixHN.";
+        $overview = !empty($localNfo['overview']) ? $localNfo['overview'] : "Película {$finalTitle} ({$finalYear}) disponible en FlixHN.";
         $slug = Str::slug($finalTitle . '-' . $finalYear) ?: ('movie-' . md5($filePath));
         $duration = $this->estimateDuration($filePath);
 
@@ -738,36 +763,12 @@ class LocalMediaScannerService
 
         $finalSeriesTitle = !empty($seriesNfo['title']) ? $seriesNfo['title'] : $seriesCleanTitle;
         $finalYear = !empty($seriesNfo['release_year']) ? (int) $seriesNfo['release_year'] : ($seriesYear ?: (int) date('Y'));
-        $overview = !empty($seriesNfo['overview']) ? $seriesNfo['overview'] : null;
-        $seriesPoster = $seriesArt['poster'];
-        $seriesBackdrop = $seriesArt['backdrop'];
+        $overview = !empty($seriesNfo['overview']) ? $seriesNfo['overview'] : "Serie {$finalSeriesTitle} en FlixHN.";
+        $seriesPoster = $seriesArt['poster'] ?: '/placeholder-poster.png';
+        $seriesBackdrop = $seriesArt['backdrop'] ?: '/placeholder-poster.png';
         $seriesGenre = $seriesNfo['genre'] ?? 'Series';
         $seriesRating = $seriesNfo['rating'] ?? 8.2;
         $tmdbId = $seriesNfo['tmdb_id'] ?? null;
-
-        // Si no hay arte local o falta sinopsis, y TMDB_API_KEY existe, respaldar con TMDb
-        if ((empty($seriesPoster) || empty($overview)) && !empty(env('TMDB_API_KEY')) && !str_starts_with(env('TMDB_API_KEY'), 'tmdb_live_key')) {
-            $tmdbData = $this->queryTmdb($finalSeriesTitle, $finalYear, 'series');
-            if (empty($seriesPoster) && !empty($tmdbData['poster_url'])) {
-                $seriesPoster = $tmdbData['poster_url'];
-            }
-            if (empty($seriesBackdrop) && !empty($tmdbData['backdrop_url'])) {
-                $seriesBackdrop = $tmdbData['backdrop_url'];
-            }
-            if (empty($overview) && !empty($tmdbData['overview'])) {
-                $overview = $tmdbData['overview'];
-            }
-            if (!empty($tmdbData['tmdb_id']) && empty($tmdbId)) {
-                $tmdbId = $tmdbData['tmdb_id'];
-            }
-            if (!empty($tmdbData['genre']) && $seriesGenre === 'Series') {
-                $seriesGenre = $tmdbData['genre'];
-            }
-        }
-
-        $seriesPoster = $seriesPoster ?: '/placeholder-poster.png';
-        $seriesBackdrop = $seriesBackdrop ?: '/placeholder-poster.png';
-        $overview = $overview ?: "Serie {$finalSeriesTitle} en FlixHN.";
         $slug = Str::slug($finalSeriesTitle) ?: ('series-' . md5($finalSeriesTitle));
 
         // 1. Encontrar o crear la Serie (Title type=series)
@@ -818,6 +819,25 @@ class LocalMediaScannerService
             }
             $series->update($updateData);
         }
+
+        // Sincronizar MediaItem para la Serie
+        MediaItem::updateOrCreate(
+            ['title_id' => $series->id],
+            [
+                'title' => $finalSeriesTitle,
+                'type' => 'series',
+                'provider' => 'local',
+                'file_path' => $seriesDir,
+                'stream_url' => "/api/stream/title/{$series->id}",
+                'overview' => $overview,
+                'poster_url' => $series->poster_url,
+                'backdrop_url' => $series->backdrop_url,
+                'release_year' => $finalYear,
+                'genre' => $seriesGenre,
+                'duration_seconds' => 0,
+                'file_size' => @filesize($filePath) ?: 0,
+            ]
+        );
 
         // 2. Encontrar o crear la Temporada
         $seasonNumber = $classification['season_number'] ?: 1;

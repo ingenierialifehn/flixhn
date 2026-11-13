@@ -65,6 +65,45 @@ class TvChannel extends Model
         return $this->logo_url;
     }
 
+    /**
+     * Sanitiza caracteres mojibake UTF-8 comunes en nombres y categorías.
+     */
+    public static function fixMojibake(?string $str): ?string
+    {
+        if (empty($str)) return $str;
+
+        $replacements = [
+            'M├║sica' => 'Música',
+            'M├ºsica' => 'Música',
+            'MÃºsica' => 'Música',
+            '├║' => 'ú',
+            '├│' => 'ó',
+            '├í' => 'á',
+            '├®' => 'é',
+            '├¡' => 'í',
+            '├▒' => 'ñ',
+            '├Ñ' => 'Ñ',
+            'Ãº' => 'ú',
+            'Ã³' => 'ó',
+            'Ã¡' => 'á',
+            'Ã©' => 'é',
+            'Ã­' => 'í',
+            'Ã±' => 'ñ',
+        ];
+
+        return strtr($str, $replacements);
+    }
+
+    public function getGroupTitleAttribute(?string $value): ?string
+    {
+        return self::fixMojibake($value);
+    }
+
+    public function getNameAttribute(?string $value): ?string
+    {
+        return self::fixMojibake($value);
+    }
+
     public function getLogoUrlAttribute(?string $value): ?string
     {
         if (!empty($value) && str_starts_with($value, '/storage/')) {
@@ -76,6 +115,16 @@ class TvChannel extends Model
             if ($local) {
                 return $local;
             }
+        }
+
+        // Si la URL en BD está vacía o apunta al CDN caído tvlogos.b-cdn.net o imgur, resolver candidato curado o iptv-org
+        if (empty($value) || str_contains($value, 'tvlogos.b-cdn.net') || str_contains($value, 'i.imgur.com')) {
+            try {
+                $candidate = app(\App\Services\TvLogoService::class)->resolveCandidateLogoUrl($this->name, null, $this->tvg_id);
+                if (!empty($candidate)) {
+                    return $candidate;
+                }
+            } catch (\Throwable $e) {}
         }
 
         return $value;

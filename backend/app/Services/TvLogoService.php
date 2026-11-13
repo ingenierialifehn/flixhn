@@ -371,10 +371,14 @@ class TvLogoService
     {
         return Cache::remember('iptv_org_logo_index', 86400 * 3, function () {
             $cacheFile = storage_path('app/iptv_logos_index.json');
-            if (file_exists($cacheFile) && (time() - filemtime($cacheFile)) < (86400 * 7)) {
-                $decoded = json_decode(file_get_contents($cacheFile), true);
-                if (is_array($decoded) && !empty($decoded['by_name'])) {
-                    return $decoded;
+            if (file_exists($cacheFile)) {
+                try {
+                    $decoded = json_decode(file_get_contents($cacheFile), true);
+                    if (is_array($decoded) && (!empty($decoded['by_name']) || !empty($decoded['by_id']))) {
+                        return $decoded;
+                    }
+                } catch (\Throwable $e) {
+                    Log::debug("TvLogoService: Error leyendo iptv_logos_index.json: " . $e->getMessage());
                 }
             }
 

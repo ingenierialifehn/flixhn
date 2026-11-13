@@ -22,9 +22,34 @@ class LiveTvController extends Controller
      */
     public function getChannels(Request $request): JsonResponse
     {
+        // Sanitizar permanentemente en base de datos si existen registros con mojibake UTF-8
+        if (Cache::add('repaired_tv_channels_mojibake_v2', true, 86400)) {
+            try {
+                TvChannel::where('group_title', 'LIKE', '%M%sica%')
+                    ->orWhere('group_title', 'LIKE', '%├%')
+                    ->orWhere('group_title', 'LIKE', '%Ã%')
+                    ->each(function ($channel) {
+                        $fixedGroup = TvChannel::fixMojibake($channel->group_title);
+                        $fixedName = TvChannel::fixMojibake($channel->name);
+                        if ($fixedGroup !== $channel->group_title || $fixedName !== $channel->name) {
+                            $channel->group_title = $fixedGroup;
+                            $channel->name = $fixedName;
+                            $channel->saveQuietly();
+                        }
+                    });
+            } catch (\Throwable $e) {
+                Log::debug("LiveTvController: No se pudo auto-sanitizar DB: " . $e->getMessage());
+            }
+        }
+
         $channels = TvChannel::where('is_active', true)
             ->orderBy('name', 'asc')
             ->get();
+
+        foreach ($channels as $channel) {
+            $channel->group_title = TvChannel::fixMojibake($channel->group_title);
+            $channel->name = TvChannel::fixMojibake($channel->name);
+        }
 
         // Enriquecer con mapa de canales de Emby para facilitar negociación HLS
         try {

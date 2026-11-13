@@ -250,12 +250,23 @@ class AdminTitleController extends Controller
      */
     public function syncRemoteMedia(Request $request, \App\Services\RemoteMediaConnectorService $remoteService): JsonResponse
     {
+        @set_time_limit(0);
+        @ini_set('max_execution_time', '0');
+        @ini_set('memory_limit', '1024M');
+        @ignore_user_abort(true);
+
         $sourceMode = $request->input('source_mode') ?: \App\Models\ServerSetting::get('media_source_mode', 'local');
 
         if ($sourceMode === 'local') {
             $scanner = app(\App\Services\LocalMediaScannerService::class);
-            $stats = $scanner->scan($request->input('path'));
+            $stats = $scanner->scan($request->input('path'), true);
             $totalIndexed = ($stats['total_movies'] ?? 0) + ($stats['total_series'] ?? 0) + ($stats['total_episodes'] ?? 0);
+
+            \Illuminate\Support\Facades\Cache::forget('catalog_home_base');
+            \Illuminate\Support\Facades\Cache::forget('catalog_home_kids');
+            \Illuminate\Support\Facades\Cache::forget('catalog_home');
+            \Illuminate\Support\Facades\Cache::forget('titles_all');
+            \Illuminate\Support\Facades\Cache::forget('catalog_all');
 
             return response()->json([
                 'success' => true,
@@ -286,12 +297,23 @@ class AdminTitleController extends Controller
      */
     public function syncMedia(Request $request, \App\Services\RemoteMediaConnectorService $remoteService, \App\Services\MediaSyncService $syncService): JsonResponse
     {
+        @set_time_limit(0);
+        @ini_set('max_execution_time', '0');
+        @ini_set('memory_limit', '1024M');
+        @ignore_user_abort(true);
+
         $sourceMode = $request->input('source_mode') ?: \App\Models\ServerSetting::get('media_source_mode', 'local');
 
         if ($sourceMode === 'local') {
             $scanner = app(\App\Services\LocalMediaScannerService::class);
-            $stats = $scanner->scan($request->input('path'));
+            $stats = $scanner->scan($request->input('path'), true);
             $totalIndexed = ($stats['total_movies'] ?? 0) + ($stats['total_series'] ?? 0) + ($stats['total_episodes'] ?? 0);
+
+            \Illuminate\Support\Facades\Cache::forget('catalog_home_base');
+            \Illuminate\Support\Facades\Cache::forget('catalog_home_kids');
+            \Illuminate\Support\Facades\Cache::forget('catalog_home');
+            \Illuminate\Support\Facades\Cache::forget('titles_all');
+            \Illuminate\Support\Facades\Cache::forget('catalog_all');
 
             return response()->json([
                 'success' => true,
@@ -322,8 +344,14 @@ class AdminTitleController extends Controller
 
         // Fallback a escaneo local
         $scanner = app(\App\Services\LocalMediaScannerService::class);
-        $stats = $scanner->scan();
+        $stats = $scanner->scan(null, true);
         $totalIndexed = ($stats['total_movies'] ?? 0) + ($stats['total_series'] ?? 0) + ($stats['total_episodes'] ?? 0);
+
+        \Illuminate\Support\Facades\Cache::forget('catalog_home_base');
+        \Illuminate\Support\Facades\Cache::forget('catalog_home_kids');
+        \Illuminate\Support\Facades\Cache::forget('catalog_home');
+        \Illuminate\Support\Facades\Cache::forget('titles_all');
+        \Illuminate\Support\Facades\Cache::forget('catalog_all');
 
         return response()->json([
             'success' => true,
@@ -347,10 +375,21 @@ class AdminTitleController extends Controller
      */
     public function scanLocalMedia(Request $request, \App\Services\LocalMediaScannerService $scanner): JsonResponse
     {
+        @set_time_limit(0);
+        @ini_set('max_execution_time', '0');
+        @ini_set('memory_limit', '1024M');
+        @ignore_user_abort(true);
+
         try {
             $cleanRemote = $request->boolean('clean_remote') || $request->input('clean_remote') === 'true' || $request->input('clean_remote') === 1;
-            $stats = $scanner->scan($request->input('path'), $cleanRemote);
+            $stats = $scanner->scan($request->input('path'), true);
             $totalIndexed = ($stats['total_movies'] ?? 0) + ($stats['total_series'] ?? 0) + ($stats['total_episodes'] ?? 0);
+
+            \Illuminate\Support\Facades\Cache::forget('catalog_home_base');
+            \Illuminate\Support\Facades\Cache::forget('catalog_home_kids');
+            \Illuminate\Support\Facades\Cache::forget('catalog_home');
+            \Illuminate\Support\Facades\Cache::forget('titles_all');
+            \Illuminate\Support\Facades\Cache::forget('catalog_all');
 
             return response()->json([
                 'success' => true,

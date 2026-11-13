@@ -1296,16 +1296,15 @@ export default function LiveTvPlayer({
           </button>
 
           {/* Logo del Canal */}
-          <div className="w-10 h-10 rounded-md bg-[#181818] border border-zinc-800 flex items-center justify-center overflow-hidden shrink-0">
-            {(currentChannel?.logo || currentChannel?.logo_url || currentChannel?.tvg_logo) ? (
+          <div className="w-10 h-10 rounded-md bg-[#181818] border border-zinc-800 flex items-center justify-center overflow-hidden shrink-0 relative">
+            <Tv className="w-5 h-5 text-zinc-500 absolute" />
+            {(currentChannel?.logo || currentChannel?.logo_url || currentChannel?.tvg_logo) && (
               <img
                 src={currentChannel.logo || currentChannel.logo_url || currentChannel.tvg_logo}
                 alt={currentChannel.name}
-                className="w-full h-full object-contain p-1"
+                className="w-full h-full object-contain p-1 relative z-10 bg-[#181818]"
                 onError={(e) => { e.currentTarget.style.display = 'none'; }}
               />
-            ) : (
-              <Tv className="w-5 h-5 text-zinc-500" />
             )}
           </div>
 
@@ -1520,16 +1519,15 @@ export default function LiveTvPlayer({
                     }`}
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
-                      <div className="w-8 h-8 rounded bg-black/60 border border-zinc-800 flex items-center justify-center overflow-hidden shrink-0">
-                        {(ch.logo || ch.logo_url || ch.tvg_logo) ? (
+                      <div className="w-8 h-8 rounded bg-black/60 border border-zinc-800 flex items-center justify-center overflow-hidden shrink-0 relative">
+                        <Tv className="w-3.5 h-3.5 text-zinc-500 absolute" />
+                        {(ch.logo || ch.logo_url || ch.tvg_logo) && (
                           <img
                             src={ch.logo || ch.logo_url || ch.tvg_logo}
                             alt={ch.name}
-                            className="w-full h-full object-contain p-0.5"
+                            className="w-full h-full object-contain p-0.5 relative z-10 bg-black/60"
                             onError={(e) => { e.currentTarget.style.display = 'none'; }}
                           />
-                        ) : (
-                          <Tv className="w-3.5 h-3.5 text-zinc-500" />
                         )}
                       </div>
                       <div className="min-w-0">
