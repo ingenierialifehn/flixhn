@@ -83,9 +83,16 @@ class LiveTvController extends Controller
         // Obtener configuración de conexión a Emby
         $connector = app(RemoteMediaConnectorService::class);
         $settings = $connector->getConnectionSettings();
-        $serverUrl = rtrim($settings['server_url'] ?: 'http://45.4.87.126:6789', '/');
+        $defaultFallbackServer = ServerSetting::get('media_server_url')
+            ?: ServerSetting::get('emby_server_url')
+            ?: config('services.emby.server_url')
+            ?: 'http://45.4.87.126:6789';
+        $serverUrl = rtrim($settings['server_url'] ?: $defaultFallbackServer, '/');
         $cleanBaseUrl = preg_replace('#/emby/?$#i', '', $serverUrl);
-        $apiKey = $settings['api_key'] ?: ServerSetting::get('emby_api_key', '0fe0eb20e78f431d9fa474e05ab2d82f');
+        $apiKey = $settings['api_key']
+            ?: ServerSetting::get('media_server_api_key')
+            ?: ServerSetting::get('emby_api_key')
+            ?: config('services.emby.api_key', '0fe0eb20e78f431d9fa474e05ab2d82f');
 
         // Resolver el channelId objetivo para Emby
         $embyMap = $this->getEmbyChannelsMap($cleanBaseUrl, $apiKey);
@@ -320,9 +327,16 @@ class LiveTvController extends Controller
 
         $connector = app(RemoteMediaConnectorService::class);
         $settings = $connector->getConnectionSettings();
-        $serverUrl = rtrim($settings['server_url'] ?: 'http://45.4.87.126:6789', '/');
+        $defaultFallbackServer = ServerSetting::get('media_server_url')
+            ?: ServerSetting::get('emby_server_url')
+            ?: config('services.emby.server_url')
+            ?: 'http://45.4.87.126:6789';
+        $serverUrl = rtrim($settings['server_url'] ?: $defaultFallbackServer, '/');
         $cleanBaseUrl = preg_replace('#/emby/?$#i', '', $serverUrl);
-        $apiKey = $settings['api_key'] ?: ServerSetting::get('emby_api_key', '0fe0eb20e78f431d9fa474e05ab2d82f');
+        $apiKey = $settings['api_key']
+            ?: ServerSetting::get('media_server_api_key')
+            ?: ServerSetting::get('emby_api_key')
+            ?: config('services.emby.api_key', '0fe0eb20e78f431d9fa474e05ab2d82f');
 
         try {
             $deleteUrl = "{$cleanBaseUrl}/emby/Videos/ActiveEncodings";
@@ -351,9 +365,17 @@ class LiveTvController extends Controller
         return Cache::remember('emby_livetv_channels_map', 300, function () use ($serverUrl, $apiKey) {
             $connector = app(RemoteMediaConnectorService::class);
             $settings = $connector->getConnectionSettings();
-            $targetUrl = rtrim($serverUrl ?: ($settings['server_url'] ?: 'http://45.4.87.126:6789'), '/');
+            $defaultFallbackServer = ServerSetting::get('media_server_url')
+                ?: ServerSetting::get('emby_server_url')
+                ?: config('services.emby.server_url')
+                ?: 'http://45.4.87.126:6789';
+            $targetUrl = rtrim($serverUrl ?: ($settings['server_url'] ?: $defaultFallbackServer), '/');
             $cleanBaseUrl = preg_replace('#/emby/?$#i', '', $targetUrl);
-            $key = $apiKey ?: ($settings['api_key'] ?: ServerSetting::get('emby_api_key', '0fe0eb20e78f431d9fa474e05ab2d82f'));
+            $key = $apiKey
+                ?: ($settings['api_key']
+                    ?: ServerSetting::get('media_server_api_key')
+                    ?: ServerSetting::get('emby_api_key')
+                    ?: config('services.emby.api_key', '0fe0eb20e78f431d9fa474e05ab2d82f'));
 
             $map = [
                 'by_id' => [],

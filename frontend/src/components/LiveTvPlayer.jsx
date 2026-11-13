@@ -23,13 +23,21 @@ import useTelemetryHeartbeat from '../hooks/useTelemetryHeartbeat';
 import api from '../services/api';
 
 // Polyfill para crypto.randomUUID en entornos HTTP no seguros
-if (typeof window !== 'undefined' && (!window.crypto || !window.crypto.randomUUID)) {
-  if (!window.crypto) window.crypto = {};
-  window.crypto.randomUUID = function () {
-    return '10000000-1000-4000-8000-100000000000'.replace(/[018]/g, (c) =>
-      (+c ^ (Math.random() * 16 >> (+c / 4))).toString(16)
-    );
-  };
+if (typeof window !== 'undefined') {
+  try {
+    if (!window.crypto || typeof window.crypto.randomUUID !== 'function') {
+      if (!window.crypto) window.crypto = {};
+      window.crypto.randomUUID = function () {
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+          const r = (Math.random() * 16) | 0;
+          const v = c === 'x' ? r : (r & 0x3) | 0x8;
+          return v.toString(16);
+        });
+      };
+    }
+  } catch (e) {
+    // Si window.crypto es inmutable en el navegador, continuar de forma segura
+  }
 }
 
 function obtenerMpegTs() {
@@ -410,6 +418,16 @@ export default function LiveTvPlayer({
         if (res.data && res.data.hls_url) {
           finalHlsUrl = res.data.hls_url;
           playSessionId = res.data.play_session_id;
+
+          try {
+            if (finalHlsUrl.includes('/Videos/') || finalHlsUrl.includes('/master') || finalHlsUrl.includes('.m3u8')) {
+              const u = new URL(finalHlsUrl, window.location.href);
+              u.searchParams.set('EnableAutoStreamCopy', 'false');
+              u.searchParams.set('AllowVideoStreamCopy', 'false');
+              u.searchParams.set('AllowAudioStreamCopy', 'false');
+              finalHlsUrl = u.toString();
+            }
+          } catch (e) {}
         }
       } catch (err) {
         console.warn('[FlixHN] Falló consulta PlaybackInfo en backend, evaluando fallback:', err);
@@ -555,10 +573,13 @@ export default function LiveTvPlayer({
       finalHlsUrl.includes('/master') ||
       finalHlsUrl.includes('/Videos/');
 
-    // Detectar si la URL es flujo TS directo o streaming continuo no HLS
+    // Detectar si la URL es estrictamente un flujo .ts directo (NUNCA .m3u8, /master o /Videos/)
     const isDirectTs =
-      /\.ts($|\?)/i.test(finalHlsUrl) ||
-      (!isHlsUrl && (finalHlsUrl.includes(':') || finalHlsUrl.startsWith('http')));
+      Boolean(finalHlsUrl) &&
+      !finalHlsUrl.includes('.m3u8') &&
+      !finalHlsUrl.includes('/master') &&
+      !finalHlsUrl.includes('/Videos/') &&
+      /\.ts($|\?)/i.test(finalHlsUrl);
 
     const setCargando = (val) => setIsLoading(Boolean(val));
     const setErrorCanal = (err) => {

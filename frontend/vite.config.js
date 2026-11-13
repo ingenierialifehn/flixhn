@@ -3,18 +3,16 @@ import path from 'node:path';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-const appDir = '/app';
+const appRoot = '/app';
 
 export default defineConfig({
-  root: appDir,
+  root: appRoot,
   resolve: {
     dedupe: ['react', 'react-dom', 'react/jsx-runtime', 'react/jsx-dev-runtime'],
     alias: {
-      react: path.resolve(appDir, 'node_modules/react'),
-      'react-dom': path.resolve(appDir, 'node_modules/react-dom'),
-      '@': path.resolve(appDir, './src'),
-      '@api': path.resolve(appDir, './src/api'),
-      '@services': path.resolve(appDir, './src/services'),
+      '@': path.resolve(appRoot, './src'),
+      '@api': path.resolve(appRoot, './src/api'),
+      '@services': path.resolve(appRoot, './src/services'),
     },
     extensions: ['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json'],
   },
