@@ -12,6 +12,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class MediaStreamController extends Controller
@@ -45,6 +46,9 @@ class MediaStreamController extends Controller
      */
     public function stream(Request $request, $id = null)
     {
+        session_write_close();
+        set_time_limit(0);
+
         $integrityService = app(MediaIntegrityService::class);
         $targetId = $id ?: $request->query('id') ?: $request->query('title_id');
         $rawPath = $request->query('path') ?: $request->query('file');
@@ -224,40 +228,16 @@ class MediaStreamController extends Controller
     }
 
     /**
-     * Construye una respuesta inmediata X-Accel-Redirect para que Nginx sirva el video directamente
-     * con sendfile y Byte-Ranges sin mantener ocupados los workers de PHP-FPM.
-     */
-    protected function xAccelRedirectResponse(string $filePath): \Illuminate\Http\Response
-    {
-        $extension = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
-        $mimeType = match ($extension) {
-            'mp4', 'm4v' => 'video/mp4',
-            'mkv' => 'video/x-matroska',
-            'webm' => 'video/webm',
-            'avi' => 'video/x-msvideo',
-            'ts' => 'video/mp2t',
-            default => ($this->mimeTypes[$extension] ?? 'video/mp4'),
-        };
-
-        $relativePath = ltrim(substr($filePath, strlen('/mnt/media_library/')), '/');
-        $encodedPath = implode('/', array_map('rawurlencode', explode('/', $relativePath)));
-
-        return response('', 200, [
-            'Content-Type' => $mimeType,
-            'X-Accel-Redirect' => '/internal_media/' . $encodedPath,
-            'X-Accel-Buffering' => 'no',
-            'Accept-Ranges' => 'bytes',
-        ]);
-    }
-
-    /**
      * Endpoint específico de streaming directo para títulos / películas.
-     * Si el archivo físico existe en /mnt/media_library/, delega inmediatamente en Nginx (X-Accel-Redirect).
-     * Si no existe en disco, purga el registro y devuelve 404.
+     * Sirve el archivo directamente desde el contenedor backend con soporte completo
+     * de Byte-Range (HTTP 206) o transcodificación al vuelo.
      * GET/HEAD /api/stream/title/{id}
      */
     public function streamTitle(Request $request, $id)
     {
+        session_write_close();
+        set_time_limit(0);
+
         $integrityService = app(MediaIntegrityService::class);
         $title = Title::find($id);
 
@@ -312,23 +292,21 @@ class MediaStreamController extends Controller
             return response()->json(['error' => 'Archivo físico no encontrado en el servidor.'], 404);
         }
 
-        // Si el archivo SÍ existe y su ruta comienza con /mnt/media_library/, entrega inmediatamente vía X-Accel-Redirect
-        if (str_starts_with($resolved, '/mnt/media_library/')) {
-            return $this->xAccelRedirectResponse($resolved);
-        }
-
         return $this->serveStreamWithByteRange($request, $resolved);
     }
 
     /**
      * Endpoint específico de streaming directo para episodios de series.
-     * Si el archivo físico existe en /mnt/media_library/, delega inmediatamente en Nginx (X-Accel-Redirect).
-     * Si no existe en disco, purga el episodio y devuelve 404.
+     * Sirve el archivo directamente desde el contenedor backend con soporte completo
+     * de Byte-Range (HTTP 206) o transcodificación al vuelo.
      * GET/HEAD /api/stream/episode/{id}
      * GET/HEAD /api/episodes/{id}/stream
      */
     public function streamEpisode(Request $request, $id)
     {
+        session_write_close();
+        set_time_limit(0);
+
         $integrityService = app(MediaIntegrityService::class);
         $episode = Episode::find($id);
 
@@ -366,11 +344,6 @@ class MediaStreamController extends Controller
             Log::warning("MediaStreamController@streamEpisode: Archivo físico no existe para episodio [ID {$episode->id}: {$episode->title}]. Purgando episodio y devolviendo 404.");
             $integrityService->purgeEpisode($episode);
             return response()->json(['error' => 'Archivo de episodio no encontrado en el servidor.'], 404);
-        }
-
-        // Si el archivo SÍ existe y su ruta comienza con /mnt/media_library/, entrega inmediatamente vía X-Accel-Redirect
-        if (str_starts_with($resolved, '/mnt/media_library/')) {
-            return $this->xAccelRedirectResponse($resolved);
         }
 
         return $this->serveStreamWithByteRange($request, $resolved);
@@ -597,61 +570,87 @@ class MediaStreamController extends Controller
             return null;
         }
 
-        // Si ya existe tal cual
-        if (File::exists($rawPath) && !File::isDirectory($rawPath)) {
-            return $rawPath;
+        $pathsToTest = array_unique(array_filter([
+            $rawPath,
+            rawurldecode($rawPath),
+            str_replace('\\', '/', $rawPath),
+            rawurldecode(str_replace('\\', '/', $rawPath)),
+        ]));
+
+        foreach ($pathsToTest as $testPath) {
+            if (File::exists($testPath) && !File::isDirectory($testPath) && @filesize($testPath) > 1024) {
+                return $testPath;
+            }
         }
 
-        $normalized = str_replace('\\', '/', $rawPath);
-        $fileName = basename($normalized);
-
-        // Lista de carpetas candidatas prioritarias en el servidor
-        $candidates = [
-            $normalized,
-            "/mnt/media_library/Disk2/{$fileName}",
-            "/mnt/media_library/Disk3/{$fileName}",
-            "/mnt/media_library/Disk4/{$fileName}",
-            "/mnt/media_library/Disk5/{$fileName}",
-            "/mnt/media_library/Disk6/{$fileName}",
-            "/mnt/media_library/Disk7/{$fileName}",
-            storage_path(ltrim($normalized, '/')),
-            storage_path('media/' . $fileName),
-            storage_path('media/movies/' . $fileName),
-            storage_path('media/series/' . $fileName),
-            storage_path('media/netflix/' . $fileName),
-            storage_path('media/disney/' . $fileName),
-            storage_path('media/hbo_max/' . $fileName),
-            storage_path('media/amazon_prime/' . $fileName),
-            storage_path('media/apple_tv/' . $fileName),
-            storage_path('media/paramount/' . $fileName),
-            "/var/www/html/storage/media/{$fileName}",
-            "/var/www/html/storage/media/movies/{$fileName}",
-            "/var/www/html/storage/media/series/{$fileName}",
-            "/var/www/html/storage/media/netflix/{$fileName}",
-            "/storage/media/{$fileName}",
-            "/var/media/{$fileName}",
-            base_path("media/{$fileName}"),
-            storage_path("app/public/{$fileName}"),
+        $standardDisks = [
+            '/mnt/media_library/Disk2',
+            '/mnt/media_library/Disk3',
+            '/mnt/media_library/Disk4',
+            '/mnt/media_library/Disk5',
+            '/mnt/media_library/Disk6',
+            '/mnt/media_library/Disk7',
         ];
 
-        // Si viene con prefijo /storage/ o storage/
-        if (str_starts_with($normalized, '/storage/') || str_starts_with($normalized, 'storage/')) {
-            $rel = ltrim(preg_replace('#^/?storage/#', '', $normalized), '/');
-            $candidates[] = storage_path($rel);
-            $candidates[] = storage_path("app/public/{$rel}");
-        }
+        $fileName = '';
+        foreach ($pathsToTest as $pathItem) {
+            $normalized = str_replace('\\', '/', $pathItem);
+            $fileName = basename($normalized);
+            $parentDir = basename(dirname($normalized));
+            $subPath = preg_replace('#^/mnt/media_library/Disk\d+/#i', '', $normalized);
 
-        // Si viene con prefijo /media/ o media/
-        if (str_starts_with($normalized, '/media/') || str_starts_with($normalized, 'media/')) {
-            $rel = ltrim(preg_replace('#^/?media/#', '', $normalized), '/');
-            $candidates[] = storage_path("media/{$rel}");
-            $candidates[] = base_path("media/{$rel}");
-            $candidates[] = "/var/media/{$rel}";
-        }
+            // Lista de carpetas candidatas prioritarias en el servidor
+            $candidates = [
+                $normalized,
+                storage_path(ltrim($normalized, '/')),
+                storage_path('media/' . $fileName),
+                storage_path('media/movies/' . $fileName),
+                storage_path('media/series/' . $fileName),
+                storage_path('media/netflix/' . $fileName),
+                storage_path('media/disney/' . $fileName),
+                storage_path('media/hbo_max/' . $fileName),
+                storage_path('media/amazon_prime/' . $fileName),
+                storage_path('media/apple_tv/' . $fileName),
+                storage_path('media/paramount/' . $fileName),
+                "/var/www/html/storage/media/{$fileName}",
+                "/var/www/html/storage/media/movies/{$fileName}",
+                "/var/www/html/storage/media/series/{$fileName}",
+                "/var/www/html/storage/media/netflix/{$fileName}",
+                "/storage/media/{$fileName}",
+                "/var/media/{$fileName}",
+                base_path("media/{$fileName}"),
+                storage_path("app/public/{$fileName}"),
+            ];
 
-        foreach ($candidates as $candidate) {
-            if (!empty($candidate) && File::exists($candidate) && !File::isDirectory($candidate) && @filesize($candidate) > 1024) {
-                return $candidate;
+            foreach ($standardDisks as $disk) {
+                $candidates[] = "{$disk}/{$fileName}";
+                if (!empty($subPath) && $subPath !== $fileName) {
+                    $candidates[] = "{$disk}/{$subPath}";
+                }
+                if (!empty($parentDir) && $parentDir !== '.' && $parentDir !== '/' && !str_starts_with($parentDir, 'Disk')) {
+                    $candidates[] = "{$disk}/{$parentDir}/{$fileName}";
+                }
+            }
+
+            // Si viene con prefijo /storage/ o storage/
+            if (str_starts_with($normalized, '/storage/') || str_starts_with($normalized, 'storage/')) {
+                $rel = ltrim(preg_replace('#^/?storage/#', '', $normalized), '/');
+                $candidates[] = storage_path($rel);
+                $candidates[] = storage_path("app/public/{$rel}");
+            }
+
+            // Si viene con prefijo /media/ o media/
+            if (str_starts_with($normalized, '/media/') || str_starts_with($normalized, 'media/')) {
+                $rel = ltrim(preg_replace('#^/?media/#', '', $normalized), '/');
+                $candidates[] = storage_path("media/{$rel}");
+                $candidates[] = base_path("media/{$rel}");
+                $candidates[] = "/var/media/{$rel}";
+            }
+
+            foreach ($candidates as $candidate) {
+                if (!empty($candidate) && File::exists($candidate) && !File::isDirectory($candidate) && @filesize($candidate) > 1024) {
+                    return $candidate;
+                }
             }
         }
 
@@ -668,6 +667,9 @@ class MediaStreamController extends Controller
                 "/var/www/html/storage/media/*/*/*{$cleanSlug}*.mp4",
                 "/var/www/html/storage/media/*/*{$cleanSlug}*.mp4",
                 "/var/www/html/storage/media/*{$cleanSlug}*.mp4",
+                "/mnt/media_library/Disk*/*/*/*{$cleanSlug}*",
+                "/mnt/media_library/Disk*/*/*{$cleanSlug}*",
+                "/mnt/media_library/Disk*/*{$cleanSlug}*",
             ];
             foreach ($patterns as $pattern) {
                 $matches = glob($pattern) ?: [];
@@ -761,26 +763,18 @@ class MediaStreamController extends Controller
         }, $status, $outHeaders);
     }
 
+    /**
+     * Servir archivo multimedia con soporte completo para encabezados HTTP Range: bytes
+     * mediante BinaryFileResponse nativo de Symfony/Laravel o transcodificación al vuelo con ffmpeg.
+     */
     protected function serveStreamWithByteRange(Request $request, string $filePath)
     {
+        session_write_close();
+        set_time_limit(0);
+
         while (ob_get_level() > 0) {
             ob_end_clean();
         }
-
-        // Si el archivo físico se encuentra en /mnt/media_library/, entregar directamente vía Nginx X-Accel-Redirect
-        if (str_starts_with($filePath, '/mnt/media_library/')) {
-            return $this->xAccelRedirectResponse($filePath);
-        }
-
-        $fileSize = (int) @filesize($filePath);
-        $extension = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
-        $mimeType = match ($extension) {
-            'mp4', 'm4v' => 'video/mp4',
-            'mkv' => 'video/x-matroska',
-            'webm' => 'video/webm',
-            'avi' => 'video/x-msvideo',
-            default => ($this->mimeTypes[$extension] ?? 'video/mp4'),
-        };
 
         // Manejo de preflight OPTIONS
         if ($request->isMethod('OPTIONS')) {
@@ -792,97 +786,135 @@ class MediaStreamController extends Controller
             ]);
         }
 
-        $start = 0;
-        $end = $fileSize > 0 ? $fileSize - 1 : 0;
-        $status = 200;
-        $httpRange = $request->header('Range') ?: $request->server('HTTP_RANGE');
-
-        if ($httpRange && preg_match('/bytes=\s*(\d*)-(\d*)/i', $httpRange, $matches)) {
-            $rangeStart = $matches[1];
-            $rangeEnd = $matches[2];
-
-            if ($rangeStart === '' && $rangeEnd !== '') {
-                // bytes=-500 -> últimos 500 bytes
-                $start = max(0, $fileSize - (int) $rangeEnd);
-                $end = $fileSize - 1;
-            } elseif ($rangeStart !== '' && $rangeEnd === '') {
-                // bytes=500- -> desde byte 500 hasta el final
-                $start = (int) $rangeStart;
-                $end = $fileSize - 1;
-            } elseif ($rangeStart !== '' && $rangeEnd !== '') {
-                // bytes=500-1000
-                $start = (int) $rangeStart;
-                $end = (int) $rangeEnd;
-            }
-
-            // Validar límites
-            if ($start > $end || $start >= $fileSize) {
-                return response('', 416, [
-                    'Content-Range' => "bytes */{$fileSize}",
-                    'Accept-Ranges' => 'bytes',
-                    'Access-Control-Allow-Origin' => '*',
-                ]);
-            }
-
-            $end = min($end, $fileSize - 1);
-            $status = 206; // Partial Content
+        if (!file_exists($filePath) || is_dir($filePath)) {
+            return response()->json(['error' => 'Archivo físico no encontrado en el servidor.'], 404);
         }
 
-        $length = ($fileSize > 0) ? ($end - $start + 1) : 0;
+        $extension = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
 
-        $headers = [
-            'Content-Type' => $mimeType,
-            'Content-Length' => (string) $length,
+        // 4. Si el archivo es .avi (que ningún navegador reproduce nativamente) y ffmpeg está disponible en el contenedor,
+        // haz streaming al vuelo con ffmpeg -i "$filePath" -c:v libx264 -preset ultrafast -c:a aac -f mp4 -movflags frag_keyframe+empty_moov+default_base_moof pipe:1
+        if ($extension === 'avi' && $this->isFfmpegAvailable()) {
+            return $this->streamAviWithFfmpeg($request, $filePath);
+        }
+
+        // Determinar tipo de contenido:
+        // Enviando Content-Type: video/mp4 también para .mkv H264 permite que Chrome/Brave reproduzca el contenedor Matroska directamente.
+        $contentType = ($extension === 'webm') ? 'video/webm' : 'video/mp4';
+
+        // Solicitudes HEAD: responder de inmediato con cabeceras correctas sin leer el cuerpo
+        if ($request->isMethod('HEAD')) {
+            $fileSize = (int) @filesize($filePath);
+            return response('', 200, [
+                'Content-Type' => $contentType,
+                'Content-Length' => (string) $fileSize,
+                'Accept-Ranges' => 'bytes',
+                'Access-Control-Allow-Origin' => '*',
+                'Access-Control-Allow-Methods' => 'GET, HEAD, OPTIONS',
+                'Access-Control-Allow-Headers' => 'Range, Origin, Accept, Content-Type, Authorization, X-Requested-With',
+                'Access-Control-Expose-Headers' => 'Content-Length, Content-Range, Accept-Ranges',
+                'Cache-Control' => 'no-cache, private',
+            ]);
+        }
+
+        // 3. Si el archivo es .mp4, .m4v o .webm (o .mkv cuando se pide Range),
+        // sirve el archivo mediante BinaryFileResponse nativo de Symfony/Laravel:
+        return response()->file($filePath, [
+            'Content-Type' => $contentType,
             'Accept-Ranges' => 'bytes',
-            'Cache-Control' => 'no-cache, private',
-            'X-Accel-Buffering' => 'no',
             'Access-Control-Allow-Origin' => '*',
             'Access-Control-Allow-Methods' => 'GET, HEAD, OPTIONS',
             'Access-Control-Allow-Headers' => 'Range, Origin, Accept, Content-Type, Authorization, X-Requested-With',
             'Access-Control-Expose-Headers' => 'Content-Length, Content-Range, Accept-Ranges',
+            'Cache-Control' => 'no-cache, private',
+        ]);
+    }
+
+    /**
+     * Streaming al vuelo para archivos .avi incompatibles con navegadores usando FFmpeg hacia MP4 fragmentado.
+     */
+    protected function streamAviWithFfmpeg(Request $request, string $filePath)
+    {
+        session_write_close();
+        set_time_limit(0);
+
+        if ($request->isMethod('OPTIONS')) {
+            return response('', 204, [
+                'Access-Control-Allow-Origin' => '*',
+                'Access-Control-Allow-Methods' => 'GET, HEAD, OPTIONS',
+                'Access-Control-Allow-Headers' => 'Range, Origin, Accept, Content-Type, Authorization, X-Requested-With',
+                'Access-Control-Max-Age' => '86400',
+            ]);
+        }
+
+        $headers = [
+            'Content-Type' => 'video/mp4',
+            'Accept-Ranges' => 'none',
+            'Access-Control-Allow-Origin' => '*',
+            'Access-Control-Allow-Methods' => 'GET, HEAD, OPTIONS',
+            'Access-Control-Allow-Headers' => 'Range, Origin, Accept, Content-Type, Authorization, X-Requested-With',
+            'Cache-Control' => 'no-cache, no-store, must-revalidate',
+            'X-Accel-Buffering' => 'no',
         ];
 
-        if ($status === 206) {
-            $headers['Content-Range'] = "bytes {$start}-{$end}/{$fileSize}";
-        }
-
-        // Si es solicitud HEAD, responder únicamente con los encabezados
         if ($request->isMethod('HEAD')) {
-            return response('', $status, $headers);
+            return response('', 200, $headers);
         }
 
-        // Streaming de fragmento mediante StreamedResponse sin agotar memoria RAM
-        return new StreamedResponse(function () use ($filePath, $start, $length) {
+        return new StreamedResponse(function () use ($filePath) {
             while (ob_get_level() > 0) {
                 ob_end_clean();
             }
 
-            $fp = @fopen($filePath, 'rb');
-            if (!$fp) {
+            $escapedPath = escapeshellarg($filePath);
+            $cmd = "ffmpeg -hide_banner -loglevel error -i {$escapedPath} -c:v libx264 -preset ultrafast -c:a aac -f mp4 -movflags frag_keyframe+empty_moov+default_base_moof pipe:1";
+
+            $descriptors = [
+                0 => ['pipe', 'r'],
+                1 => ['pipe', 'w'],
+                2 => ['pipe', 'w'],
+            ];
+
+            $process = @proc_open($cmd, $descriptors, $pipes);
+
+            if (!is_resource($process)) {
                 return;
             }
 
-            if ($start > 0) {
-                fseek($fp, $start);
-            }
+            @fclose($pipes[0]);
+            @fclose($pipes[2]);
 
-            $chunkSize = 256 * 1024; // 256 KB por iteración
-            $bytesRemaining = $length;
+            $stdout = $pipes[1];
+            $chunkSize = 64 * 1024;
 
-            while ($bytesRemaining > 0 && !feof($fp) && !connection_aborted()) {
-                $readLength = min($chunkSize, $bytesRemaining);
-                $buffer = fread($fp, $readLength);
+            while (!feof($stdout) && !connection_aborted()) {
+                $buffer = fread($stdout, $chunkSize);
                 if ($buffer === false || $buffer === '') {
                     break;
                 }
-
                 echo $buffer;
                 flush();
-                $bytesRemaining -= strlen($buffer);
             }
 
-            fclose($fp);
-        }, $status, $headers);
+            @fclose($stdout);
+            @proc_terminate($process);
+            @proc_close($process);
+        }, 200, $headers);
+    }
+
+    /**
+     * Comprobar si el binario de ffmpeg está disponible en el entorno del contenedor.
+     */
+    protected function isFfmpegAvailable(): bool
+    {
+        if (function_exists('exec')) {
+            $which = PHP_OS_FAMILY === 'Windows' ? 'where' : 'which';
+            $res = @shell_exec("{$which} ffmpeg");
+            if (!empty(trim((string) $res))) {
+                return true;
+            }
+        }
+        return file_exists('/usr/bin/ffmpeg') || file_exists('/usr/local/bin/ffmpeg');
     }
 
     /**
