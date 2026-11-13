@@ -34,7 +34,6 @@ class TitleController extends Controller
 
         // Búsqueda reactiva en tiempo real por término (rápida y ligera)
         if ($searchQuery !== '') {
-            $integrityService = app(MediaIntegrityService::class);
             $matched = Title::select([
                 'id', 'name', 'slug', 'type', 'provider', 'description',
                 'poster_url', 'backdrop_url', 'release_year', 'genre',
@@ -49,35 +48,25 @@ class TitleController extends Controller
             ->take(60)
             ->get();
 
-            // Auto-verificación de integridad física en resultados de búsqueda
-            $validMatched = $matched->filter(function ($title) use ($integrityService) {
-                return $integrityService->verifyOrPurgeTitle($title);
-            })->values();
-
             return response()->json([
                 'status' => 'success',
-                'data' => $validMatched,
-                'results' => $validMatched,
-                'total_titles' => $validMatched->count(),
+                'data' => $matched,
+                'results' => $matched,
+                'total_titles' => $matched->count(),
             ]);
         }
 
         // Cachear las respuestas de /api/titles y /api/home (1 hora) usando caché optimizado
         $baseData = Cache::remember('catalog_home_base', 3600, function () {
-            $integrityService = app(MediaIntegrityService::class);
             // Cargar títulos ligeros sin relaciones anidadas pesadas para el catálogo principal
-            $rawTitles = Title::select([
+            $allTitles = Title::select([
                 'id', 'name', 'slug', 'type', 'provider', 'description',
                 'poster_url', 'backdrop_url', 'release_year', 'genre',
                 'is_featured', 'stream_path', 'file_path', 'source_type', 'duration_seconds', 'category_id', 'created_at'
             ])
+            ->withCount('seasons')
             ->orderBy('created_at', 'desc')
             ->get();
-
-            // Filtrar y auto-purgar contenidos locales cuyo archivo ya no exista en disco
-            $allTitles = $rawTitles->filter(function ($t) use ($integrityService) {
-                return $integrityService->verifyOrPurgeTitle($t);
-            })->values();
 
             if ($allTitles->isEmpty()) {
                 return [

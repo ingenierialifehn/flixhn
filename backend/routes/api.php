@@ -83,6 +83,7 @@ Route::match(['delete', 'post'], '/livetv/active-encoding', [LiveTvController::c
 
 // Catálogo público unificado y endpoints de integridad
 Route::get('/media', [TitleController::class, 'index']);
+Route::get('/catalog', [TitleController::class, 'index']);
 Route::get('/media/{id}', [TitleController::class, 'show']);
 
 // Streaming directo HTTP 206 y carátulas locales (sin depender de Emby)
@@ -116,6 +117,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // CatÃ¡logo de Video y Streaming
     Route::get('/titles', [TitleController::class, 'index']);
+    Route::get('/catalog', [TitleController::class, 'index']);
     Route::get('/titles/active-downloads', [TitleController::class, 'activeDownloads']);
     Route::get('/home', [TitleController::class, 'index']);
     Route::get('/browse', [TitleController::class, 'index']);
@@ -165,6 +167,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/network-settings', [NetworkSettingController::class, 'updateSettings']);
         Route::get('/local-storage/status', [NetworkSettingController::class, 'localStorageStatus']);
         Route::post('/media/scan-local', [AdminTitleController::class, 'scanLocalMedia']);
+        Route::post('/media/sync-posters', [AdminTitleController::class, 'syncPosters']);
 
         // ParÃ¡metros y Motor de TranscodificaciÃ³n / Mapeo de Tonos
         Route::get('/transcoding', [TranscodingSettingController::class, 'index']);

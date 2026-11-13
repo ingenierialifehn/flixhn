@@ -449,6 +449,7 @@ class LocalMediaScannerService
 
     /**
      * Busca imágenes locales (poster, folder, cover, backdrop, fanart) en la carpeta dada.
+     * Soporta todas las variantes de nombres generadas por Emby, Jellyfin, Kodi y archivos locales.
      * Retorna un arreglo asociativo con ['poster' => '/api/media/local-image?path=...', 'backdrop' => ...]
      */
     public function findLocalArtwork(string $dirPath, string $baseFileName = ''): array
@@ -465,13 +466,22 @@ class LocalMediaScannerService
 
         $imageExtensions = ['jpg', 'jpeg', 'png', 'webp'];
 
-        // Candidatos prioritarios de poster
-        $posterNames = ['poster', 'folder', 'cover'];
+        // 1. Nombres canónicos prioritarios de poster según estándar Emby / Jellyfin / Kodi
+        $posterNames = [
+            'poster',
+            'folder',
+            'cover',
+            'default',
+            'movie',
+            'season-all-poster',
+        ];
+
         if (!empty($baseFileName)) {
             $baseClean = pathinfo($baseFileName, PATHINFO_FILENAME);
-            $posterNames[] = $baseClean;
             $posterNames[] = "{$baseClean}-poster";
             $posterNames[] = "{$baseClean}-cover";
+            $posterNames[] = "{$baseClean}_poster";
+            $posterNames[] = $baseClean;
         }
 
         // Candidatos prioritarios de backdrop / fanart
@@ -480,6 +490,8 @@ class LocalMediaScannerService
             $baseClean = pathinfo($baseFileName, PATHINFO_FILENAME);
             $backdropNames[] = "{$baseClean}-fanart";
             $backdropNames[] = "{$baseClean}-backdrop";
+            $backdropNames[] = "{$baseClean}_fanart";
+            $backdropNames[] = "{$baseClean}_backdrop";
             $backdropNames[] = "{$baseClean}-thumb";
         }
 
@@ -487,18 +499,18 @@ class LocalMediaScannerService
         $entries = @scandir($normalizedDir) ?: [];
         $filesLower = [];
         foreach ($entries as $e) {
-            if ($e !== '.' && $e !== '..') {
+            if ($e !== '.' && $e !== '..' && is_file("{$normalizedDir}/{$e}")) {
                 $filesLower[strtolower($e)] = $e;
             }
         }
 
-        // 1. Buscar poster
+        // 1. Buscar poster por nombres exactos estándar
         foreach ($posterNames as $name) {
             foreach ($imageExtensions as $ext) {
                 $target = strtolower("{$name}.{$ext}");
                 if (isset($filesLower[$target])) {
                     $cand = "{$normalizedDir}/" . $filesLower[$target];
-                    if (@filesize($cand) > 500) {
+                    if (@filesize($cand) > 100) {
                         $result['poster'] = '/api/media/local-image?path=' . urlencode($cand);
                         break 2;
                     }
@@ -506,13 +518,30 @@ class LocalMediaScannerService
             }
         }
 
-        // 2. Buscar backdrop
+        // 2. Si no se encontró poster exacto, buscar cualquier *-poster.ext (ej. NombrePelicula-poster.jpg)
+        if (!$result['poster']) {
+            foreach ($filesLower as $fileNameLower => $actualFileName) {
+                $ext = strtolower(pathinfo($fileNameLower, PATHINFO_EXTENSION));
+                if (in_array($ext, $imageExtensions)) {
+                    $fnWithoutExt = pathinfo($fileNameLower, PATHINFO_FILENAME);
+                    if (str_ends_with($fnWithoutExt, '-poster') || str_ends_with($fnWithoutExt, '_poster')) {
+                        $cand = "{$normalizedDir}/{$actualFileName}";
+                        if (@filesize($cand) > 100) {
+                            $result['poster'] = '/api/media/local-image?path=' . urlencode($cand);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Buscar backdrop por nombres exactos estándar
         foreach ($backdropNames as $name) {
             foreach ($imageExtensions as $ext) {
                 $target = strtolower("{$name}.{$ext}");
                 if (isset($filesLower[$target])) {
                     $cand = "{$normalizedDir}/" . $filesLower[$target];
-                    if (@filesize($cand) > 500) {
+                    if (@filesize($cand) > 100) {
                         $result['backdrop'] = '/api/media/local-image?path=' . urlencode($cand);
                         break 2;
                     }
@@ -520,16 +549,60 @@ class LocalMediaScannerService
             }
         }
 
-        // 3. Fallback: Cualquier imagen (.jpg, .jpeg, .png, .webp) encontrada en la carpeta
+        // 4. Si no se encontró backdrop exacto, buscar archivos que contengan *backdrop* o *fanart*
+        if (!$result['backdrop']) {
+            foreach ($filesLower as $fileNameLower => $actualFileName) {
+                $ext = strtolower(pathinfo($fileNameLower, PATHINFO_EXTENSION));
+                if (in_array($ext, $imageExtensions)) {
+                    if (str_contains($fileNameLower, 'backdrop') || str_contains($fileNameLower, 'fanart')) {
+                        $cand = "{$normalizedDir}/{$actualFileName}";
+                        if (@filesize($cand) > 100) {
+                            $result['backdrop'] = '/api/media/local-image?path=' . urlencode($cand);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 5. Fallback: Cualquier primer archivo (.jpg, .jpeg, .png, .webp) que exista en la carpeta
+        // (excluyendo *backdrop*, *fanart*, *logo*, *thumb* para el póster, y usando *backdrop* o *fanart* para backdrop_url)
         if (!$result['poster']) {
             foreach ($filesLower as $fileNameLower => $actualFileName) {
-                $ext = pathinfo($fileNameLower, PATHINFO_EXTENSION);
+                $ext = strtolower(pathinfo($fileNameLower, PATHINFO_EXTENSION));
                 if (in_array($ext, $imageExtensions)) {
-                    $cand = "{$normalizedDir}/{$actualFileName}";
-                    if (@filesize($cand) > 500) {
-                        $result['poster'] = '/api/media/local-image?path=' . urlencode($cand);
+                    $isBackdropOrFanart = str_contains($fileNameLower, 'backdrop') || str_contains($fileNameLower, 'fanart');
+                    $isExcludedFromPoster = $isBackdropOrFanart || str_contains($fileNameLower, 'logo') || str_contains($fileNameLower, 'thumb');
+
+                    if ($isBackdropOrFanart && !$result['backdrop']) {
+                        $cand = "{$normalizedDir}/{$actualFileName}";
+                        if (@filesize($cand) > 100) {
+                            $result['backdrop'] = '/api/media/local-image?path=' . urlencode($cand);
+                        }
+                    }
+
+                    if (!$isExcludedFromPoster) {
+                        $cand = "{$normalizedDir}/{$actualFileName}";
+                        if (@filesize($cand) > 100) {
+                            $result['poster'] = '/api/media/local-image?path=' . urlencode($cand);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 6. Si es carpeta de serie y no hay carátula directa, explorar subcarpetas inmediatas (Season 1, etc.)
+        if (!$result['poster']) {
+            foreach ($entries as $sub) {
+                if ($sub === '.' || $sub === '..') continue;
+                $subPath = "{$normalizedDir}/{$sub}";
+                if (is_dir($subPath) && !$this->isIgnoredDir($sub)) {
+                    $subArt = $this->findLocalArtwork($subPath);
+                    if (!empty($subArt['poster'])) {
+                        $result['poster'] = $subArt['poster'];
                         if (!$result['backdrop']) {
-                            $result['backdrop'] = $result['poster'];
+                            $result['backdrop'] = $subArt['backdrop'] ?: $subArt['poster'];
                         }
                         break;
                     }
@@ -537,7 +610,7 @@ class LocalMediaScannerService
             }
         }
 
-        // Si hay poster pero no backdrop, usar el poster como backdrop y viceversa
+        // 7. Si hay poster pero no backdrop, usar el poster como backdrop y viceversa
         if ($result['poster'] && !$result['backdrop']) {
             $result['backdrop'] = $result['poster'];
         } elseif (!$result['poster'] && $result['backdrop']) {
@@ -545,6 +618,115 @@ class LocalMediaScannerService
         }
 
         return $result;
+    }
+
+    /**
+     * Sincroniza rápidamente las carátulas (poster_url y backdrop_url) de películas y series locales
+     * en /mnt/media_library/Disk2..Disk7 sin re-escanear todo el árbol de archivos.
+     */
+    public function syncPosters(?\Closure $progressCallback = null): array
+    {
+        $stats = [
+            'updated_movies' => 0,
+            'updated_series' => 0,
+            'not_found' => 0,
+            'total' => 0,
+        ];
+
+        $titles = Title::all();
+        $stats['total'] = $titles->count();
+
+        foreach ($titles as $title) {
+            $isSeries = $title->type === 'series';
+            $dirPath = null;
+            $fileName = '';
+
+            if ($isSeries) {
+                if (!empty($title->source_path) && is_dir($title->source_path)) {
+                    $dirPath = $title->source_path;
+                } else {
+                    $ep = Episode::where('title_id', $title->id)->whereNotNull('file_path')->first();
+                    if ($ep && !empty($ep->file_path)) {
+                        $epPath = str_replace('\\', '/', $ep->file_path);
+                        $parts = explode('/', $epPath);
+                        for ($i = count($parts) - 2; $i >= 0; $i--) {
+                            $part = $parts[$i];
+                            if (preg_match('/^(temporada|season|\bdisk\d+\b|series|anime)/i', $part)) {
+                                continue;
+                            }
+                            $dirPath = implode('/', array_slice($parts, 0, $i + 1));
+                            break;
+                        }
+                    }
+                }
+            } else {
+                $filePath = $title->source_path ?: $title->file_path;
+                if (empty($filePath) && !empty($title->stream_path) && !str_starts_with($title->stream_path, '/api/')) {
+                    $filePath = $title->stream_path;
+                }
+
+                if (!empty($filePath)) {
+                    $filePath = str_replace('\\', '/', $filePath);
+                    $dirPath = is_dir($filePath) ? $filePath : dirname($filePath);
+                    $fileName = is_file($filePath) ? basename($filePath) : '';
+                }
+            }
+
+            if (!$dirPath || !is_dir($dirPath)) {
+                $stats['not_found']++;
+                if ($progressCallback) {
+                    $progressCallback($title, null, false);
+                }
+                continue;
+            }
+
+            $art = $this->findLocalArtwork($dirPath, $fileName);
+
+            $hasNewPoster = !empty($art['poster']) && $art['poster'] !== $title->poster_url;
+            $hasNewBackdrop = !empty($art['backdrop']) && $art['backdrop'] !== $title->backdrop_url;
+
+            if ($hasNewPoster || $hasNewBackdrop) {
+                $updates = [];
+                if (!empty($art['poster'])) {
+                    $updates['poster_url'] = $art['poster'];
+                }
+                if (!empty($art['backdrop'])) {
+                    $updates['backdrop_url'] = $art['backdrop'];
+                }
+
+                $title->update($updates);
+
+                if (\Illuminate\Support\Facades\Schema::hasTable('media_items')) {
+                    MediaItem::where('title_id', $title->id)->update([
+                        'poster_url' => $title->poster_url,
+                        'backdrop_url' => $title->backdrop_url,
+                    ]);
+                }
+
+                if ($isSeries) {
+                    $stats['updated_series']++;
+                } else {
+                    $stats['updated_movies']++;
+                }
+
+                if ($progressCallback) {
+                    $progressCallback($title, $art['poster'], true);
+                }
+            } else {
+                if ($progressCallback) {
+                    $progressCallback($title, $title->poster_url, false);
+                }
+            }
+        }
+
+        // Limpiar cachés del catálogo inmediatamente
+        \Illuminate\Support\Facades\Cache::forget('catalog_home_base');
+        \Illuminate\Support\Facades\Cache::forget('catalog_home_kids');
+        \Illuminate\Support\Facades\Cache::forget('catalog_home');
+        \Illuminate\Support\Facades\Cache::forget('titles_all');
+        \Illuminate\Support\Facades\Cache::forget('catalog_all');
+
+        return $stats;
     }
 
     /**

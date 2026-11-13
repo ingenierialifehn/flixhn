@@ -159,7 +159,7 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
   }, [title?.id, currentEpisode?.id, onBack, onClose]);
 
   // Token de autorización del servidor para autorizar streams y fragmentos .ts (Punto 2)
-  const apiKey = React.useMemo(() => {
+  const apiKey = useMemo(() => {
     if (currentEpisode?.api_key) return currentEpisode.api_key;
     if (title?.api_key) return title.api_key;
     const raw = currentEpisode
@@ -183,7 +183,7 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
   }, [apiKey]);
 
   // Lista plana ordenada de episodios para navegación sencilla, excluyendo trailers o capítulos con 0 (Puntos 3 y 4)
-  const allEpisodes = React.useMemo(() => {
+  const allEpisodes = useMemo(() => {
     if (!fullSeriesData?.seasons) return currentEpisode ? [currentEpisode] : [];
     const list = [];
     const sortedSeasons = [...fullSeriesData.seasons].sort((a, b) => (a.season_number || 1) - (b.season_number || 1));
@@ -208,7 +208,7 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
   }, [fullSeriesData, currentEpisode]);
 
   // Encontrar el siguiente episodio si existe
-  const nextEpisode = React.useMemo(() => {
+  const nextEpisode = useMemo(() => {
     if (!currentEpisode || allEpisodes.length <= 1) return null;
     const currentIndex = allEpisodes.findIndex((e) => e.id === currentEpisode.id);
     if (currentIndex !== -1 && currentIndex < allEpisodes.length - 1) {
@@ -232,7 +232,7 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
   );
 
   // Extraer el ID de ítem del servidor de medios (Emby Item ID)
-  const targetItemId = React.useMemo(() => {
+  const targetItemId = useMemo(() => {
     if (isDownloadedOtt) return null;
 
     if (currentEpisode) {
@@ -258,7 +258,7 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
     return null;
   }, [title, currentEpisode, isDownloadedOtt]);
 
-  const serverHost = React.useMemo(() => {
+  const serverHost = useMemo(() => {
     if (rawStreamPath && rawStreamPath.startsWith('http')) {
       try {
         const parsed = new URL(rawStreamPath);
@@ -275,7 +275,7 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
   const ottStreamUrl = activeMedia?.id ? `${API_BASE_URL}/api/media/${activeMedia.id}/stream` : '';
 
   // Resolución de URL de video: valida si el item posee emby_id antes de construir URL de Emby
-  const streamUrl = React.useMemo(() => {
+  const streamUrl = useMemo(() => {
     const media = currentEpisode || title;
     if (!media) return '';
 
@@ -1057,7 +1057,7 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
 
   // Texto central: Título + T[X] E[Y] - Nombre del Episodio
   const episodeLabel = currentEpisode
-    ? `T${currentEpisode.season_number || 1} E${currentEpisode.episode_number || 1} - ${currentEpisode.title}`
+    ? `T${currentEpisode.season_number || 1} E${currentEpisode.episode_number || 1} - ${currentEpisode.title || currentEpisode.name || ''}`
     : null;
 
   return (

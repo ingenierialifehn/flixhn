@@ -12,24 +12,16 @@ const appRoot = isContainer ? '/app' : __dirname;
 
 export default defineConfig({
   root: appRoot,
-  cacheDir: isContainer ? '/app/node_modules/.vite' : path.resolve(__dirname, 'node_modules/.vite'),
+  cacheDir: '/tmp/.vite',
   resolve: {
-    dedupe: ['react', 'react-dom', 'react/jsx-runtime', 'react/jsx-dev-runtime', 'lucide-react'],
+    dedupe: ['react', 'react-dom', 'react/jsx-runtime', 'react/jsx-dev-runtime'],
     alias: isContainer
       ? {
-          react: '/app/node_modules/react',
-          'react-dom': '/app/node_modules/react-dom',
-          'react/jsx-runtime': '/app/node_modules/react/jsx-runtime',
-          'react/jsx-dev-runtime': '/app/node_modules/react/jsx-dev-runtime',
           '@': '/app/src',
           '@api': '/app/src/api',
           '@services': '/app/src/services',
         }
       : {
-          react: path.resolve(__dirname, 'node_modules/react'),
-          'react-dom': path.resolve(__dirname, 'node_modules/react-dom'),
-          'react/jsx-runtime': path.resolve(__dirname, 'node_modules/react/jsx-runtime'),
-          'react/jsx-dev-runtime': path.resolve(__dirname, 'node_modules/react/jsx-dev-runtime'),
           '@': path.resolve(__dirname, './src'),
           '@api': path.resolve(__dirname, './src/api'),
           '@services': path.resolve(__dirname, './src/services'),
@@ -50,7 +42,16 @@ export default defineConfig({
   ],
   optimizeDeps: {
     force: true,
-    include: ['react', 'react-dom', 'react/jsx-runtime', 'react/jsx-dev-runtime', 'lucide-react', 'hls.js'],
+    include: [
+      'react',
+      'react-dom',
+      'react/jsx-runtime',
+      'react/jsx-dev-runtime',
+      'react-router-dom',
+      'lucide-react',
+      'axios',
+      'hls.js',
+    ],
     exclude: ['mpegts.js'],
   },
   server: {

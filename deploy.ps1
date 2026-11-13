@@ -1,4 +1,4 @@
-param (
+﻿param (
     [string]$CommitMessage = "deploy: auto update flixhn to PowerEdge R720 (65.187.110.22)"
 )
 
@@ -36,6 +36,7 @@ $RemoteCommands = @(
     "docker exec flixhn_backend php artisan view:clear",
     "docker exec flixhn_backend php artisan cache:clear",
     "docker exec flixhn_backend php artisan config:clear",
+    "docker exec flixhn_backend php artisan media:sync-posters 2>/dev/null || true",
 
     # 3. Reiniciar servicios y asegurar conectividad de red con Nginx
     "docker restart flixhn_frontend flixhn_backend",

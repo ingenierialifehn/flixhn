@@ -417,6 +417,36 @@ class AdminTitleController extends Controller
     }
 
     /**
+     * Sincronizar carátulas locales de películas y series en segundo plano o bajo demanda.
+     * POST /api/admin/media/sync-posters
+     */
+    public function syncPosters(Request $request, \App\Services\LocalMediaScannerService $scanner): JsonResponse
+    {
+        set_time_limit(0);
+        ini_set('max_execution_time', '0');
+        ini_set('memory_limit', '1024M');
+        @ignore_user_abort(true);
+
+        try {
+            $stats = $scanner->syncPosters();
+
+            return response()->json([
+                'success' => true,
+                'status' => 'success',
+                'message' => "Sincronización de carátulas finalizada: {$stats['updated_movies']} películas y {$stats['updated_series']} series actualizadas.",
+                'stats' => $stats,
+            ]);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('AdminTitleController::syncPosters Error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'status' => 'error',
+                'message' => 'Error durante la sincronización de carátulas: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
      * Sincronizar con el servidor de medios remoto.
      * POST /api/admin/sync-emby (mantenido por retrocompatibilidad)
      */
