@@ -55,6 +55,12 @@ function obtenerMpegTs() {
 
 // Detectar si la URL es flujo TS directo o si HLS.js falló por formato de contenedor
 async function iniciarConMpegTs(url, video, onSuccess, onError) {
+  if (!url || url.includes('.m3u8') || url.includes('/master') || url.includes('/Videos/')) {
+    if (typeof onError === 'function') {
+      onError('Formato de manifiesto HLS (.m3u8) incompatible con motor MPEG-TS.');
+    }
+    return null;
+  }
   const mpegts = await obtenerMpegTs();
   if (!video || !mpegts || !mpegts.getFeatureList?.()?.mseLivePlayback) {
     if (typeof onError === 'function') {
@@ -458,9 +464,11 @@ export default function LiveTvPlayer({
             AutoOpenLiveStream: true,
             EnableDirectPlay: false,
             EnableDirectStream: false,
-            EnableAutoStreamCopy: false,
-            AllowVideoStreamCopy: false,
-            AllowAudioStreamCopy: false,
+            EnableAutoStreamCopy: 'false',
+            AllowVideoStreamCopy: 'false',
+            AllowAudioStreamCopy: 'false',
+            MaxAudioChannels: '2',
+            VideoBitrate: '8000000',
           }),
         });
 

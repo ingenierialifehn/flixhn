@@ -1,20 +1,20 @@
 import './fs-shim.js';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const appDir = '/app';
 
 export default defineConfig({
+  root: appDir,
   resolve: {
     dedupe: ['react', 'react-dom', 'react/jsx-runtime', 'react/jsx-dev-runtime'],
     alias: {
-      react: path.resolve(__dirname, 'node_modules/react'),
-      'react-dom': path.resolve(__dirname, 'node_modules/react-dom'),
-      '@': path.resolve(__dirname, './src'),
-      '@api': path.resolve(__dirname, './src/api'),
-      '@services': path.resolve(__dirname, './src/services'),
+      react: path.resolve(appDir, 'node_modules/react'),
+      'react-dom': path.resolve(appDir, 'node_modules/react-dom'),
+      '@': path.resolve(appDir, './src'),
+      '@api': path.resolve(appDir, './src/api'),
+      '@services': path.resolve(appDir, './src/services'),
     },
     extensions: ['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json'],
   },
