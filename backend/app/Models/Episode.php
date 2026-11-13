@@ -33,6 +33,7 @@ class Episode extends Model
         'is_locked',
         'locked_fields',
         'file_path',
+        'source_path',
         'source_type',
     ];
 
@@ -41,14 +42,47 @@ class Episode extends Model
         'emby_id',
     ];
 
+    public function getStreamPathAttribute(?string $value): ?string
+    {
+        if ($this->id) {
+            $filePath = $this->attributes['file_path'] ?? null;
+            $sourcePath = $this->attributes['source_path'] ?? null;
+            $isLocal = ($this->attributes['source_type'] ?? 'local') === 'local'
+                || !empty($filePath)
+                || !empty($sourcePath)
+                || ($value && (str_starts_with($value, '/mnt/') || str_starts_with($value, '/storage/') || str_starts_with($value, 'storage/') || str_starts_with($value, '/api/stream/')));
+
+            if ($isLocal && !str_contains((string) $value, '/Videos/')) {
+                return "/api/stream/episode/{$this->id}";
+            }
+        }
+        return $value;
+    }
+
     public function getStreamUrlAttribute(): ?string
     {
-        $path = $this->attributes['stream_path'] ?? $this->attributes['file_path'] ?? null;
+        $filePath = $this->attributes['file_path'] ?? null;
+        $sourcePath = $this->attributes['source_path'] ?? null;
+        $streamPath = $this->attributes['stream_path'] ?? null;
+        $path = $streamPath ?? $filePath ?? $sourcePath ?? null;
         if (!$path) return null;
 
-        // Si es archivo local directo
-        if ($this->id && (($this->attributes['source_type'] ?? null) === 'local' || !empty($this->attributes['file_path']) || str_starts_with($path, '/') || str_starts_with($path, 'storage/') || preg_match('/^[a-zA-Z]:/', $path))) {
-            return "/api/episodes/{$this->id}/stream";
+        // Si es archivo local directo, devolver el endpoint nativo de streaming de FlixHN
+        if ($this->id) {
+            $isLocal = ($this->attributes['source_type'] ?? 'local') === 'local'
+                || !empty($filePath)
+                || !empty($sourcePath)
+                || str_starts_with($path, '/mnt/')
+                || str_starts_with($path, '/storage/')
+                || str_starts_with($path, 'storage/')
+                || preg_match('/^[a-zA-Z]:/', $path)
+                || str_starts_with($path, '/api/stream/')
+                || str_starts_with($path, '/api/episodes/')
+                || str_starts_with($path, '/api/media/');
+
+            if ($isLocal && !str_contains($path, '/Videos/')) {
+                return "/api/stream/episode/{$this->id}";
+            }
         }
 
         // Normalización para URLs remotas de Emby Server
@@ -84,7 +118,7 @@ class Episode extends Model
         }
 
         if ($this->id && (str_starts_with($path, '/') || str_starts_with($path, 'storage/') || preg_match('/^[a-zA-Z]:/', $path))) {
-            return "/api/episodes/{$this->id}/stream";
+            return "/api/stream/episode/{$this->id}";
         }
 
         return $path;
@@ -92,7 +126,7 @@ class Episode extends Model
 
     public function getThumbnailUrlAttribute(?string $value): ?string
     {
-        if (empty($value) || str_contains($value, '45.4.87.126:6789')) {
+        if (empty($value) || str_contains($value, '45.4.87.126') || str_ends_with($value, 'index.jpeg') || str_ends_with($value, 'index2.jpeg')) {
             return '/placeholder-poster.png';
         }
         return $value;

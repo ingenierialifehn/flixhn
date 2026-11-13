@@ -242,9 +242,17 @@ class MediaStreamController extends Controller
             return $integrityService->goneResponse($title->id, $title->type ?? 'movie');
         }
 
-        $filePath = $title->source_path ?: $title->file_path ?: $title->stream_path;
-        if (!empty($filePath)) {
-            $resolved = $this->resolvePhysicalFilePath($filePath);
+        $candidates = array_filter([
+            $title->source_path,
+            $title->file_path,
+            $title->getRawOriginal('stream_path'),
+        ]);
+
+        foreach ($candidates as $candidate) {
+            if (empty($candidate) || str_starts_with($candidate, '/api/')) {
+                continue;
+            }
+            $resolved = $this->resolvePhysicalFilePath($candidate);
             if ($resolved && file_exists($resolved) && !is_dir($resolved) && @filesize($resolved) > 1024) {
                 return $this->serveStreamWithByteRange($request, $resolved);
             }
@@ -277,9 +285,17 @@ class MediaStreamController extends Controller
                 return $integrityService->goneResponse($episode->id, 'episode');
             }
 
-            $filePath = $episode->source_path ?: $episode->file_path ?: $episode->stream_path;
-            if (!empty($filePath)) {
-                $resolved = $this->resolvePhysicalFilePath($filePath);
+            $candidates = array_filter([
+                $episode->file_path,
+                $episode->source_path ?? null,
+                $episode->getRawOriginal('stream_path'),
+            ]);
+
+            foreach ($candidates as $candidate) {
+                if (empty($candidate) || str_starts_with($candidate, '/api/')) {
+                    continue;
+                }
+                $resolved = $this->resolvePhysicalFilePath($candidate);
                 if ($resolved && file_exists($resolved) && !is_dir($resolved) && @filesize($resolved) > 1024) {
                     return $this->serveStreamWithByteRange($request, $resolved);
                 }
@@ -657,6 +673,10 @@ class MediaStreamController extends Controller
 
     protected function serveStreamWithByteRange(Request $request, string $filePath)
     {
+        if (ob_get_level()) {
+            ob_end_clean();
+        }
+
         $fileSize = (int) @filesize($filePath);
         $extension = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
         $mimeType = match ($extension) {

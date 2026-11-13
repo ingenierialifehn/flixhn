@@ -26,17 +26,17 @@ class SyncLocalPostersCommand extends Command
      *
      * @var string
      */
-    protected $description = 'Busca y asocia carátulas locales (poster, folder, cover, *-poster, etc.) en /mnt/media_library/Disk2-7 para películas y series en MySQL';
+    protected $description = 'Extrae carátulas, fondos y sinopsis desde archivos .nfo y artwork local en /mnt/media_library/Disk2-7 para películas y series';
 
     /**
      * Ejecuta el comando de consola.
      */
     public function handle(LocalMediaScannerService $scanner): int
     {
-        $this->info('=====================================================');
-        $this->info(' FlixHN - Sincronizador Rápido de Carátulas Locales  ');
-        $this->info('=====================================================');
-        $this->comment('Escaneando carpetas de películas y series en /mnt/media_library/Disk2..Disk7...');
+        $this->info('========================================================================');
+        $this->info(' FlixHN - Sincronizador de Carátulas, Fondos y Sinopsis (.nfo / TMDb)  ');
+        $this->info('========================================================================');
+        $this->comment('Escaneando archivos .nfo homónimos y artwork en /mnt/media_library/Disk2..Disk7...');
 
         $startTime = microtime(true);
 

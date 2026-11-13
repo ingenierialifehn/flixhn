@@ -38,7 +38,7 @@ class MediaIntegrityService
      */
     public function doesPhysicalFileExist(?string $filePath): bool
     {
-        if (empty($filePath)) {
+        if (empty($filePath) || str_starts_with($filePath, '/api/') || str_starts_with($filePath, 'http://') || str_starts_with($filePath, 'https://')) {
             return false;
         }
 
@@ -152,8 +152,8 @@ class MediaIntegrityService
     {
         if ($title->type === 'movie') {
             if ($this->isLocalTitle($title)) {
-                $filePath = $title->source_path ?: $title->stream_path;
-                if (!$this->doesPhysicalFileExist($filePath)) {
+                $filePath = $title->source_path ?: $title->file_path;
+                if (!empty($filePath) && !$this->doesPhysicalFileExist($filePath)) {
                     Log::warning("MediaIntegrityService: Película física eliminada del disco [ID {$title->id}: {$title->name}]. Purgando de la base de datos.");
                     $this->purgeTitle($title);
                     return false;
@@ -169,9 +169,9 @@ class MediaIntegrityService
                 $validEpisodesCount = 0;
 
                 foreach ($episodes as $ep) {
-                    $epPath = $ep->file_path ?: $ep->stream_path;
+                    $epPath = $ep->file_path ?: ($ep->source_path ?? null);
                     if ($this->isLocalEpisode($ep)) {
-                        if (!$this->doesPhysicalFileExist($epPath)) {
+                        if (!empty($epPath) && !$this->doesPhysicalFileExist($epPath)) {
                             Log::warning("MediaIntegrityService: Episodio físico eliminado del disco [ID {$ep->id}: {$ep->title}]. Purgando episodio.");
                             $this->purgeEpisode($ep, false);
                             continue;
@@ -181,7 +181,7 @@ class MediaIntegrityService
                 }
 
                 // Si la serie se quedó sin episodios válidos, eliminar la serie completa
-                if ($validEpisodesCount === 0) {
+                if ($validEpisodesCount === 0 && $episodes->count() > 0) {
                     Log::warning("MediaIntegrityService: Serie huérfana sin episodios válidos en disco [ID {$title->id}: {$title->name}]. Purgando serie.");
                     $this->purgeTitle($title);
                     return false;
@@ -200,8 +200,8 @@ class MediaIntegrityService
     public function verifyOrPurgeEpisode(Episode $episode): bool
     {
         if ($this->isLocalEpisode($episode)) {
-            $epPath = $episode->file_path ?: $episode->stream_path;
-            if (!$this->doesPhysicalFileExist($epPath)) {
+            $epPath = $episode->file_path ?: ($episode->source_path ?? null);
+            if (!empty($epPath) && !$this->doesPhysicalFileExist($epPath)) {
                 Log::warning("MediaIntegrityService: Archivo de episodio no encontrado [ID {$episode->id}: {$episode->title}]. Purgando.");
                 $this->purgeEpisode($episode, true);
                 return false;

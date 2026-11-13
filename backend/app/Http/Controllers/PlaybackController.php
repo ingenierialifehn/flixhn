@@ -38,16 +38,16 @@ class PlaybackController extends Controller
 
         $sourceMode = \App\Models\ServerSetting::get('media_source_mode', 'local');
         $isLocalContent = ($sourceMode === 'local')
-            || ($title && (($title->source_type ?? 'local') === 'local' || !empty($title->file_path)))
-            || ($episode && (($episode->source_type ?? 'local') === 'local' || !empty($episode->file_path)));
+            || ($title && (($title->provider ?? 'local') === 'local' || ($title->source_type ?? null) === 'local' || !empty($title->source_path) || !empty($title->file_path)))
+            || ($episode && (($episode->source_type ?? 'local') === 'local' || !empty($episode->file_path) || !empty($episode->source_path)));
 
         // Si el contenido o el servidor está en modo local directo, servir sin contactar a Emby
         if ($isLocalContent && ($episode || $title)) {
             $activeModel = $episode ?: $title;
             $isEp = !empty($episode);
-            $streamRoute = $isEp ? "/api/episodes/{$activeModel->id}/stream" : "/api/media/{$activeModel->id}/stream";
+            $streamRoute = $isEp ? "/api/stream/episode/{$activeModel->id}" : "/api/stream/title/{$activeModel->id}";
             $directUrl = url($streamRoute);
-            $filePath = $activeModel->file_path ?: $activeModel->stream_path ?: ($activeModel->source_path ?? '');
+            $filePath = ($activeModel->source_path ?? null) ?: ($activeModel->file_path ?? null) ?: ($activeModel->stream_path ?? '');
             if (!$filePath && $title && $title->mediaItem) {
                 $filePath = $title->mediaItem->file_path;
             }
@@ -96,13 +96,14 @@ class PlaybackController extends Controller
         if (!$targetItemId) {
             $activeModel = $episode ?: $title;
             if ($activeModel) {
-                $mediaId = $activeModel->id;
-                $directUrl = url("/api/media/{$mediaId}/stream");
-                $filePath = $activeModel->stream_path ?: ($activeModel->file_path ?? '');
+                $isEp = !empty($episode);
+                $streamRoute = $isEp ? "/api/stream/episode/{$activeModel->id}" : "/api/stream/title/{$activeModel->id}";
+                $directUrl = url($streamRoute);
+                $filePath = ($activeModel->source_path ?? null) ?: ($activeModel->file_path ?? null) ?: ($activeModel->stream_path ?? '');
                 if (!$filePath && $title && $title->mediaItem) {
                     $filePath = $title->mediaItem->file_path;
                 }
-                $ext = strtolower(pathinfo($filePath, PATHINFO_EXTENSION) ?: 'mp4');
+                $ext = strtolower(pathinfo($filePath ?: 'video.mp4', PATHINFO_EXTENSION) ?: 'mp4');
                 $isHls = ($ext === 'm3u8');
                 $isDirect = in_array($ext, ['mp4', 'm4v', 'webm', 'mkv']) || !$isHls;
 

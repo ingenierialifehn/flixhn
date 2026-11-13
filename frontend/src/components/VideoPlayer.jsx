@@ -234,6 +234,15 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
   // Extraer el ID de ítem del servidor de medios (Emby Item ID)
   const targetItemId = useMemo(() => {
     if (isDownloadedOtt) return null;
+    const media = currentEpisode || title;
+    if (
+      media?.provider === 'local' ||
+      media?.source_type === 'local' ||
+      (media?.source_path && (media.source_path.startsWith('/mnt/') || media.source_path.startsWith('/storage/'))) ||
+      (media?.file_path && (media.file_path.startsWith('/mnt/') || media.file_path.startsWith('/storage/')))
+    ) {
+      return null;
+    }
 
     if (currentEpisode) {
       if (currentEpisode.emby_id && currentEpisode.emby_id !== 'undefined' && currentEpisode.emby_id !== 'null') {
@@ -536,6 +545,88 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
 
       if (isCancelled || !videoRef.current) return;
 
+      // Detección directa de contenido local FlixHN (reproducción instantánea sin peticiones intermedias)
+      const activeMedia = currentEpisode || title;
+      const isLocalMedia =
+        activeMedia?.source_type === 'local' ||
+        activeMedia?.provider === 'local' ||
+        (activeMedia?.source_path && (activeMedia.source_path.startsWith('/mnt/') || activeMedia.source_path.startsWith('/storage/'))) ||
+        (activeMedia?.file_path && (activeMedia.file_path.startsWith('/mnt/') || activeMedia.file_path.startsWith('/storage/'))) ||
+        !targetItemId;
+
+      const directLocalUrl = currentEpisode?.id
+        ? `${window.location.origin}/api/stream/episode/${currentEpisode.id}`
+        : (title?.id ? `${window.location.origin}/api/stream/title/${title.id}` : (streamUrl || ''));
+
+      if (isLocalMedia && directLocalUrl && !directLocalUrl.includes('.m3u8')) {
+        setPlaybackMode('direct');
+        setPlaybackError(null);
+        video.src = directLocalUrl;
+
+        const handleLocalReady = () => {
+          if (isCancelled) return;
+          setIsLoading(false);
+          if (video.videoHeight) {
+            const h = video.videoHeight;
+            let label = `${h}p`;
+            if (h >= 2160) label = '4K';
+            else if (h >= 1080) label = 'Full HD (1080p)';
+            else if (h >= 720) label = 'HD (720p)';
+            else if (h >= 480) label = 'SD (480p)';
+            setActiveResolution(label);
+          }
+          if (resumeSeconds > 0) {
+            video.currentTime = resumeSeconds;
+          }
+          video.playbackRate = playbackSpeed;
+          video.play().then(() => {
+            if (!isCancelled) setIsPlaying(true);
+          }).catch((e) => {
+            console.warn('Autoplay prevented:', e);
+          });
+        };
+
+        const handleLocalError = (e) => {
+          if (isCancelled) return;
+          setIsLoading(false);
+          const errCode = video.error?.code;
+          let msg = 'No se pudo reproducir el archivo de video local.';
+          if (errCode === 4) {
+            msg = 'El formato de video no es compatible con el navegador o el archivo físico no fue encontrado en el servidor.';
+          } else if (errCode === 2) {
+            msg = 'Error de red al recibir el flujo de video.';
+          }
+          setPlaybackError(msg);
+        };
+
+        video.addEventListener('loadedmetadata', handleLocalReady, { once: true });
+        video.addEventListener('error', handleLocalError, { once: true });
+        video.addEventListener('canplay', () => {
+          if (!isCancelled) setIsLoading(false);
+        }, { once: true });
+        video.addEventListener('playing', () => {
+          if (!isCancelled) {
+            setIsLoading(false);
+            setIsPlaying(true);
+          }
+        });
+        video.addEventListener('waiting', () => {
+          if (!isCancelled) setIsLoading(true);
+        });
+
+        video.load();
+        video.play().then(() => {
+          if (!isCancelled) {
+            setIsLoading(false);
+            setIsPlaying(true);
+          }
+        }).catch((e) => {
+          console.warn('video.play() local inicial esperando interacción:', e);
+        });
+
+        return;
+      }
+
       // 2. Consultar PlaybackInfo antes de montar el stream (vía Backend y fallback a Emby)
       let playInfo = null;
       try {
@@ -762,6 +853,14 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
         video.addEventListener('waiting', () => {
           if (!isCancelled) setIsLoading(true);
         });
+
+        video.load();
+        video.play().then(() => {
+          if (!isCancelled) {
+            setIsLoading(false);
+            setIsPlaying(true);
+          }
+        }).catch(() => {});
       } else {
         // MKV, TS o formatos que el navegador no soporta de forma nativa: HLS inmediato
         if (playInfo.hls_url && !playInfo.hls_url.includes('/Videos/undefined')) {
