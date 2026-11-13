@@ -2,12 +2,13 @@
  * Utilidades centralizadas para resolución de medios, carátulas y streaming en FlixHN
  */
 
-export const DEFAULT_FALLBACK_POSTER = 'https://images.unsplash.com/photo-1594909122845-11baa439b7bf?w=500';
+export const DEFAULT_FALLBACK_POSTER = '/placeholder-poster.png';
 
 /**
  * Resuelve y normaliza la URL completa de carátulas/pósters.
  * - Si es una ruta relativa de storage (/storage/... o storage/...), antepone la URL base correcta.
- * - Si no existe o es inválida, retorna el fallback garantizado.
+ * - Si es un endpoint de carátula local (/api/media/local-image), lo entrega directamente.
+ * - Si no existe, falla o apunta a la IP remota caída (45.4.87.126), retorna el fallback garantizado.
  *
  * @param {string|null} url URL cruda de póster o backdrop
  * @returns {string} URL lista para usar en elementos <img>
@@ -23,12 +24,17 @@ export const resolvePosterUrl = (url) => {
     trimmed === 'null' ||
     trimmed === 'undefined' ||
     trimmed === '[object Object]' ||
-    trimmed.includes('45.4.87.126:6789')
+    trimmed.includes('45.4.87.126')
   ) {
     return '/placeholder-poster.png';
   }
 
-  // 1. Si ya es una URL absoluta HTTP o HTTPS (TMDb, Emby remoto, CDNs externos)
+  // 1. Si es un endpoint de API local de FlixHN (/api/media/local-image...)
+  if (trimmed.startsWith('/api/')) {
+    return trimmed;
+  }
+
+  // 2. Si ya es una URL absoluta HTTP o HTTPS (TMDb, CDNs externos)
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
     return trimmed;
   }

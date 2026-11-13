@@ -120,6 +120,34 @@ const Browse = ({ onPlay, onNavigateToAdmin }) => {
     return () => clearInterval(intervalId);
   }, [hasActiveDownloads, loadCatalog]);
 
+  // Escuchar evento global 'media:removed' para purgar tarjetas eliminadas al instante
+  useEffect(() => {
+    const handleMediaRemoved = (e) => {
+      const { id } = e.detail || {};
+      if (!id) return;
+      const idStr = String(id);
+
+      setRows((prevRows) =>
+        prevRows.map((row) => ({
+          ...row,
+          items: (row.items || []).filter((item) => {
+            const itId = item.title_id || item.title?.id || item.id;
+            return String(itId) !== idStr;
+          }),
+        }))
+      );
+
+      setBillboardTitle((prev) => (prev && String(prev.id) === idStr ? null : prev));
+      setSearchResults((prev) => prev.filter((item) => String(item.id || item.title?.id) !== idStr));
+      setModalTitleId((currentId) => (currentId && String(currentId) === idStr ? null : currentId));
+    };
+
+    window.addEventListener('media:removed', handleMediaRemoved);
+    return () => {
+      window.removeEventListener('media:removed', handleMediaRemoved);
+    };
+  }, []);
+
   const handleSearchResults = useCallback((results, query) => {
     setSearchResults(results || []);
     setSearchQuery(query || '');

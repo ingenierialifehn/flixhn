@@ -239,6 +239,23 @@ export default function LiveTvPlayer({
     };
   }, []);
 
+  // Cerrar el reproductor inmediatamente si el canal fue eliminado del servidor
+  useEffect(() => {
+    const handleMediaRemoved = (e) => {
+      const { id } = e.detail || {};
+      if (!id) return;
+      if (currentChannel && String(currentChannel.id) === String(id)) {
+        if (typeof onClose === 'function') {
+          onClose();
+        }
+      }
+    };
+    window.addEventListener('media:removed', handleMediaRemoved);
+    return () => {
+      window.removeEventListener('media:removed', handleMediaRemoved);
+    };
+  }, [currentChannel, onClose]);
+
   // Notificar a Emby para liberar la codificación activa
   const releaseActiveEncoding = useCallback((playSessionId, deviceId = 'flixhn-web-client') => {
     if (!playSessionId) return;
@@ -250,7 +267,7 @@ export default function LiveTvPlayer({
 
     // 2. Notificar directamente a Emby si hay conectividad
     try {
-      const serverHost = localStorage.getItem('media_server_url') || localStorage.getItem('emby_server_url') || 'http://45.4.87.126:6789';
+      const serverHost = localStorage.getItem('media_server_url') || localStorage.getItem('emby_server_url') || window.location.origin;
       const apiKey = localStorage.getItem('emby_api_key') || localStorage.getItem('media_server_api_key') || '0fe0eb20e78f431d9fa474e05ab2d82f';
       const cleanBase = serverHost.replace(/\/emby\/?$/i, '');
       const deleteUrl = `${cleanBase}/emby/Videos/ActiveEncodings?DeviceId=${encodeURIComponent(deviceId)}&PlaySessionId=${encodeURIComponent(playSessionId)}&api_key=${encodeURIComponent(apiKey)}`;
@@ -438,7 +455,7 @@ export default function LiveTvPlayer({
 
     // 5. Fallback directo a Emby API si el backend no pudo negociar y hay emby_channel_id
     if (!finalHlsUrl && (channelToPlay.emby_channel_id || targetChannelId)) {
-      const serverHost = localStorage.getItem('media_server_url') || localStorage.getItem('emby_server_url') || 'http://45.4.87.126:6789';
+      const serverHost = localStorage.getItem('media_server_url') || localStorage.getItem('emby_server_url') || window.location.origin;
       const apiKey = localStorage.getItem('emby_api_key') || localStorage.getItem('media_server_api_key') || '0fe0eb20e78f431d9fa474e05ab2d82f';
       const cleanBaseUrl = serverHost.replace(/\/emby\/?$/i, '');
       const embyChannelId = channelToPlay.emby_channel_id || targetChannelId;

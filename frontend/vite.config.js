@@ -12,11 +12,13 @@ const appRoot = fs.existsSync('/app/index.html') ? '/app' : __dirname;
 export default defineConfig({
   root: appRoot,
   resolve: {
-    dedupe: ['react', 'react-dom', 'react/jsx-runtime', 'react/jsx-dev-runtime'],
+    dedupe: ['react', 'react-dom'],
     alias: {
       '@': path.resolve(appRoot, './src'),
       '@api': path.resolve(appRoot, './src/api'),
       '@services': path.resolve(appRoot, './src/services'),
+      react: path.resolve(appRoot, 'node_modules/react'),
+      'react-dom': path.resolve(appRoot, 'node_modules/react-dom'),
     },
     extensions: ['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json'],
   },
@@ -35,7 +37,7 @@ export default defineConfig({
   cacheDir: fs.existsSync('/tmp') ? '/tmp/.vite' : undefined,
   optimizeDeps: {
     force: true,
-    include: ['react', 'react-dom', 'react/jsx-dev-runtime', 'hls.js'],
+    include: ['react', 'react-dom', 'lucide-react', 'hls.js'],
     exclude: ['mpegts.js'],
   },
   server: {

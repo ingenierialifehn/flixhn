@@ -74,12 +74,22 @@ Route::post('/auth/password/reset', [PasswordResetController::class, 'resetPassw
 
 // Acceso público al portal Live TV y proxy de streaming
 Route::get('/livetv/channels', [LiveTvController::class, 'getChannels']);
+Route::get('/livetv/channels/{id}', [LiveTvController::class, 'showChannel']);
+Route::get('/channels', [LiveTvController::class, 'getChannels']);
+Route::get('/channels/{id}', [LiveTvController::class, 'showChannel']);
 Route::get('/livetv/proxy', [LiveTvController::class, 'proxy']);
 Route::match(['get', 'post'], '/livetv/playback-info', [LiveTvController::class, 'getPlaybackInfo']);
 Route::match(['delete', 'post'], '/livetv/active-encoding', [LiveTvController::class, 'stopActiveEncoding']);
 
-// Streaming directo para archivos locales OTT y catálogo On-Net (Soporta Range: bytes para MP4/MKV)
-Route::match(['get', 'head'], '/media/{id}/stream', [App\Http\Controllers\MediaStreamController::class, 'stream'])->name('media.stream');
+// Catálogo público unificado y endpoints de integridad
+Route::get('/media', [TitleController::class, 'index']);
+Route::get('/media/{id}', [TitleController::class, 'show']);
+
+// Streaming directo HTTP 206 y carátulas locales (sin depender de Emby)
+Route::match(['get', 'head'], '/stream/title/{id}', [App\Http\Controllers\MediaStreamController::class, 'streamTitle'])->name('stream.title');
+Route::match(['get', 'head'], '/stream/episode/{id}', [App\Http\Controllers\MediaStreamController::class, 'streamEpisode'])->name('stream.episode');
+Route::get('/media/local-image', [App\Http\Controllers\MediaStreamController::class, 'localImage'])->name('media.local-image');
+Route::match(['get', 'head'], '/media/{id}/stream', [App\Http\Controllers\MediaStreamController::class, 'streamTitle'])->name('media.stream');
 Route::match(['get', 'head'], '/episodes/{id}/stream', [App\Http\Controllers\MediaStreamController::class, 'streamEpisode'])->name('episodes.stream');
 Route::get('/media/{id}/play', [App\Http\Controllers\MediaStreamController::class, 'playMedia'])->name('media.play');
 Route::get('/episodes/{id}/play', [App\Http\Controllers\MediaStreamController::class, 'playEpisode'])->name('episodes.play');

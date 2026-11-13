@@ -9,6 +9,7 @@ use App\Models\Title;
 use App\Models\PlaybackProgress;
 use App\Models\MediaIngestTask;
 use App\Services\RemoteMediaConnectorService;
+use App\Services\MediaIntegrityService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -33,10 +34,11 @@ class TitleController extends Controller
 
         // Búsqueda reactiva en tiempo real por término (rápida y ligera)
         if ($searchQuery !== '') {
+            $integrityService = app(MediaIntegrityService::class);
             $matched = Title::select([
                 'id', 'name', 'slug', 'type', 'provider', 'description',
                 'poster_url', 'backdrop_url', 'release_year', 'genre',
-                'duration_seconds', 'stream_path', 'category_id', 'created_at'
+                'duration_seconds', 'stream_path', 'file_path', 'source_type', 'category_id', 'created_at'
             ])
             ->where(function ($w) use ($searchQuery) {
                 $w->where('name', 'LIKE', "%{$searchQuery}%")
@@ -47,24 +49,35 @@ class TitleController extends Controller
             ->take(60)
             ->get();
 
+            // Auto-verificación de integridad física en resultados de búsqueda
+            $validMatched = $matched->filter(function ($title) use ($integrityService) {
+                return $integrityService->verifyOrPurgeTitle($title);
+            })->values();
+
             return response()->json([
                 'status' => 'success',
-                'data' => $matched,
-                'results' => $matched,
-                'total_titles' => $matched->count(),
+                'data' => $validMatched,
+                'results' => $validMatched,
+                'total_titles' => $validMatched->count(),
             ]);
         }
 
         // Cachear las respuestas de /api/titles y /api/home (1 hora) usando caché optimizado
         $baseData = Cache::remember('catalog_home_base', 3600, function () {
+            $integrityService = app(MediaIntegrityService::class);
             // Cargar títulos ligeros sin relaciones anidadas pesadas para el catálogo principal
-            $allTitles = Title::select([
+            $rawTitles = Title::select([
                 'id', 'name', 'slug', 'type', 'provider', 'description',
                 'poster_url', 'backdrop_url', 'release_year', 'genre',
-                'is_featured', 'stream_path', 'duration_seconds', 'category_id', 'created_at'
+                'is_featured', 'stream_path', 'file_path', 'source_type', 'duration_seconds', 'category_id', 'created_at'
             ])
             ->orderBy('created_at', 'desc')
             ->get();
+
+            // Filtrar y auto-purgar contenidos locales cuyo archivo ya no exista en disco
+            $allTitles = $rawTitles->filter(function ($t) use ($integrityService) {
+                return $integrityService->verifyOrPurgeTitle($t);
+            })->values();
 
             if ($allTitles->isEmpty()) {
                 return [
@@ -353,7 +366,7 @@ class TitleController extends Controller
      * Organiza jerárquicamente las series estilo Netflix (ORDER BY season_number ASC, episode_number ASC).
      * Detecta y extrae elementos que comiencen con "0" como Trailer / Previa, excluyéndolos de episodios regulares.
      */
-    public function show(Request $request, int $id): JsonResponse
+    public function show(Request $request, $id, MediaIntegrityService $integrityService): JsonResponse
     {
         $profileId = $request->query('profile_id') ?? $request->header('X-Profile-Id');
         if (!$profileId && $request->user()) {
@@ -362,7 +375,16 @@ class TitleController extends Controller
                 ?? Cache::get("user_{$request->user()->id}_current_profile");
         }
 
-        $title = Title::with(['category'])->findOrFail($id);
+        $title = Title::with(['category'])->find($id);
+
+        if (!$title) {
+            return $integrityService->goneResponse(is_numeric($id) ? (int)$id : null, 'media');
+        }
+
+        // Auto-verificación de integridad de archivo físico en disco
+        if (!$integrityService->verifyOrPurgeTitle($title)) {
+            return $integrityService->goneResponse($title->id, $title->type ?? 'media');
+        }
 
         $trailer = null;
 

@@ -348,7 +348,8 @@ class AdminTitleController extends Controller
     public function scanLocalMedia(Request $request, \App\Services\LocalMediaScannerService $scanner): JsonResponse
     {
         try {
-            $stats = $scanner->scan($request->input('path'));
+            $cleanRemote = $request->boolean('clean_remote') || $request->input('clean_remote') === 'true' || $request->input('clean_remote') === 1;
+            $stats = $scanner->scan($request->input('path'), $cleanRemote);
             $totalIndexed = ($stats['total_movies'] ?? 0) + ($stats['total_series'] ?? 0) + ($stats['total_episodes'] ?? 0);
 
             return response()->json([
@@ -361,6 +362,7 @@ class AdminTitleController extends Controller
                     'total_movies' => $stats['total_movies'] ?? 0,
                     'total_series' => $stats['total_series'] ?? 0,
                     'total_episodes' => $stats['total_episodes'] ?? 0,
+                    'purged_remote' => $stats['purged_remote'] ?? 0,
                     'total_files_scanned' => $stats['total_files_scanned'] ?? 0,
                 ],
                 'stats' => $stats,

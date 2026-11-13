@@ -2,10 +2,14 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Attributes\ObservedBy;
+use App\Observers\TvChannelObserver;
+use App\Observers\ChannelObserver;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+#[ObservedBy([TvChannelObserver::class, ChannelObserver::class])]
 class TvChannel extends Model
 {
     use HasFactory;

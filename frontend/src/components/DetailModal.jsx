@@ -45,6 +45,18 @@ const DetailModal = ({ titleId, onClose, onPlay }) => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
+  // Cerrar inmediatamente si este contenido fue purgado/eliminado
+  useEffect(() => {
+    const handleMediaRemoved = (e) => {
+      const { id } = e.detail || {};
+      if (id && String(id) === String(titleId)) {
+        onClose();
+      }
+    };
+    window.addEventListener('media:removed', handleMediaRemoved);
+    return () => window.removeEventListener('media:removed', handleMediaRemoved);
+  }, [titleId, onClose]);
+
   // Detección y filtrado de trailers con "0" o Especiales / Trailers (Puntos 3 y 4)
   const { cleanedSeasons, trailerUrl } = useMemo(() => {
     let detectedTrailer = titleData?.trailer_url || titleData?.trailer?.stream_url || null;

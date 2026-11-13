@@ -7,6 +7,7 @@ use App\Models\MediaIngestTask;
 use App\Models\MediaItem;
 use App\Models\OttDownloadTask;
 use App\Models\Title;
+use App\Services\MediaIntegrityService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\File;
@@ -44,22 +45,30 @@ class MediaStreamController extends Controller
      */
     public function stream(Request $request, $id = null)
     {
+        $integrityService = app(MediaIntegrityService::class);
         $targetId = $id ?: $request->query('id') ?: $request->query('title_id');
         $rawPath = $request->query('path') ?: $request->query('file');
         $titleQuery = trim((string) ($request->query('title') ?: ''));
 
         $mediaItem = null;
 
-        // 1. Obtener la ruta física del archivo priorizando Title y Episode
+        // 1. Obtener la ruta física del archivo priorizando Title y Episode con auto-verificación
         if ($targetId) {
             $title = Title::find($targetId);
             if ($title) {
+                // Auto-verificación de integridad de archivo físico
+                if (!$integrityService->verifyOrPurgeTitle($title)) {
+                    return $integrityService->goneResponse($title->id, $title->type ?? 'movie');
+                }
                 $rawPath = $title->file_path ?: $title->stream_path ?: $title->source_path;
             }
 
             if (empty($rawPath)) {
                 $episode = Episode::find($targetId);
                 if ($episode) {
+                    if (!$integrityService->verifyOrPurgeEpisode($episode)) {
+                        return $integrityService->goneResponse($episode->id, 'episode');
+                    }
                     $rawPath = $episode->file_path ?: $episode->stream_path;
                 }
             }
@@ -202,30 +211,148 @@ class MediaStreamController extends Controller
         }
 
         Log::warning("MediaStreamController@stream: Archivo físico o stream no encontrado para [{$rawPath}]");
+        if ($targetId) {
+            $integrityService = app(MediaIntegrityService::class);
+            return $integrityService->goneResponse(is_numeric($targetId) ? (int)$targetId : null, 'media');
+        }
         return response()->json([
+            'deleted' => true,
+            'message' => 'Este contenido ya no está disponible.',
             'error' => 'Archivo físico no encontrado en el servidor',
             'path' => $mediaItem?->file_path ?? $rawPath,
-        ], 404);
+        ], 410);
+    }
+
+    /**
+     * Endpoint específico de streaming directo para títulos / películas.
+     * Soporta solicitudes de rango de bytes (HTTP 206 Partial Content) para reproducción instantánea.
+     * GET/HEAD /api/stream/title/{id}
+     */
+    public function streamTitle(Request $request, $id)
+    {
+        $integrityService = app(MediaIntegrityService::class);
+        $title = Title::find($id);
+
+        if (!$title) {
+            return $integrityService->goneResponse(is_numeric($id) ? (int)$id : null, 'movie');
+        }
+
+        // Auto-verificación de integridad de archivo físico
+        if (!$integrityService->verifyOrPurgeTitle($title)) {
+            return $integrityService->goneResponse($title->id, $title->type ?? 'movie');
+        }
+
+        $filePath = $title->source_path ?: $title->file_path ?: $title->stream_path;
+        if (!empty($filePath)) {
+            $resolved = $this->resolvePhysicalFilePath($filePath);
+            if ($resolved && file_exists($resolved) && !is_dir($resolved) && @filesize($resolved) > 1024) {
+                return $this->serveStreamWithByteRange($request, $resolved);
+            }
+        }
+
+        // Si es una serie y se solicitó stream sobre el título, buscar el primer episodio
+        if ($title->type === 'series') {
+            $firstEpisode = Episode::where('title_id', $title->id)->orderBy('season_id')->orderBy('episode_number')->first();
+            if ($firstEpisode) {
+                return $this->streamEpisode($request, $firstEpisode->id);
+            }
+        }
+
+        return $integrityService->goneResponse($title->id, $title->type ?? 'movie');
     }
 
     /**
      * Endpoint específico de streaming directo para episodios de series.
+     * GET/HEAD /api/stream/episode/{id}
      * GET/HEAD /api/episodes/{id}/stream
      */
     public function streamEpisode(Request $request, $id)
     {
+        $integrityService = app(MediaIntegrityService::class);
         $episode = Episode::find($id);
+
         if ($episode) {
-            $filePath = $episode->file_path ?: $episode->stream_path;
+            // Auto-verificación de integridad de archivo físico
+            if (!$integrityService->verifyOrPurgeEpisode($episode)) {
+                return $integrityService->goneResponse($episode->id, 'episode');
+            }
+
+            $filePath = $episode->source_path ?: $episode->file_path ?: $episode->stream_path;
             if (!empty($filePath)) {
                 $resolved = $this->resolvePhysicalFilePath($filePath);
                 if ($resolved && file_exists($resolved) && !is_dir($resolved) && @filesize($resolved) > 1024) {
                     return $this->serveStreamWithByteRange($request, $resolved);
                 }
             }
+        } else {
+            return $integrityService->goneResponse(is_numeric($id) ? (int)$id : null, 'episode');
         }
 
         return $this->stream($request, $id);
+    }
+
+    /**
+     * Servir carátulas locales (poster.jpg, folder.jpg, backdrop.jpg, etc.) sin depender de APIs externas.
+     * Valida estrictamente que la ruta solicitada se encuentre dentro de /mnt/media_library/ o carpetas autorizadas.
+     *
+     * Ruta: GET /api/media/local-image?path=...
+     */
+    public function localImage(Request $request)
+    {
+        $rawPath = $request->query('path');
+        if (empty($rawPath)) {
+            return $this->serveStorage($request, 'placeholder-poster.png');
+        }
+
+        $normalized = str_replace('\\', '/', trim($rawPath));
+
+        // Prevención estricta de directory traversal
+        if (str_contains($normalized, '../') || str_contains($normalized, '..\\')) {
+            return response()->json(['error' => 'Ruta inválida.'], 403);
+        }
+
+        // Validar que la ruta comience con una ubicación autorizada en el servidor
+        $allowedPrefixes = [
+            '/mnt/media_library',
+            '/mnt/',
+            '/var/www/html/storage',
+            storage_path(),
+            public_path(),
+        ];
+
+        $isAllowed = false;
+        foreach ($allowedPrefixes as $prefix) {
+            $normPrefix = rtrim(str_replace('\\', '/', $prefix), '/');
+            if (str_starts_with($normalized, $normPrefix)) {
+                $isAllowed = true;
+                break;
+            }
+        }
+
+        if (!$isAllowed) {
+            Log::warning("MediaStreamController@localImage: Intento de acceso no autorizado a ruta: {$normalized}");
+            return response()->json(['error' => 'Acceso denegado a la ruta especificada.'], 403);
+        }
+
+        if (!File::exists($normalized) || File::isDirectory($normalized)) {
+            return $this->serveStorage($request, 'placeholder-poster.png');
+        }
+
+        $ext = strtolower(pathinfo($normalized, PATHINFO_EXTENSION));
+        $mime = match ($ext) {
+            'jpg', 'jpeg' => 'image/jpeg',
+            'png' => 'image/png',
+            'webp' => 'image/webp',
+            'gif' => 'image/gif',
+            'svg' => 'image/svg+xml',
+            default => 'image/jpeg',
+        };
+
+        return response()->file($normalized, [
+            'Content-Type' => $mime,
+            'Cache-Control' => 'public, max-age=86400, stale-while-revalidate=604800',
+            'Access-Control-Allow-Origin' => '*',
+        ]);
     }
 
     /**
@@ -235,7 +362,18 @@ class MediaStreamController extends Controller
      */
     public function playMedia(Request $request, $id)
     {
-        $title = Title::findOrFail($id);
+        $integrityService = app(MediaIntegrityService::class);
+        $title = Title::find($id);
+
+        if (!$title) {
+            return $integrityService->goneResponse(is_numeric($id) ? (int)$id : null, 'movie');
+        }
+
+        // Auto-verificación de archivo físico al reproducir
+        if (!$integrityService->verifyOrPurgeTitle($title)) {
+            return $integrityService->goneResponse($title->id, $title->type ?? 'movie');
+        }
+
         $streamUrl = url("/api/media/{$title->id}/stream");
         $filePath = $title->file_path ?: $title->stream_path;
 
@@ -257,7 +395,18 @@ class MediaStreamController extends Controller
      */
     public function playEpisode(Request $request, $id)
     {
-        $episode = Episode::with('title')->findOrFail($id);
+        $integrityService = app(MediaIntegrityService::class);
+        $episode = Episode::with('title')->find($id);
+
+        if (!$episode) {
+            return $integrityService->goneResponse(is_numeric($id) ? (int)$id : null, 'episode');
+        }
+
+        // Auto-verificación de archivo físico al reproducir
+        if (!$integrityService->verifyOrPurgeEpisode($episode)) {
+            return $integrityService->goneResponse($episode->id, 'episode');
+        }
+
         $streamUrl = url("/api/episodes/{$episode->id}/stream");
         $filePath = $episode->file_path ?: $episode->stream_path;
 

@@ -15,24 +15,29 @@ class MediaNodeController extends Controller
      */
     public function index(): JsonResponse
     {
-        // Si no existen nodos, inicializar el nodo primario existente
+        $sourceMode = ServerSetting::get('media_source_mode', 'local');
+
+        // Si no existen nodos, inicializar el nodo maestro local PowerEdge
         if (MediaNode::count() === 0) {
-            $defaultUrl = ServerSetting::get('media_server_url', 'http://45.4.87.126:6789');
-            $defaultKey = ServerSetting::get('media_server_api_key', '');
-            $defaultName = ServerSetting::get('media_server_name')
-                ?: ServerSetting::get('emby_server_name', 'server01-PowerEdge-R720');
-
-            $parsedHost = parse_url($defaultUrl, PHP_URL_HOST) ?: '45.4.87.126';
-            $parsedPort = parse_url($defaultUrl, PHP_URL_PORT) ?: 6789;
-
             MediaNode::create([
-                'name' => $defaultName,
-                'ip_address' => $parsedHost,
-                'port' => (int) $parsedPort,
-                'api_key' => $defaultKey,
+                'name' => 'server01-PowerEdge-R720',
+                'ip_address' => '/mnt/media_library',
+                'port' => 8789,
+                'api_key' => '',
                 'is_active' => true,
                 'is_master' => true,
             ]);
+        } else {
+            // Si el modo configurado es almacenamiento local directo, asegurar que el nodo maestro no dependa de Emby
+            if ($sourceMode === 'local') {
+                $masterNode = MediaNode::where('is_master', true)->first();
+                if ($masterNode && (str_contains($masterNode->ip_address, '45.4.87.126') || str_contains(strtolower($masterNode->name), 'poweredge'))) {
+                    $masterNode->update([
+                        'ip_address' => '/mnt/media_library',
+                        'api_key' => '',
+                    ]);
+                }
+            }
         }
 
         $nodes = MediaNode::orderBy('is_master', 'desc')
@@ -91,10 +96,15 @@ class MediaNodeController extends Controller
         $node->update(['is_active' => true, 'is_master' => true]);
 
         // Actualizar ServerSettings con los datos del nodo activado
-        $baseUrl = "http://{$node->ip_address}:{$node->port}";
-        ServerSetting::set('media_server_url', $baseUrl);
-        ServerSetting::set('media_server_api_key', $node->api_key);
-        ServerSetting::set('media_server_name', $node->name);
+        if (str_starts_with($node->ip_address, '/mnt') || str_contains(strtolower($node->name), 'poweredge')) {
+            ServerSetting::set('media_source_mode', 'local', 'media');
+            ServerSetting::set('media_server_name', $node->name, 'media');
+        } else {
+            $baseUrl = "http://{$node->ip_address}:{$node->port}";
+            ServerSetting::set('media_server_url', $baseUrl, 'media');
+            ServerSetting::set('media_server_api_key', $node->api_key ?: '', 'media');
+            ServerSetting::set('media_server_name', $node->name, 'media');
+        }
 
         return response()->json([
             'status' => 'success',

@@ -215,17 +215,33 @@ const MovieCard = ({ item, title: propTitle, isProgress, onPlay, onOpenModal, on
     )
   );
 
+  const isUnavailable = Boolean(
+    title?.deleted ||
+    title?.is_unavailable ||
+    item?.deleted ||
+    item?.is_unavailable
+  );
+
   return (
     <>
       <div
         ref={cardRef}
-        onClick={() => onOpenModal && onOpenModal(title)}
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={handleMouseLeave}
-        className={`group relative flex-shrink-0 w-36 sm:w-44 md:w-56 bg-zinc-100 dark:bg-[#181818] rounded-md overflow-hidden cursor-pointer shadow-sm dark:shadow-lg border border-zinc-300/40 dark:border-zinc-800 transition-all duration-300 ease-out select-none ${
-          isHovered
-            ? 'z-20 ring-2 ring-[#E50914]/50 shadow-2xl'
-            : 'hover:scale-105 hover:z-20 hover:shadow-2xl hover:ring-2 hover:ring-[#E50914]/50'
+        onClick={(e) => {
+          if (isUnavailable) {
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+          }
+          if (onOpenModal) onOpenModal(title);
+        }}
+        onMouseEnter={!isUnavailable ? handleMouseEnter : undefined}
+        onMouseLeave={!isUnavailable ? handleMouseLeave : undefined}
+        className={`group relative flex-shrink-0 w-36 sm:w-44 md:w-56 bg-zinc-100 dark:bg-[#181818] rounded-md overflow-hidden shadow-sm dark:shadow-lg border border-zinc-300/40 dark:border-zinc-800 transition-all duration-300 ease-out select-none ${
+          isUnavailable
+            ? 'pointer-events-none opacity-50 cursor-not-allowed filter grayscale'
+            : isHovered
+            ? 'z-20 ring-2 ring-[#E50914]/50 shadow-2xl cursor-pointer'
+            : 'hover:scale-105 hover:z-20 hover:shadow-2xl hover:ring-2 hover:ring-[#E50914]/50 cursor-pointer'
         }`}
       >
         {/* Imagen del Poster */}

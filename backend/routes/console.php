@@ -70,6 +70,12 @@ Artisan::command('flixhn:optimize-database', function (DatabaseBackupService $ba
 })->purpose('Optimizar y desfragmentar las tablas del clúster MySQL de FlixHN');
 
 /**
+ * Tarea Programada de Saneamiento e Integridad de Medios (FlixHN Auto-Purge).
+ * Recorre cada 5 minutos películas, episodios locales huérfanos y canales eliminados.
+ */
+Schedule::command('media:prune-missing')->everyFiveMinutes();
+
+/**
  * Tarea de Respaldo Automático Programado FlixHN.
  * Se ejecuta periódicamente y verifica la configuración activa en database_settings.
  */

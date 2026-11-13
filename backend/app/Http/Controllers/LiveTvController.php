@@ -6,6 +6,7 @@ use App\Models\TvChannel;
 use App\Models\TvSource;
 use App\Models\ServerSetting;
 use App\Services\RemoteMediaConnectorService;
+use App\Services\MediaIntegrityService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Cache;
@@ -49,6 +50,30 @@ class LiveTvController extends Controller
     }
 
     /**
+     * Consulta individual de un canal de televisión por ID (/api/channels/{id}).
+     * Si no existe o fue desactivado/eliminado, purga y devuelve HTTP 410 Gone.
+     */
+    public function showChannel(Request $request, $id, MediaIntegrityService $integrityService): JsonResponse
+    {
+        $channel = null;
+        if (is_numeric($id)) {
+            $channel = TvChannel::find($id);
+        }
+        if (!$channel) {
+            $channel = TvChannel::where('tvg_id', $id)->orWhere('channel_number', $id)->first();
+        }
+
+        if (!$channel || !$channel->is_active || $channel->status === 'deleted' || $channel->status === 'offline_deleted') {
+            if ($channel) {
+                $integrityService->purgeChannel($channel);
+            }
+            return $integrityService->goneResponse(is_numeric($id) ? (int)$id : null, 'channel');
+        }
+
+        return response()->json($channel);
+    }
+
+    /**
      * Negociación de streaming en vivo con Emby (PlaybackInfo).
      * Consulta POST /emby/Items/{channelId}/PlaybackInfo con DeviceProfile exclusivo
      * h264 + aac,mp3 (estéreo) para asegurar DirectStream o transcodificación de audio
@@ -56,6 +81,7 @@ class LiveTvController extends Controller
      */
     public function getPlaybackInfo(Request $request): JsonResponse
     {
+        $integrityService = app(MediaIntegrityService::class);
         $channelId = $request->input('channel_id') ?? $request->query('channel_id');
         $deviceId = $request->input('device_id') ?? $request->query('device_id') ?? 'flixhn-web-client';
         $providedStreamUrl = $request->input('stream_url') ?? $request->query('stream_url');
@@ -77,6 +103,11 @@ class LiveTvController extends Controller
                 $channel = TvChannel::where('tvg_id', $channelId)
                     ->orWhere('channel_number', $channelId)
                     ->first();
+            }
+            // Auto-verificación de canal eliminado/desactivado
+            if ($channel && (!$channel->is_active || $channel->status === 'deleted' || $channel->status === 'offline_deleted')) {
+                $integrityService->purgeChannel($channel);
+                return $integrityService->goneResponse($channel->id, 'channel');
             }
         }
 

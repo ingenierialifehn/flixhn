@@ -12,7 +12,7 @@ class ScanLocalMediaCommand extends Command
      *
      * @var string
      */
-    protected $signature = 'media:scan-local {--path= : Ruta de directorio específica a escanear}';
+    protected $signature = 'media:scan-local {--path= : Ruta de directorio específica a escanear} {--clean-remote : Limpiar registros remotos huérfanos de Emby}';
 
     /**
      * Los alias del comando.
@@ -45,8 +45,10 @@ class ScanLocalMediaCommand extends Command
             $this->comment('Escaneando discos configurados (/mnt/media_library/Disk2 a Disk7)...');
         }
 
+        $cleanRemote = (bool) $this->option('clean-remote');
+
         $startTime = microtime(true);
-        $results = $scanner->scan($specificPath);
+        $results = $scanner->scan($specificPath, $cleanRemote);
         $duration = round(microtime(true) - $startTime, 2);
 
         $this->newLine();
@@ -57,7 +59,8 @@ class ScanLocalMediaCommand extends Command
                 ['Archivos de video examinados', $results['total_files_scanned']],
                 ['Películas indexadas / actualizadas', $results['total_movies']],
                 ['Series indexadas / actualizadas', $results['total_series']],
-                ['Episodios indexados / actualizadas', $results['total_episodes']],
+                ['Episodios indexados / actualizados', $results['total_episodes']],
+                ['Registros remotos huérfanos purgados', $results['purged_remote'] ?? 0],
                 ['Errores encontrados', $results['errors']],
                 ['Tiempo total de ejecución', "{$duration} segundos"],
             ]

@@ -163,9 +163,10 @@ class LocalMediaScannerService
      * Ejecuta el escáner completo de archivos físicos en las rutas locales.
      *
      * @param string|array|null $customPaths Ruta específica o lista de rutas opcionales
+     * @param bool $cleanRemote Limpiar registros huérfanos o remotos de Emby
      * @return array Estadísticas del escaneo
      */
-    public function scan($customPaths = null): array
+    public function scan($customPaths = null, bool $cleanRemote = false): array
     {
         $targetPaths = [];
         if (!empty($customPaths)) {
@@ -181,9 +182,14 @@ class LocalMediaScannerService
             'total_movies' => 0,
             'total_series' => 0,
             'total_episodes' => 0,
+            'purged_remote' => 0,
             'errors' => 0,
             'paths_scanned' => [],
         ];
+
+        if ($cleanRemote) {
+            $stats['purged_remote'] = $this->cleanRemoteEmbyRecords();
+        }
 
         $categories = $this->ensureDefaultCategories();
 
@@ -204,6 +210,31 @@ class LocalMediaScannerService
         Log::info("LocalMediaScannerService::scan: Finalizado con éxito. Películas: {$stats['total_movies']}, Series: {$stats['total_series']}, Episodios: {$stats['total_episodes']}, Total archivos: {$stats['total_files_scanned']}");
 
         return $stats;
+    }
+
+    /**
+     * Elimina registros remotos huérfanos de Emby (45.4.87.126) si el usuario elige purgar el catálogo remoto.
+     */
+    public function cleanRemoteEmbyRecords(): int
+    {
+        $purged = 0;
+        $remoteTitles = Title::where('provider', '!=', 'local')
+            ->where(function ($q) {
+                $q->where('stream_path', 'LIKE', '%45.4.87.126%')
+                  ->orWhere('source_path', 'LIKE', '%45.4.87.126%')
+                  ->orWhere('source_path', 'LIKE', 'remote://%')
+                  ->orWhere('poster_url', 'LIKE', '%45.4.87.126%');
+            })
+            ->get();
+
+        $integrity = app(MediaIntegrityService::class);
+        foreach ($remoteTitles as $rt) {
+            Log::info("cleanRemoteEmbyRecords: Purgando título remoto huérfano [ID {$rt->id}: {$rt->name}]");
+            $integrity->purgeTitle($rt);
+            $purged++;
+        }
+
+        return $purged;
     }
 
     /**
@@ -388,59 +419,244 @@ class LocalMediaScannerService
     }
 
     /**
+     * Busca imágenes locales (poster, folder, cover, backdrop, fanart) en la carpeta dada.
+     * Retorna un arreglo asociativo con ['poster' => '/api/media/local-image?path=...', 'backdrop' => ...]
+     */
+    public function findLocalArtwork(string $dirPath, string $baseFileName = ''): array
+    {
+        $normalizedDir = rtrim(str_replace('\\', '/', $dirPath), '/');
+        $result = [
+            'poster' => null,
+            'backdrop' => null,
+        ];
+
+        if (!is_dir($normalizedDir)) {
+            return $result;
+        }
+
+        $imageExtensions = ['jpg', 'jpeg', 'png', 'webp'];
+
+        // Candidatos prioritarios de poster
+        $posterNames = ['poster', 'folder', 'cover'];
+        if (!empty($baseFileName)) {
+            $baseClean = pathinfo($baseFileName, PATHINFO_FILENAME);
+            $posterNames[] = $baseClean;
+            $posterNames[] = "{$baseClean}-poster";
+            $posterNames[] = "{$baseClean}-cover";
+        }
+
+        // Candidatos prioritarios de backdrop / fanart
+        $backdropNames = ['backdrop', 'fanart', 'landscape', 'thumb'];
+        if (!empty($baseFileName)) {
+            $baseClean = pathinfo($baseFileName, PATHINFO_FILENAME);
+            $backdropNames[] = "{$baseClean}-fanart";
+            $backdropNames[] = "{$baseClean}-backdrop";
+            $backdropNames[] = "{$baseClean}-thumb";
+        }
+
+        // 1. Buscar poster
+        foreach ($posterNames as $name) {
+            foreach ($imageExtensions as $ext) {
+                $cand = "{$normalizedDir}/{$name}.{$ext}";
+                if (file_exists($cand) && !is_dir($cand) && @filesize($cand) > 500) {
+                    $result['poster'] = '/api/media/local-image?path=' . urlencode($cand);
+                    break 2;
+                }
+            }
+        }
+
+        // 2. Buscar backdrop
+        foreach ($backdropNames as $name) {
+            foreach ($imageExtensions as $ext) {
+                $cand = "{$normalizedDir}/{$name}.{$ext}";
+                if (file_exists($cand) && !is_dir($cand) && @filesize($cand) > 500) {
+                    $result['backdrop'] = '/api/media/local-image?path=' . urlencode($cand);
+                    break 2;
+                }
+            }
+        }
+
+        // Si hay poster pero no backdrop, usar el poster como backdrop y viceversa
+        if ($result['poster'] && !$result['backdrop']) {
+            $result['backdrop'] = $result['poster'];
+        } elseif (!$result['poster'] && $result['backdrop']) {
+            $result['poster'] = $result['backdrop'];
+        }
+
+        return $result;
+    }
+
+    /**
+     * Busca y parsea un archivo .nfo de metadatos (Emby/Kodi) en la carpeta del video o del archivo específico.
+     */
+    public function parseLocalNfo(string $dirPath, string $baseFileName = ''): ?array
+    {
+        $normalizedDir = rtrim(str_replace('\\', '/', $dirPath), '/');
+        if (!is_dir($normalizedDir)) {
+            return null;
+        }
+
+        $candidates = ['movie.nfo', 'tvshow.nfo', 'season.nfo'];
+        if (!empty($baseFileName)) {
+            $baseClean = pathinfo($baseFileName, PATHINFO_FILENAME);
+            array_unshift($candidates, "{$baseClean}.nfo");
+        }
+
+        $nfoPath = null;
+        foreach ($candidates as $candName) {
+            $cand = "{$normalizedDir}/{$candName}";
+            if (file_exists($cand) && !is_dir($cand) && @filesize($cand) > 10) {
+                $nfoPath = $cand;
+                break;
+            }
+        }
+
+        if (!$nfoPath) {
+            $globNfo = glob("{$normalizedDir}/*.nfo");
+            if (!empty($globNfo)) {
+                $nfoPath = $globNfo[0];
+            }
+        }
+
+        if (!$nfoPath || !is_readable($nfoPath)) {
+            return null;
+        }
+
+        try {
+            $content = file_get_contents($nfoPath);
+            if (empty($content)) return null;
+
+            $data = [];
+
+            if (preg_match('/<title>(.*?)<\/title>/is', $content, $m)) {
+                $data['title'] = trim(html_entity_decode(strip_tags($m[1])));
+            }
+            if (preg_match('/<plot>(.*?)<\/plot>/is', $content, $m)) {
+                $data['overview'] = trim(html_entity_decode(strip_tags($m[1])));
+            } elseif (preg_match('/<outline>(.*?)<\/outline>/is', $content, $m)) {
+                $data['overview'] = trim(html_entity_decode(strip_tags($m[1])));
+            }
+            if (preg_match('/<year>(\d{4})<\/year>/is', $content, $m)) {
+                $data['release_year'] = (int) $m[1];
+            } elseif (preg_match('/<premiered>(\d{4})-\d{2}-\d{2}<\/premiered>/is', $content, $m)) {
+                $data['release_year'] = (int) $m[1];
+            }
+            if (preg_match('/<rating>([0-9\.]+)<\/rating>/is', $content, $m)) {
+                $data['rating'] = (float) $m[1];
+            }
+            if (preg_match('/<genre>(.*?)<\/genre>/is', $content, $m)) {
+                $data['genre'] = trim(html_entity_decode(strip_tags($m[1])));
+            }
+            if (preg_match('/<uniqueid[^>]*type=["\']tmdb["\'][^>]*>(.*?)<\/uniqueid>/is', $content, $m)) {
+                $data['tmdb_id'] = trim($m[1]);
+            } elseif (preg_match('/<tmdbid>(.*?)<\/tmdbid>/is', $content, $m)) {
+                $data['tmdb_id'] = trim($m[1]);
+            }
+            if (preg_match('/<uniqueid[^>]*type=["\']imdb["\'][^>]*>(.*?)<\/uniqueid>/is', $content, $m)) {
+                $data['imdb_id'] = trim($m[1]);
+            } elseif (preg_match('/<imdbid>(.*?)<\/imdbid>/is', $content, $m)) {
+                $data['imdb_id'] = trim($m[1]);
+            }
+
+            return !empty($data) ? $data : null;
+        } catch (\Throwable $e) {
+            Log::warning("Error leyendo archivo .nfo en {$nfoPath}: " . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
      * Indexa una película en la base de datos sin duplicarla ni borrar historial de usuarios.
      */
     protected function indexMovieFile(string $filePath, array $classification, ?Category $category, array &$stats): void
     {
         $fileName = basename($filePath);
+        $dirPath = dirname($filePath);
         $parsed = $this->cleanFileName($fileName);
         $cleanTitle = $parsed['title'];
         $year = $parsed['year'];
 
-        // Buscar metadatos en TMDb
-        $tmdbData = $this->queryTmdb($cleanTitle, $year, 'movie');
+        // 1. Buscar carátulas locales automáticas en la misma carpeta del video
+        $localArt = $this->findLocalArtwork($dirPath, $fileName);
 
-        $finalTitle = !empty($tmdbData['title']) ? $tmdbData['title'] : $cleanTitle;
-        $finalYear = !empty($tmdbData['release_year']) ? (int) $tmdbData['release_year'] : ($year ?: (int) date('Y'));
+        // 2. Buscar archivo .nfo local con metadatos de Emby / Kodi
+        $localNfo = $this->parseLocalNfo($dirPath, $fileName);
+
+        $finalTitle = !empty($localNfo['title']) ? $localNfo['title'] : $cleanTitle;
+        $finalYear = !empty($localNfo['release_year']) ? (int) $localNfo['release_year'] : ($year ?: (int) date('Y'));
+        $overview = !empty($localNfo['overview']) ? $localNfo['overview'] : null;
+        $genre = !empty($localNfo['genre']) ? $localNfo['genre'] : 'Películas';
+        $rating = !empty($localNfo['rating']) ? (float) $localNfo['rating'] : 8.0;
+        $tmdbId = $localNfo['tmdb_id'] ?? null;
+        $imdbId = $localNfo['imdb_id'] ?? null;
+
+        $posterUrl = $localArt['poster'];
+        $backdropUrl = $localArt['backdrop'];
+
+        // 3. Si no hay carátula local o faltan metadatos, y TMDB_API_KEY está configurada, consultar TMDb como respaldo
+        if ((empty($posterUrl) || empty($overview)) && !empty(env('TMDB_API_KEY')) && !str_starts_with(env('TMDB_API_KEY'), 'tmdb_live_key')) {
+            $tmdbData = $this->queryTmdb($finalTitle, $finalYear, 'movie');
+            if (empty($posterUrl) && !empty($tmdbData['poster_url'])) {
+                $posterUrl = $tmdbData['poster_url'];
+            }
+            if (empty($backdropUrl) && !empty($tmdbData['backdrop_url'])) {
+                $backdropUrl = $tmdbData['backdrop_url'];
+            }
+            if (empty($overview) && !empty($tmdbData['overview'])) {
+                $overview = $tmdbData['overview'];
+            }
+            if (!empty($tmdbData['tmdb_id']) && empty($tmdbId)) {
+                $tmdbId = $tmdbData['tmdb_id'];
+            }
+            if (!empty($tmdbData['genre']) && $genre === 'Películas') {
+                $genre = $tmdbData['genre'];
+            }
+        }
+
+        $posterUrl = $posterUrl ?: '/placeholder-poster.png';
+        $backdropUrl = $backdropUrl ?: '/placeholder-poster.png';
+        $overview = $overview ?: "Película {$finalTitle} ({$finalYear}) disponible en FlixHN.";
         $slug = Str::slug($finalTitle . '-' . $finalYear) ?: ('movie-' . md5($filePath));
+        $duration = $this->estimateDuration($filePath);
 
         // Buscar registro existente por ruta física, slug o título + año
-        $title = Title::where('file_path', $filePath)
-            ->orWhere('source_path', $filePath)
+        $title = Title::where('source_path', $filePath)
+            ->orWhere('file_path', $filePath)
             ->orWhere('stream_path', $filePath)
             ->orWhere('slug', $slug)
             ->first();
 
-        $duration = $this->estimateDuration($filePath);
-        $posterUrl = !empty($tmdbData['poster_url']) ? $tmdbData['poster_url'] : '/placeholder-poster.png';
-        $backdropUrl = !empty($tmdbData['backdrop_url']) ? $tmdbData['backdrop_url'] : '/placeholder-poster.png';
-        $overview = !empty($tmdbData['overview']) ? $tmdbData['overview'] : "Película {$finalTitle} ({$finalYear}) disponible en FlixHN.";
-        $genre = !empty($tmdbData['genre']) ? $tmdbData['genre'] : 'Películas';
-        $rating = !empty($tmdbData['rating']) ? (float) $tmdbData['rating'] : 8.0;
-
         if ($title) {
             // Actualizar manteniendo el ID existente (vital para no romper historial de visualización)
             $updateData = [
-                'file_path' => $filePath,
-                'stream_path' => $filePath,
+                'name' => $finalTitle,
+                'slug' => $slug,
+                'type' => 'movie',
+                'category_id' => $category?->id ?: $title->category_id,
+                'description' => $overview,
+                'release_year' => $finalYear,
+                'genre' => $genre,
+                'community_rating' => $rating,
+                'duration_seconds' => $duration,
                 'source_path' => $filePath,
+                'file_path' => $filePath,
+                'stream_path' => '/api/stream/title/' . $title->id,
                 'source_type' => 'local',
                 'provider' => 'local',
-                'type' => 'movie',
             ];
 
-            // Si el poster actual es de Emby antiguo, reemplazar con TMDb
-            if (empty($title->poster_url) || str_contains($title->poster_url, '45.4.87.126:6789') || str_contains($title->poster_url, 'placeholder')) {
+            // Reemplazar poster si es local nuevo o si el previo apuntaba a Emby
+            if (!empty($localArt['poster']) || empty($title->poster_url) || str_contains($title->poster_url, '45.4.87.126:6789') || str_contains($title->poster_url, 'placeholder')) {
                 $updateData['poster_url'] = $posterUrl;
             }
-            if (empty($title->backdrop_url) || str_contains($title->backdrop_url, '45.4.87.126:6789') || str_contains($title->backdrop_url, 'placeholder')) {
+            if (!empty($localArt['backdrop']) || empty($title->backdrop_url) || str_contains($title->backdrop_url, '45.4.87.126:6789') || str_contains($title->backdrop_url, 'placeholder')) {
                 $updateData['backdrop_url'] = $backdropUrl;
             }
-            if (!empty($tmdbData['tmdb_id']) && empty($title->tmdb_id)) {
-                $updateData['tmdb_id'] = $tmdbData['tmdb_id'];
+            if (!empty($tmdbId) && empty($title->tmdb_id)) {
+                $updateData['tmdb_id'] = $tmdbId;
             }
-            if (empty($title->description) && !empty($overview)) {
-                $updateData['description'] = $overview;
+            if (!empty($imdbId) && empty($title->imdb_id)) {
+                $updateData['imdb_id'] = $imdbId;
             }
 
             $title->update($updateData);
@@ -457,13 +673,15 @@ class LocalMediaScannerService
                 'genre' => $genre,
                 'community_rating' => $rating,
                 'duration_seconds' => $duration,
-                'file_path' => $filePath,
-                'stream_path' => $filePath,
                 'source_path' => $filePath,
+                'file_path' => $filePath,
+                'stream_path' => '',
                 'source_type' => 'local',
                 'provider' => 'local',
-                'tmdb_id' => $tmdbData['tmdb_id'] ?? null,
+                'tmdb_id' => $tmdbId,
+                'imdb_id' => $imdbId,
             ]);
+            $title->update(['stream_path' => '/api/stream/title/' . $title->id]);
             $stats['total_movies']++;
         }
 
@@ -475,7 +693,7 @@ class LocalMediaScannerService
                 'type' => 'movie',
                 'provider' => 'local',
                 'file_path' => $filePath,
-                'stream_url' => "/api/media/{$title->id}/stream",
+                'stream_url' => "/api/stream/title/{$title->id}",
                 'overview' => $overview,
                 'poster_url' => $title->poster_url,
                 'backdrop_url' => $title->backdrop_url,
@@ -495,16 +713,18 @@ class LocalMediaScannerService
         $normalized = str_replace('\\', '/', $filePath);
         $pathParts = explode('/', $normalized);
         $fileName = end($pathParts);
+        $epDir = dirname($normalized);
 
         // Identificar el nombre de la serie desde la carpeta superior
         $seriesFolder = '';
+        $seriesDir = $epDir;
         for ($i = count($pathParts) - 2; $i >= 0; $i--) {
             $part = $pathParts[$i];
-            // Si es carpeta de temporada o disco, seguir subiendo
             if (preg_match('/^(temporada|season|\bdisk\d+\b|series|anime|animado)/i', $part)) {
                 continue;
             }
             $seriesFolder = $part;
+            $seriesDir = implode('/', array_slice($pathParts, 0, $i + 1));
             break;
         }
 
@@ -512,11 +732,42 @@ class LocalMediaScannerService
         $seriesCleanTitle = $parsed['title'];
         $seriesYear = $parsed['year'];
 
-        // Metadatos de la serie en TMDb
-        $tmdbData = $this->queryTmdb($seriesCleanTitle, $seriesYear, 'series');
+        // 1. Carátulas y metadatos locales de la serie
+        $seriesArt = $this->findLocalArtwork($seriesDir);
+        $seriesNfo = $this->parseLocalNfo($seriesDir);
 
-        $finalSeriesTitle = !empty($tmdbData['title']) ? $tmdbData['title'] : $seriesCleanTitle;
-        $finalYear = !empty($tmdbData['release_year']) ? (int) $tmdbData['release_year'] : ($seriesYear ?: (int) date('Y'));
+        $finalSeriesTitle = !empty($seriesNfo['title']) ? $seriesNfo['title'] : $seriesCleanTitle;
+        $finalYear = !empty($seriesNfo['release_year']) ? (int) $seriesNfo['release_year'] : ($seriesYear ?: (int) date('Y'));
+        $overview = !empty($seriesNfo['overview']) ? $seriesNfo['overview'] : null;
+        $seriesPoster = $seriesArt['poster'];
+        $seriesBackdrop = $seriesArt['backdrop'];
+        $seriesGenre = $seriesNfo['genre'] ?? 'Series';
+        $seriesRating = $seriesNfo['rating'] ?? 8.2;
+        $tmdbId = $seriesNfo['tmdb_id'] ?? null;
+
+        // Si no hay arte local o falta sinopsis, y TMDB_API_KEY existe, respaldar con TMDb
+        if ((empty($seriesPoster) || empty($overview)) && !empty(env('TMDB_API_KEY')) && !str_starts_with(env('TMDB_API_KEY'), 'tmdb_live_key')) {
+            $tmdbData = $this->queryTmdb($finalSeriesTitle, $finalYear, 'series');
+            if (empty($seriesPoster) && !empty($tmdbData['poster_url'])) {
+                $seriesPoster = $tmdbData['poster_url'];
+            }
+            if (empty($seriesBackdrop) && !empty($tmdbData['backdrop_url'])) {
+                $seriesBackdrop = $tmdbData['backdrop_url'];
+            }
+            if (empty($overview) && !empty($tmdbData['overview'])) {
+                $overview = $tmdbData['overview'];
+            }
+            if (!empty($tmdbData['tmdb_id']) && empty($tmdbId)) {
+                $tmdbId = $tmdbData['tmdb_id'];
+            }
+            if (!empty($tmdbData['genre']) && $seriesGenre === 'Series') {
+                $seriesGenre = $tmdbData['genre'];
+            }
+        }
+
+        $seriesPoster = $seriesPoster ?: '/placeholder-poster.png';
+        $seriesBackdrop = $seriesBackdrop ?: '/placeholder-poster.png';
+        $overview = $overview ?: "Serie {$finalSeriesTitle} en FlixHN.";
         $slug = Str::slug($finalSeriesTitle) ?: ('series-' . md5($finalSeriesTitle));
 
         // 1. Encontrar o crear la Serie (Title type=series)
@@ -527,10 +778,6 @@ class LocalMediaScannerService
             })
             ->first();
 
-        $posterUrl = !empty($tmdbData['poster_url']) ? $tmdbData['poster_url'] : '/placeholder-poster.png';
-        $backdropUrl = !empty($tmdbData['backdrop_url']) ? $tmdbData['backdrop_url'] : '/placeholder-poster.png';
-        $overview = !empty($tmdbData['overview']) ? $tmdbData['overview'] : "Serie {$finalSeriesTitle} en FlixHN.";
-
         if (!$series) {
             $series = Title::create([
                 'name' => $finalSeriesTitle,
@@ -538,24 +785,38 @@ class LocalMediaScannerService
                 'type' => 'series',
                 'category_id' => $category?->id,
                 'description' => $overview,
-                'poster_url' => $posterUrl,
-                'backdrop_url' => $backdropUrl,
+                'poster_url' => $seriesPoster,
+                'backdrop_url' => $seriesBackdrop,
                 'release_year' => $finalYear,
-                'genre' => !empty($tmdbData['genre']) ? $tmdbData['genre'] : 'Series',
-                'community_rating' => !empty($tmdbData['rating']) ? (float) $tmdbData['rating'] : 8.2,
+                'genre' => $seriesGenre,
+                'community_rating' => (float) $seriesRating,
                 'source_type' => 'local',
                 'provider' => 'local',
-                'tmdb_id' => $tmdbData['tmdb_id'] ?? null,
+                'source_path' => $seriesDir,
+                'file_path' => $seriesDir,
+                'stream_path' => '',
+                'tmdb_id' => $tmdbId,
             ]);
+            $series->update(['stream_path' => '/api/stream/title/' . $series->id]);
             $stats['total_series']++;
         } else {
-            // Actualizar si las carátulas previas eran de Emby
-            if (empty($series->poster_url) || str_contains($series->poster_url, '45.4.87.126:6789')) {
-                $series->update(['poster_url' => $posterUrl]);
+            $updateData = [
+                'provider' => 'local',
+                'source_type' => 'local',
+                'source_path' => $seriesDir,
+                'file_path' => $seriesDir,
+                'stream_path' => '/api/stream/title/' . $series->id,
+            ];
+            if (!empty($seriesArt['poster']) || empty($series->poster_url) || str_contains($series->poster_url, '45.4.87.126:6789')) {
+                $updateData['poster_url'] = $seriesPoster;
             }
-            if (empty($series->backdrop_url) || str_contains($series->backdrop_url, '45.4.87.126:6789')) {
-                $series->update(['backdrop_url' => $backdropUrl]);
+            if (!empty($seriesArt['backdrop']) || empty($series->backdrop_url) || str_contains($series->backdrop_url, '45.4.87.126:6789')) {
+                $updateData['backdrop_url'] = $seriesBackdrop;
             }
+            if (!empty($tmdbId) && empty($series->tmdb_id)) {
+                $updateData['tmdb_id'] = $tmdbId;
+            }
+            $series->update($updateData);
         }
 
         // 2. Encontrar o crear la Temporada
@@ -573,7 +834,12 @@ class LocalMediaScannerService
 
         // 3. Encontrar o crear el Episodio
         $episodeNumber = $classification['episode_number'] ?: 1;
-        $epTitle = "Episodio {$episodeNumber}";
+        $epArt = $this->findLocalArtwork($epDir, $fileName);
+        $epNfo = $this->parseLocalNfo($epDir, $fileName);
+
+        $epTitle = $epNfo['title'] ?? "Episodio {$episodeNumber}";
+        $epOverview = $epNfo['overview'] ?? "Capítulo {$episodeNumber} de la temporada {$seasonNumber}.";
+        $epThumbnail = $epArt['backdrop'] ?: $epArt['poster'] ?: $series->backdrop_url;
 
         $episode = Episode::where('title_id', $series->id)
             ->where('season_id', $season->id)
@@ -581,8 +847,8 @@ class LocalMediaScannerService
             ->first();
 
         if (!$episode) {
-            $episode = Episode::where('file_path', $filePath)
-                ->orWhere('stream_path', $filePath)
+            $episode = Episode::where('source_path', $filePath)
+                ->orWhere('file_path', $filePath)
                 ->first();
         }
 
@@ -593,24 +859,30 @@ class LocalMediaScannerService
                 'title_id' => $series->id,
                 'season_id' => $season->id,
                 'episode_number' => $episodeNumber,
+                'title' => $epTitle,
+                'description' => $epOverview,
+                'source_path' => $filePath,
                 'file_path' => $filePath,
-                'stream_path' => $filePath,
+                'stream_path' => '/api/stream/episode/' . $episode->id,
                 'source_type' => 'local',
-                'thumbnail_url' => str_contains((string) $episode->thumbnail_url, '45.4.87.126:6789') ? $backdropUrl : ($episode->thumbnail_url ?: $backdropUrl),
+                'thumbnail_url' => str_contains((string) $episode->thumbnail_url, '45.4.87.126:6789') ? $epThumbnail : ($episode->thumbnail_url ?: $epThumbnail),
+                'duration_seconds' => $duration,
             ]);
         } else {
-            Episode::create([
+            $episode = Episode::create([
                 'title_id' => $series->id,
                 'season_id' => $season->id,
                 'episode_number' => $episodeNumber,
                 'title' => $epTitle,
-                'description' => "Capítulo {$episodeNumber} de la temporada {$seasonNumber}.",
-                'stream_path' => $filePath,
+                'description' => $epOverview,
+                'source_path' => $filePath,
                 'file_path' => $filePath,
+                'stream_path' => '',
                 'source_type' => 'local',
                 'duration_seconds' => $duration,
-                'thumbnail_url' => $backdropUrl,
+                'thumbnail_url' => $epThumbnail,
             ]);
+            $episode->update(['stream_path' => '/api/stream/episode/' . $episode->id]);
             $stats['total_episodes']++;
         }
     }

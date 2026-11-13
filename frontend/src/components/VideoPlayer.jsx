@@ -140,6 +140,24 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
     }
   }, [title?.id, title?.type]);
 
+  // Cerrar el reproductor y redirigir al catálogo inmediatamente si el contenido fue eliminado
+  useEffect(() => {
+    const handleMediaRemoved = (e) => {
+      const { id } = e.detail || {};
+      if (!id) return;
+      const idStr = String(id);
+      if (String(title?.id) === idStr || String(currentEpisode?.id) === idStr) {
+        if (typeof onBack === 'function') {
+          onBack();
+        } else if (typeof onClose === 'function') {
+          onClose();
+        }
+      }
+    };
+    window.addEventListener('media:removed', handleMediaRemoved);
+    return () => window.removeEventListener('media:removed', handleMediaRemoved);
+  }, [title?.id, currentEpisode?.id, onBack, onClose]);
+
   // Token de autorización del servidor para autorizar streams y fragmentos .ts (Punto 2)
   const apiKey = React.useMemo(() => {
     if (currentEpisode?.api_key) return currentEpisode.api_key;
@@ -261,13 +279,18 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
     const media = currentEpisode || title;
     if (!media) return '';
 
+    // Si media.stream_path ya es una ruta /api/stream/...
+    if (media.stream_path && media.stream_path.startsWith('/api/stream/')) {
+      return `${window.location.origin}${media.stream_path}`;
+    }
+
     // Si es contenido local directo (o sin Emby ID), usar los endpoints nativos de streaming de FlixHN
     if (media.source_type === 'local' || media.provider === 'local' || !targetItemId) {
       if (currentEpisode?.id) {
-        return `${window.location.origin}/api/episodes/${currentEpisode.id}/stream`;
+        return `${window.location.origin}/api/stream/episode/${currentEpisode.id}`;
       }
       if (title?.id) {
-        return `${window.location.origin}/api/media/${title.id}/stream`;
+        return `${window.location.origin}/api/stream/title/${title.id}`;
       }
     }
 
@@ -585,7 +608,7 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
           // Título descargado de OTT o contenido local sin Emby ID:
           // NUNCA hacer la petición a Emby con /Videos/undefined/...
           const activeMedia = currentEpisode || title;
-          const fallbackDirectUrl = streamUrl || (activeMedia?.id ? `/api/media/${activeMedia.id}/stream` : '');
+          const fallbackDirectUrl = streamUrl || (activeMedia?.id ? (currentEpisode?.id ? `/api/stream/episode/${currentEpisode.id}` : `/api/stream/title/${activeMedia.id}`) : '');
           const isHls = fallbackDirectUrl.includes('.m3u8');
           playInfo = {
             is_local: true,

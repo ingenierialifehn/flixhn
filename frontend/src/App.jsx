@@ -14,6 +14,7 @@ import LiveTvPlayer from './components/LiveTvPlayer';
 import LiveTvView from './components/LiveTvView';
 import AdminLayout from './pages/admin/AdminLayout';
 import CatalogFilterBar from './components/CatalogFilterBar';
+import ToastContainer from './components/Toast';
 import { HardDrive, RefreshCw, Settings, Film } from 'lucide-react';
 import api from './api/axios';
 import { subscribeToCatalogUpdates } from './utils/catalogEvents';
@@ -137,6 +138,77 @@ function App() {
 
     return () => clearInterval(intervalId);
   }, [hasActiveDownloads, loadCatalog]);
+
+  // 4. Integridad de Medios: Escuchar eventos 'media:removed' para purgar al instante de la UI
+  useEffect(() => {
+    const handleMediaRemoved = (e) => {
+      const { id } = e.detail || {};
+      if (!id) return;
+      const idStr = String(id);
+
+      // Si el modal de detalles abierto corresponde al título eliminado -> cerrarlo inmediatamente
+      setModalTitleId((currentId) => {
+        if (currentId && String(currentId) === idStr) {
+          return null;
+        }
+        return currentId;
+      });
+
+      // Si el reproductor de video activo corresponde al título o episodio eliminado -> cerrar y volver al catálogo
+      setActiveVideo((current) => {
+        if (
+          current &&
+          (String(current.title?.id) === idStr || String(current.episode?.id) === idStr)
+        ) {
+          if (window.location.pathname !== '/browse') {
+            window.history.pushState({}, '', '/browse');
+          }
+          return null;
+        }
+        return current;
+      });
+
+      // Si el reproductor de Live TV corresponde al canal eliminado -> cerrar
+      setActiveLiveChannel((current) => {
+        if (current && String(current.id) === idStr) {
+          return null;
+        }
+        return current;
+      });
+
+      // Remover inmediatamente el elemento de las filas del catálogo en memoria
+      setRows((prevRows) =>
+        prevRows.map((row) => ({
+          ...row,
+          items: (row.items || []).filter((item) => {
+            const itemId = item.id || item.title?.id;
+            return String(itemId) !== idStr;
+          }),
+        }))
+      );
+
+      // Remover del Billboard hero si coincide
+      setBillboardTitle((prev) => {
+        if (prev && String(prev.id) === idStr) return null;
+        return prev;
+      });
+
+      // Remover de los resultados de búsqueda si coincide
+      setSearchResults((prev) =>
+        prev.filter((item) => String(item.id || item.title?.id) !== idStr)
+      );
+
+      // Remover de la lista de canales de TV
+      setLiveChannelsList((prev) =>
+        prev.filter((ch) => String(ch.id) !== idStr)
+      );
+    };
+
+    window.addEventListener('media:removed', handleMediaRemoved);
+    return () => {
+      window.removeEventListener('media:removed', handleMediaRemoved);
+    };
+  }, []);
 
   // Sincronización de URL /admin, /browse, /login y navegación del navegador (Blindaje de Sesión)
   useEffect(() => {
@@ -867,6 +939,9 @@ function App() {
           © {new Date().getFullYear()} FlixHN. Todos los derechos reservados.
         </p>
       </footer>
+
+      {/* Contenedor Global de Notificaciones Toast Elegantes */}
+      <ToastContainer />
     </div>
   );
 }
