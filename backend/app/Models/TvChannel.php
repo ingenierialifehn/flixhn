@@ -113,8 +113,8 @@ class TvChannel extends Model
             if (file_exists($pubPath) || file_exists($appPubPath)) {
                 return $value;
             }
-            // Si el archivo físico en /storage/ no existe en disco, retornar null para mostrar avatar limpio con iniciales
-            return null;
+            // Si el archivo físico en /storage/ no existe en disco, devolver endpoint dinámico que resuelve desde iptv_logos_index o SVG
+            return "/api/tv-channels/{$this->id}/logo";
         }
 
         if (!empty($this->id)) {
@@ -124,14 +124,9 @@ class TvChannel extends Model
             }
         }
 
-        // Si la URL en BD está vacía o apunta al CDN caído tvlogos.b-cdn.net o imgur, resolver candidato curado o iptv-org
+        // Si la URL en BD está vacía o apunta al CDN caído tvlogos.b-cdn.net o imgur, devolver endpoint dinámico
         if (empty($value) || str_contains($value, 'tvlogos.b-cdn.net') || str_contains($value, 'i.imgur.com')) {
-            try {
-                $candidate = app(\App\Services\TvLogoService::class)->resolveCandidateLogoUrl($this->name, null, $this->tvg_id);
-                if (!empty($candidate)) {
-                    return $candidate;
-                }
-            } catch (\Throwable $e) {}
+            return !empty($this->id) ? "/api/tv-channels/{$this->id}/logo" : $value;
         }
 
         return $value;

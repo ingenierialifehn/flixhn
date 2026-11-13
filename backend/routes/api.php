@@ -77,6 +77,8 @@ Route::get('/livetv/channels', [LiveTvController::class, 'getChannels']);
 Route::get('/livetv/channels/{id}', [LiveTvController::class, 'showChannel']);
 Route::get('/channels', [LiveTvController::class, 'getChannels']);
 Route::get('/channels/{id}', [LiveTvController::class, 'showChannel']);
+Route::get('/tv-channels/{id}/logo', [LiveTvController::class, 'getChannelLogo'])->name('tv-channels.logo');
+Route::get('/livetv/channels/{id}/logo', [LiveTvController::class, 'getChannelLogo']);
 Route::get('/livetv/proxy', [LiveTvController::class, 'proxy']);
 Route::match(['get', 'post'], '/livetv/playback-info', [LiveTvController::class, 'getPlaybackInfo']);
 Route::match(['delete', 'post'], '/livetv/active-encoding', [LiveTvController::class, 'stopActiveEncoding']);

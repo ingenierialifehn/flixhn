@@ -403,6 +403,18 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
     const startHlsPlayback = (hlsSourceUrl) => {
       if (isCancelled || !videoRef.current) return;
 
+      // REGLA: Si la URL es stream local y no termina en .m3u8, NO usar hls.js ni mpegts.js; asignar directamente a src nativo
+      if (hlsSourceUrl && (hlsSourceUrl.includes('/api/stream/title/') || hlsSourceUrl.includes('/api/stream/episode/') || hlsSourceUrl.includes('/api/media/') || hlsSourceUrl.includes('/api/episodes/')) && !hlsSourceUrl.includes('.m3u8')) {
+        cleanupMediaInstance();
+        setPlaybackMode('direct');
+        video.src = hlsSourceUrl;
+        video.addEventListener('loadedmetadata', handleReady, { once: true });
+        video.addEventListener('error', handleNativeError, { once: true });
+        video.load();
+        video.play().catch(() => {});
+        return;
+      }
+
       cleanupMediaInstance();
       setPlaybackMode('hls');
 
@@ -835,7 +847,50 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
         }
       };
 
-      if (playInfo.is_direct_playable && playInfo.direct_url) {
+      // Detección de URL de stream local (/api/stream/title/..., /api/stream/episode/..., etc.)
+      const isLocalStreamUrl = (url) => {
+        if (!url || typeof url !== 'string') return false;
+        if (url.includes('.m3u8')) return false;
+        return url.includes('/api/stream/title/') ||
+               url.includes('/api/stream/episode/') ||
+               url.includes('/api/media/') ||
+               url.includes('/api/episodes/');
+      };
+
+      const directCandidate = playInfo?.direct_url || playInfo?.stream_url || streamUrl;
+      const isLocalStream = isLocalStreamUrl(directCandidate) || isLocalStreamUrl(playInfo?.hls_url);
+
+      if (isLocalStream) {
+        // CORRECCIÓN 1: Stream local directo nativo (sin HLS ni MPEGTS)
+        setPlaybackMode('direct');
+        const finalLocalUrl = isLocalStreamUrl(directCandidate)
+          ? directCandidate
+          : (isLocalStreamUrl(playInfo?.hls_url) ? playInfo.hls_url : streamUrl);
+
+        video.src = finalLocalUrl;
+        video.addEventListener('loadedmetadata', handleReady, { once: true });
+        video.addEventListener('error', handleNativeError, { once: true });
+        video.addEventListener('canplay', () => {
+          if (!isCancelled) setIsLoading(false);
+        }, { once: true });
+        video.addEventListener('playing', () => {
+          if (!isCancelled) {
+            setIsLoading(false);
+            setIsPlaying(true);
+          }
+        });
+        video.addEventListener('waiting', () => {
+          if (!isCancelled) setIsLoading(true);
+        });
+
+        video.load();
+        video.play().then(() => {
+          if (!isCancelled) {
+            setIsLoading(false);
+            setIsPlaying(true);
+          }
+        }).catch(() => {});
+      } else if (playInfo.is_direct_playable && playInfo.direct_url) {
         setPlaybackMode('direct');
         video.src = playInfo.direct_url;
 
@@ -863,7 +918,7 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
         }).catch(() => {});
       } else {
         // MKV, TS o formatos que el navegador no soporta de forma nativa: HLS inmediato
-        if (playInfo.hls_url && !playInfo.hls_url.includes('/Videos/undefined')) {
+        if (playInfo.hls_url && playInfo.hls_url.includes('.m3u8') && !playInfo.hls_url.includes('/Videos/undefined')) {
           startHlsPlayback(playInfo.hls_url);
         } else if (playInfo.direct_url) {
           setPlaybackMode('direct');

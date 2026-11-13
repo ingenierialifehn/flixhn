@@ -1,3 +1,12 @@
+// Desregistración automática de cualquier Service Worker viejo para evitar cachés obsoletas
+if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations().then((registrations) => {
+    for (const registration of registrations) {
+      registration.unregister();
+    }
+  }).catch(() => {});
+}
+
 if (typeof window !== 'undefined' && (!window.crypto || !window.crypto.randomUUID)) {
     if (!window.crypto) window.crypto = {};
     window.crypto.randomUUID = () =>

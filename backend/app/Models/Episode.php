@@ -47,10 +47,13 @@ class Episode extends Model
         if ($this->id) {
             $filePath = $this->attributes['file_path'] ?? null;
             $sourcePath = $this->attributes['source_path'] ?? null;
-            $isLocal = ($this->attributes['source_type'] ?? 'local') === 'local'
-                || !empty($filePath)
-                || !empty($sourcePath)
-                || ($value && (str_starts_with($value, '/mnt/') || str_starts_with($value, '/storage/') || str_starts_with($value, 'storage/') || str_starts_with($value, '/api/stream/')));
+            $sourceType = $this->attributes['source_type'] ?? 'local';
+            $isLocal = ($sourceType === 'local')
+                || (!empty($filePath) && str_starts_with($filePath, '/mnt/'))
+                || (!empty($sourcePath) && str_starts_with($sourcePath, '/mnt/'))
+                || (!empty($filePath) && (str_starts_with($filePath, '/storage/') || str_starts_with($filePath, 'storage/')))
+                || (!empty($sourcePath) && (str_starts_with($sourcePath, '/storage/') || str_starts_with($sourcePath, 'storage/')))
+                || ($value && (str_starts_with($value, '/mnt/') || str_starts_with($value, '/storage/') || str_starts_with($value, 'storage/') || str_starts_with($value, '/api/stream/') || str_starts_with($value, '/api/episodes/') || str_starts_with($value, '/api/media/')));
 
             if ($isLocal && !str_contains((string) $value, '/Videos/')) {
                 return "/api/stream/episode/{$this->id}";
@@ -61,6 +64,26 @@ class Episode extends Model
 
     public function getStreamUrlAttribute(): ?string
     {
+        // Si el registro es local ($this->provider === 'local' / source_type === 'local' o $this->source_path inicia con /mnt/), devuelve SIEMPRE /api/stream/episode/{$this->id}
+        if ($this->id) {
+            $filePath = $this->attributes['file_path'] ?? null;
+            $sourcePath = $this->attributes['source_path'] ?? null;
+            $streamPath = $this->attributes['stream_path'] ?? null;
+            $sourceType = $this->attributes['source_type'] ?? 'local';
+
+            $isLocal = ($sourceType === 'local')
+                || (!empty($filePath) && str_starts_with($filePath, '/mnt/'))
+                || (!empty($sourcePath) && str_starts_with($sourcePath, '/mnt/'))
+                || (!empty($filePath) && (str_starts_with($filePath, '/storage/') || str_starts_with($filePath, 'storage/')))
+                || (!empty($sourcePath) && (str_starts_with($sourcePath, '/storage/') || str_starts_with($sourcePath, 'storage/')))
+                || ($streamPath && (str_starts_with($streamPath, '/api/stream/') || str_starts_with($streamPath, '/api/episodes/') || str_starts_with($streamPath, '/api/media/')));
+
+            $pathCheck = $streamPath ?? $filePath ?? $sourcePath ?? '';
+            if ($isLocal && !str_contains((string)$pathCheck, '/Videos/')) {
+                return "/api/stream/episode/{$this->id}";
+            }
+        }
+
         $filePath = $this->attributes['file_path'] ?? null;
         $sourcePath = $this->attributes['source_path'] ?? null;
         $streamPath = $this->attributes['stream_path'] ?? null;

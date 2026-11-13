@@ -104,6 +104,109 @@ class LiveTvController extends Controller
     }
 
     /**
+     * Endpoint para servir el logo de un canal de televisión en vivo.
+     * Si el archivo local en storage no existe físicamente, busca en iptv_logos_index.json
+     * o genera dinámicamente un SVG vectorizado con el nombre/siglas del canal y su paleta de color.
+     * GET /api/tv-channels/{id}/logo
+     * GET /livetv/channels/{id}/logo
+     */
+    public function getChannelLogo(Request $request, $id)
+    {
+        $channel = is_numeric($id) ? TvChannel::find($id) : TvChannel::where('tvg_id', $id)->first();
+        if (!$channel) {
+            $placeholder = public_path('img/placeholder-poster.png');
+            if (file_exists($placeholder)) {
+                return response()->file($placeholder, [
+                    'Content-Type' => 'image/png',
+                    'Cache-Control' => 'public, max-age=86400',
+                ]);
+            }
+            return response('', 404);
+        }
+
+        $rawLogo = $channel->getRawOriginal('logo_url');
+        if (!empty($rawLogo) && str_starts_with($rawLogo, '/storage/')) {
+            $rel = ltrim(preg_replace('#^/storage/#', '', $rawLogo), '/');
+            $fullPath = storage_path("app/public/{$rel}");
+            if (file_exists($fullPath) && !is_dir($fullPath) && @filesize($fullPath) > 50) {
+                $ext = strtolower(pathinfo($fullPath, PATHINFO_EXTENSION));
+                $mime = match ($ext) {
+                    'svg' => 'image/svg+xml',
+                    'png' => 'image/png',
+                    'webp' => 'image/webp',
+                    default => 'image/jpeg',
+                };
+                return response()->file($fullPath, [
+                    'Content-Type' => $mime,
+                    'Cache-Control' => 'public, max-age=86400',
+                    'Access-Control-Allow-Origin' => '*',
+                ]);
+            }
+        }
+
+        // Si no existe físicamente, procesar mediante TvLogoService (iptv_logos_index.json o generación SVG)
+        try {
+            $logoService = app(\App\Services\TvLogoService::class);
+            $logoPath = $logoService->processChannelLogo($channel, null, false);
+            if ($logoPath && str_starts_with($logoPath, '/storage/')) {
+                $rel = ltrim(preg_replace('#^/storage/#', '', $logoPath), '/');
+                $fullPath = storage_path("app/public/{$rel}");
+                if (file_exists($fullPath) && !is_dir($fullPath)) {
+                    $ext = strtolower(pathinfo($fullPath, PATHINFO_EXTENSION));
+                    $mime = match ($ext) {
+                        'svg' => 'image/svg+xml',
+                        'png' => 'image/png',
+                        'webp' => 'image/webp',
+                        default => 'image/jpeg',
+                    };
+                    return response()->file($fullPath, [
+                        'Content-Type' => $mime,
+                        'Cache-Control' => 'public, max-age=86400',
+                        'Access-Control-Allow-Origin' => '*',
+                    ]);
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::debug("LiveTvController@getChannelLogo error: " . $e->getMessage());
+        }
+
+        // Fallback SVG dinámico garantizado con siglas y color del canal
+        $words = explode(' ', trim(preg_replace('/\b(hd|fhd|sd|4k|latino|esp|hon)\b/i', '', $channel->name)));
+        $short = count($words) >= 2
+            ? mb_substr($words[0], 0, 1) . mb_substr($words[1], 0, 1)
+            : mb_substr($words[0] ?? 'TV', 0, 3);
+        $short = mb_strtoupper($short);
+        $hue = abs(crc32($channel->name) % 360);
+        $escapedName = htmlspecialchars(mb_substr($channel->name, 0, 20), ENT_XML1);
+        $escapedShort = htmlspecialchars($short, ENT_XML1);
+
+        $svg = <<<SVG
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180" width="100%" height="100%">
+  <defs>
+    <linearGradient id="grad_{$channel->id}" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="hsl({$hue}, 65%, 25%)" />
+      <stop offset="100%" stop-color="hsl({$hue}, 80%, 12%)" />
+    </linearGradient>
+  </defs>
+  <rect width="320" height="180" rx="16" fill="url(#grad_{$channel->id})" stroke="hsl({$hue}, 60%, 45%)" stroke-width="2" stroke-opacity="0.4" />
+  <rect x="16" y="16" width="288" height="148" rx="10" fill="#000000" fill-opacity="0.25" />
+  <text x="160" y="88" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="38" font-weight="900" fill="#ffffff" text-anchor="middle" dominant-baseline="middle" letter-spacing="2">
+    {$escapedShort}
+  </text>
+  <text x="160" y="132" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="600" fill="#e4e4e7" text-anchor="middle" opacity="0.9">
+    {$escapedName}
+  </text>
+</svg>
+SVG;
+
+        return response($svg, 200, [
+            'Content-Type' => 'image/svg+xml; charset=utf-8',
+            'Cache-Control' => 'public, max-age=86400',
+            'Access-Control-Allow-Origin' => '*',
+        ]);
+    }
+
+    /**
      * Negociación de streaming en vivo con Emby (PlaybackInfo).
      * Consulta POST /emby/Items/{channelId}/PlaybackInfo con DeviceProfile exclusivo
      * h264 + aac,mp3 (estéreo) para asegurar DirectStream o transcodificación de audio

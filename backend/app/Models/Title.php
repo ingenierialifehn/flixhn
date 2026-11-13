@@ -116,13 +116,17 @@ class Title extends Model
     public function getStreamPathAttribute(?string $value): ?string
     {
         if ($this->id) {
+            $provider = $this->provider;
             $sourcePath = $this->attributes['source_path'] ?? null;
             $filePath = $this->attributes['file_path'] ?? null;
-            $isLocal = ($this->attributes['provider'] ?? 'local') === 'local'
+
+            $isLocal = ($provider === 'local')
                 || ($this->attributes['source_type'] ?? null) === 'local'
-                || !empty($sourcePath)
-                || !empty($filePath)
-                || ($value && (str_starts_with($value, '/mnt/') || str_starts_with($value, '/storage/') || str_starts_with($value, 'storage/') || str_starts_with($value, '/api/stream/')));
+                || (!empty($sourcePath) && str_starts_with($sourcePath, '/mnt/'))
+                || (!empty($filePath) && str_starts_with($filePath, '/mnt/'))
+                || (!empty($sourcePath) && (str_starts_with($sourcePath, '/storage/') || str_starts_with($sourcePath, 'storage/')))
+                || (!empty($filePath) && (str_starts_with($filePath, '/storage/') || str_starts_with($filePath, 'storage/')))
+                || ($value && (str_starts_with($value, '/api/stream/') || str_starts_with($value, '/api/media/')));
 
             if ($isLocal && !str_contains((string) $value, '/Videos/')) {
                 return "/api/stream/title/{$this->id}";
@@ -133,6 +137,27 @@ class Title extends Model
 
     public function getStreamUrlAttribute(): ?string
     {
+        // Si el registro es local ($this->provider === 'local' o $this->source_path inicia con /mnt/), devuelve SIEMPRE /api/stream/title/{$this->id}
+        if ($this->id) {
+            $provider = $this->provider;
+            $sourcePath = $this->attributes['source_path'] ?? null;
+            $filePath = $this->attributes['file_path'] ?? null;
+            $streamPath = $this->attributes['stream_path'] ?? null;
+
+            $isLocal = ($provider === 'local')
+                || ($this->attributes['source_type'] ?? null) === 'local'
+                || (!empty($sourcePath) && str_starts_with($sourcePath, '/mnt/'))
+                || (!empty($filePath) && str_starts_with($filePath, '/mnt/'))
+                || (!empty($sourcePath) && (str_starts_with($sourcePath, '/storage/') || str_starts_with($sourcePath, 'storage/')))
+                || (!empty($filePath) && (str_starts_with($filePath, '/storage/') || str_starts_with($filePath, 'storage/')))
+                || ($streamPath && (str_starts_with($streamPath, '/api/stream/') || str_starts_with($streamPath, '/api/media/')));
+
+            $pathCheck = $streamPath ?? $filePath ?? $sourcePath ?? '';
+            if ($isLocal && !str_contains((string)$pathCheck, '/Videos/')) {
+                return "/api/stream/title/{$this->id}";
+            }
+        }
+
         $sourcePath = $this->attributes['source_path'] ?? null;
         $filePath = $this->attributes['file_path'] ?? null;
         $streamPath = $this->attributes['stream_path'] ?? null;

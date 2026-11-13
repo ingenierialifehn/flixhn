@@ -242,7 +242,29 @@ class MediaStreamController extends Controller
             return $integrityService->goneResponse($title->id, $title->type ?? 'movie');
         }
 
+        // Para películas (streamTitle($id)), busca la ruta física en $title->source_path ?? $title->file_path.
+        // Si aún no está o es una serie, busca su primer Episode o MediaItem.
+        $rawPath = $title->source_path ?: $title->file_path;
+
+        if (empty($rawPath) || $title->type === 'series') {
+            $firstEpisode = Episode::where('title_id', $title->id)
+                ->orderBy('season_id')
+                ->orderBy('episode_number')
+                ->first();
+            if ($firstEpisode) {
+                $rawPath = $firstEpisode->file_path ?: ($firstEpisode->source_path ?? null);
+            }
+
+            if (empty($rawPath)) {
+                $mediaItem = MediaItem::where('title_id', $title->id)->first();
+                if ($mediaItem && !empty($mediaItem->file_path)) {
+                    $rawPath = $mediaItem->file_path;
+                }
+            }
+        }
+
         $candidates = array_filter([
+            $rawPath,
             $title->source_path,
             $title->file_path,
             $title->getRawOriginal('stream_path'),
@@ -285,7 +307,11 @@ class MediaStreamController extends Controller
                 return $integrityService->goneResponse($episode->id, 'episode');
             }
 
+            // Para episodios (streamEpisode($id)), busca en $episode->file_path ?? $episode->source_path
+            $rawPath = $episode->file_path ?: ($episode->source_path ?? null);
+
             $candidates = array_filter([
+                $rawPath,
                 $episode->file_path,
                 $episode->source_path ?? null,
                 $episode->getRawOriginal('stream_path'),
@@ -673,7 +699,7 @@ class MediaStreamController extends Controller
 
     protected function serveStreamWithByteRange(Request $request, string $filePath)
     {
-        if (ob_get_level()) {
+        while (ob_get_level() > 0) {
             ob_end_clean();
         }
 
@@ -821,6 +847,31 @@ class MediaStreamController extends Controller
                 'Cache-Control' => 'public, max-age=2592000, immutable',
                 'Access-Control-Allow-Origin' => '*',
             ]);
+        }
+
+        // Si es un logo de canal y no existe en disco, resolverlo o generarlo para no dar 404
+        if (str_starts_with($cleanPath, 'logos/channels/')) {
+            $filename = basename($cleanPath);
+            if (preg_match('/^ch_(\d+)_/i', $filename, $m)) {
+                $channel = \App\Models\TvChannel::find((int) $m[1]);
+                if ($channel) {
+                    try {
+                        $resolvedUrl = app(\App\Services\TvLogoService::class)->processChannelLogo($channel, null, false);
+                        $createdPath = storage_path('app/public/' . ltrim(preg_replace('#^/storage/#', '', $resolvedUrl), '/'));
+                        if (File::exists($createdPath)) {
+                            $ext = strtolower(pathinfo($createdPath, PATHINFO_EXTENSION));
+                            $mime = $ext === 'svg' ? 'image/svg+xml' : ($this->mimeTypes[$ext] ?? 'image/png');
+                            return response()->file($createdPath, [
+                                'Content-Type' => $mime,
+                                'Cache-Control' => 'public, max-age=86400',
+                                'Access-Control-Allow-Origin' => '*',
+                            ]);
+                        }
+                    } catch (\Throwable $e) {
+                        Log::debug("serveStorage: Error generando logo de canal: " . $e->getMessage());
+                    }
+                }
+            }
         }
 
         // Fallback al placeholder institucional del sistema

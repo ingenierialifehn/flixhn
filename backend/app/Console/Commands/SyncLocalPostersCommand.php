@@ -56,6 +56,7 @@ class SyncLocalPostersCommand extends Command
                 ['Total títulos en base de datos', $results['total']],
                 ['Películas con carátula actualizada', $results['updated_movies']],
                 ['Series con carátula actualizada', $results['updated_series']],
+                ['Logos de canales TV verificados/sincronizados', $results['synced_channels'] ?? 0],
                 ['Carpetas no encontradas / inaccesibles', $results['not_found']],
                 ['Tiempo de ejecución', "{$duration} segundos"],
             ]
