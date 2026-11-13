@@ -65,3 +65,4 @@ class SyncLocalPostersCommand extends Command
         return Command::SUCCESS;
     }
 }
+

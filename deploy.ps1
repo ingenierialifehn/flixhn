@@ -1,4 +1,4 @@
-﻿param (
+param (
     [string]$CommitMessage = "deploy: auto update flixhn to PowerEdge R720 (65.187.110.22)"
 )
 
