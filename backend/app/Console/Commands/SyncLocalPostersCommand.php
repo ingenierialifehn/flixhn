@@ -12,7 +12,7 @@ class SyncLocalPostersCommand extends Command
      *
      * @var string
      */
-    protected $signature = 'media:sync-posters';
+    protected $signature = 'media:sync-posters {--all : Sincronizar todos los títulos, incluso si ya tienen carátula}';
 
     /**
      * Los alias del comando.
@@ -26,17 +26,21 @@ class SyncLocalPostersCommand extends Command
      *
      * @var string
      */
-    protected $description = 'Extrae carátulas, fondos y sinopsis desde archivos .nfo y artwork local en /mnt/media_library/Disk2-7 para películas y series';
+    protected $description = 'Extrae carátulas, fondos y sinopsis desde .nfo, carpetas locales o APIs públicas (TVMaze/iTunes) para películas y series';
 
     /**
      * Ejecuta el comando de consola.
      */
     public function handle(LocalMediaScannerService $scanner): int
     {
+        $forceAll = (bool) $this->option('all');
+
         $this->info('========================================================================');
-        $this->info(' FlixHN - Sincronizador de Carátulas, Fondos y Sinopsis (.nfo / TMDb)  ');
+        $this->info(' FlixHN - Sincronizador de Carátulas, Fondos y Sinopsis (Local / TVMaze / iTunes) ');
         $this->info('========================================================================');
-        $this->comment('Escaneando archivos .nfo homónimos y artwork en /mnt/media_library/Disk2..Disk7...');
+        $this->comment($forceAll
+            ? 'Escaneando TODOS los títulos en chunks de 100...'
+            : 'Escaneando en chunks de 100 títulos pendientes de carátula o con carátula por defecto...');
 
         $startTime = microtime(true);
 
@@ -44,7 +48,7 @@ class SyncLocalPostersCommand extends Command
             if ($updated) {
                 $this->line(" <info>✓ Actualizado:</info> [ID: {$title->id}] {$title->name} -> {$posterUrl}");
             }
-        });
+        }, $forceAll);
 
         $duration = round(microtime(true) - $startTime, 2);
 

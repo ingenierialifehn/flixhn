@@ -224,8 +224,36 @@ class MediaStreamController extends Controller
     }
 
     /**
+     * Construye una respuesta inmediata X-Accel-Redirect para que Nginx sirva el video directamente
+     * con sendfile y Byte-Ranges sin mantener ocupados los workers de PHP-FPM.
+     */
+    protected function xAccelRedirectResponse(string $filePath): \Illuminate\Http\Response
+    {
+        $extension = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
+        $mimeType = match ($extension) {
+            'mp4', 'm4v' => 'video/mp4',
+            'mkv' => 'video/x-matroska',
+            'webm' => 'video/webm',
+            'avi' => 'video/x-msvideo',
+            'ts' => 'video/mp2t',
+            default => ($this->mimeTypes[$extension] ?? 'video/mp4'),
+        };
+
+        $relativePath = ltrim(substr($filePath, strlen('/mnt/media_library/')), '/');
+        $encodedPath = implode('/', array_map('rawurlencode', explode('/', $relativePath)));
+
+        return response('', 200, [
+            'Content-Type' => $mimeType,
+            'X-Accel-Redirect' => '/internal_media/' . $encodedPath,
+            'X-Accel-Buffering' => 'no',
+            'Accept-Ranges' => 'bytes',
+        ]);
+    }
+
+    /**
      * Endpoint específico de streaming directo para títulos / películas.
-     * Soporta solicitudes de rango de bytes (HTTP 206 Partial Content) para reproducción instantánea.
+     * Si el archivo físico existe en /mnt/media_library/, delega inmediatamente en Nginx (X-Accel-Redirect).
+     * Si no existe en disco, purga el registro y devuelve 404.
      * GET/HEAD /api/stream/title/{id}
      */
     public function streamTitle(Request $request, $id)
@@ -234,33 +262,28 @@ class MediaStreamController extends Controller
         $title = Title::find($id);
 
         if (!$title) {
-            return $integrityService->goneResponse(is_numeric($id) ? (int)$id : null, 'movie');
+            return response()->json(['error' => 'Película o serie no encontrada.'], 404);
         }
 
-        // Auto-verificación de integridad de archivo físico
-        if (!$integrityService->verifyOrPurgeTitle($title)) {
-            return $integrityService->goneResponse($title->id, $title->type ?? 'movie');
-        }
-
-        // Para películas (streamTitle($id)), busca la ruta física en $title->source_path ?? $title->file_path.
-        // Si aún no está o es una serie, busca su primer Episode o MediaItem.
-        $rawPath = $title->source_path ?: $title->file_path;
-
-        if (empty($rawPath) || $title->type === 'series') {
+        // Si es una serie y se solicitó stream sobre el título, buscar el primer episodio
+        if ($title->type === 'series') {
             $firstEpisode = Episode::where('title_id', $title->id)
                 ->orderBy('season_id')
                 ->orderBy('episode_number')
                 ->first();
             if ($firstEpisode) {
-                $rawPath = $firstEpisode->file_path ?: ($firstEpisode->source_path ?? null);
+                return $this->streamEpisode($request, $firstEpisode->id);
             }
 
-            if (empty($rawPath)) {
-                $mediaItem = MediaItem::where('title_id', $title->id)->first();
-                if ($mediaItem && !empty($mediaItem->file_path)) {
-                    $rawPath = $mediaItem->file_path;
-                }
-            }
+            Log::warning("MediaStreamController@streamTitle: Serie sin episodios disponibles en disco [ID {$title->id}: {$title->name}]. Purgando registro y devolviendo 404.");
+            $integrityService->purgeTitle($title);
+            return response()->json(['error' => 'Serie sin episodios disponibles en disco.'], 404);
+        }
+
+        // Para películas (streamTitle($id)), busca la ruta física en $title->source_path ?? $title->file_path.
+        $rawPath = $title->source_path ?: $title->file_path;
+        if (empty($rawPath) || str_starts_with($rawPath, '/api/')) {
+            $rawPath = $title->getRawOriginal('stream_path');
         }
 
         $candidates = array_filter([
@@ -270,29 +293,37 @@ class MediaStreamController extends Controller
             $title->getRawOriginal('stream_path'),
         ]);
 
+        $resolved = null;
         foreach ($candidates as $candidate) {
             if (empty($candidate) || str_starts_with($candidate, '/api/')) {
                 continue;
             }
-            $resolved = $this->resolvePhysicalFilePath($candidate);
-            if ($resolved && file_exists($resolved) && !is_dir($resolved) && @filesize($resolved) > 1024) {
-                return $this->serveStreamWithByteRange($request, $resolved);
+            $candResolved = $this->resolvePhysicalFilePath($candidate);
+            if ($candResolved && file_exists($candResolved) && !is_dir($candResolved) && @filesize($candResolved) > 1024) {
+                $resolved = $candResolved;
+                break;
             }
         }
 
-        // Si es una serie y se solicitó stream sobre el título, buscar el primer episodio
-        if ($title->type === 'series') {
-            $firstEpisode = Episode::where('title_id', $title->id)->orderBy('season_id')->orderBy('episode_number')->first();
-            if ($firstEpisode) {
-                return $this->streamEpisode($request, $firstEpisode->id);
-            }
+        // Si NO existe en disco, purga el registro y devuelve 404
+        if (!$resolved || !file_exists($resolved) || is_dir($resolved) || @filesize($resolved) <= 1024) {
+            Log::warning("MediaStreamController@streamTitle: Archivo físico no existe para [ID {$title->id}: {$title->name}]. Purgando registro y devolviendo 404.");
+            $integrityService->purgeTitle($title);
+            return response()->json(['error' => 'Archivo físico no encontrado en el servidor.'], 404);
         }
 
-        return $integrityService->goneResponse($title->id, $title->type ?? 'movie');
+        // Si el archivo SÍ existe y su ruta comienza con /mnt/media_library/, entrega inmediatamente vía X-Accel-Redirect
+        if (str_starts_with($resolved, '/mnt/media_library/')) {
+            return $this->xAccelRedirectResponse($resolved);
+        }
+
+        return $this->serveStreamWithByteRange($request, $resolved);
     }
 
     /**
      * Endpoint específico de streaming directo para episodios de series.
+     * Si el archivo físico existe en /mnt/media_library/, delega inmediatamente en Nginx (X-Accel-Redirect).
+     * Si no existe en disco, purga el episodio y devuelve 404.
      * GET/HEAD /api/stream/episode/{id}
      * GET/HEAD /api/episodes/{id}/stream
      */
@@ -301,56 +332,88 @@ class MediaStreamController extends Controller
         $integrityService = app(MediaIntegrityService::class);
         $episode = Episode::find($id);
 
-        if ($episode) {
-            // Auto-verificación de integridad de archivo físico
-            if (!$integrityService->verifyOrPurgeEpisode($episode)) {
-                return $integrityService->goneResponse($episode->id, 'episode');
-            }
-
-            // Para episodios (streamEpisode($id)), busca en $episode->file_path ?? $episode->source_path
-            $rawPath = $episode->file_path ?: ($episode->source_path ?? null);
-
-            $candidates = array_filter([
-                $rawPath,
-                $episode->file_path,
-                $episode->source_path ?? null,
-                $episode->getRawOriginal('stream_path'),
-            ]);
-
-            foreach ($candidates as $candidate) {
-                if (empty($candidate) || str_starts_with($candidate, '/api/')) {
-                    continue;
-                }
-                $resolved = $this->resolvePhysicalFilePath($candidate);
-                if ($resolved && file_exists($resolved) && !is_dir($resolved) && @filesize($resolved) > 1024) {
-                    return $this->serveStreamWithByteRange($request, $resolved);
-                }
-            }
-        } else {
-            return $integrityService->goneResponse(is_numeric($id) ? (int)$id : null, 'episode');
+        if (!$episode) {
+            return response()->json(['error' => 'Episodio no encontrado.'], 404);
         }
 
-        return $this->stream($request, $id);
+        // Para episodios (streamEpisode($id)), busca en $episode->file_path ?? $episode->source_path
+        $rawPath = $episode->file_path ?: ($episode->source_path ?? null);
+        if (empty($rawPath) || str_starts_with($rawPath, '/api/')) {
+            $rawPath = $episode->getRawOriginal('stream_path');
+        }
+
+        $candidates = array_filter([
+            $rawPath,
+            $episode->file_path,
+            $episode->source_path ?? null,
+            $episode->getRawOriginal('stream_path'),
+        ]);
+
+        $resolved = null;
+        foreach ($candidates as $candidate) {
+            if (empty($candidate) || str_starts_with($candidate, '/api/')) {
+                continue;
+            }
+            $candResolved = $this->resolvePhysicalFilePath($candidate);
+            if ($candResolved && file_exists($candResolved) && !is_dir($candResolved) && @filesize($candResolved) > 1024) {
+                $resolved = $candResolved;
+                break;
+            }
+        }
+
+        // Si NO existe en disco, purga el episodio y devuelve 404
+        if (!$resolved || !file_exists($resolved) || is_dir($resolved) || @filesize($resolved) <= 1024) {
+            Log::warning("MediaStreamController@streamEpisode: Archivo físico no existe para episodio [ID {$episode->id}: {$episode->title}]. Purgando episodio y devolviendo 404.");
+            $integrityService->purgeEpisode($episode);
+            return response()->json(['error' => 'Archivo de episodio no encontrado en el servidor.'], 404);
+        }
+
+        // Si el archivo SÍ existe y su ruta comienza con /mnt/media_library/, entrega inmediatamente vía X-Accel-Redirect
+        if (str_starts_with($resolved, '/mnt/media_library/')) {
+            return $this->xAccelRedirectResponse($resolved);
+        }
+
+        return $this->serveStreamWithByteRange($request, $resolved);
     }
 
     /**
-     * Servir carátulas locales (poster.jpg, folder.jpg, backdrop.jpg, etc.) sin depender de APIs externas.
-     * Valida estrictamente que la ruta solicitada se encuentre dentro de /mnt/media_library/ o carpetas autorizadas.
+     * Servir carátulas locales (poster.jpg, folder.jpg, etc.) sin depender de APIs externas.
+     * NUNCA devuelve 410 ni 404 en esta ruta. Si no existe o es index.jpeg/index2.jpeg,
+     * devuelve un SVG dinámico 200 OK elegante con fondo oscuro #141414 y el logo/texto de FlixHN.
      *
      * Ruta: GET /api/media/local-image?path=...
      */
     public function localImage(Request $request)
     {
         $rawPath = $request->query('path');
+        $titleParam = $request->query('title');
+
+        $renderSvg = function (?string $name = null) use ($titleParam) {
+            $display = $name ?: ($titleParam ?: 'FlixHN');
+            $svg = app(\App\Services\MediaSyncService::class)->getSvgPosterContent($display);
+            return response($svg, 200, [
+                'Content-Type' => 'image/svg+xml; charset=utf-8',
+                'Cache-Control' => 'public, max-age=86400',
+                'Access-Control-Allow-Origin' => '*',
+            ]);
+        };
+
         if (empty($rawPath)) {
-            return $this->serveStorage($request, 'placeholder-poster.png');
+            return $renderSvg();
         }
 
         $normalized = str_replace('\\', '/', trim($rawPath));
+        $baseName = strtolower(basename($normalized));
+
+        // Prohibir terminantemente index.jpeg, index2.jpeg, index.jpg -> entregar SVG dinámico 200 OK
+        if (in_array($baseName, ['index.jpeg', 'index2.jpeg', 'index.jpg'])) {
+            $parentFolder = basename(dirname($normalized));
+            return $renderSvg($parentFolder !== '.' && $parentFolder !== '/' ? $parentFolder : null);
+        }
 
         // Prevención estricta de directory traversal
         if (str_contains($normalized, '../') || str_contains($normalized, '..\\')) {
-            return response()->json(['error' => 'Ruta inválida.'], 403);
+            return $renderSvg();
         }
 
         // Validar que la ruta comience con una ubicación autorizada en el servidor
@@ -372,12 +435,13 @@ class MediaStreamController extends Controller
         }
 
         if (!$isAllowed) {
-            Log::warning("MediaStreamController@localImage: Intento de acceso no autorizado a ruta: {$normalized}");
-            return response()->json(['error' => 'Acceso denegado a la ruta especificada.'], 403);
+            return $renderSvg();
         }
 
+        // Si el archivo físico no existe o es directorio, NUNCA devolver 404 ni 410 -> devolver SVG dinámico 200 OK
         if (!File::exists($normalized) || File::isDirectory($normalized)) {
-            return $this->serveStorage($request, 'placeholder-poster.png');
+            $parentFolder = basename(dirname($normalized));
+            return $renderSvg($parentFolder !== '.' && $parentFolder !== '/' ? $parentFolder : null);
         }
 
         $ext = strtolower(pathinfo($normalized, PATHINFO_EXTENSION));
@@ -701,6 +765,11 @@ class MediaStreamController extends Controller
     {
         while (ob_get_level() > 0) {
             ob_end_clean();
+        }
+
+        // Si el archivo físico se encuentra en /mnt/media_library/, entregar directamente vía Nginx X-Accel-Redirect
+        if (str_starts_with($filePath, '/mnt/media_library/')) {
+            return $this->xAccelRedirectResponse($filePath);
         }
 
         $fileSize = (int) @filesize($filePath);

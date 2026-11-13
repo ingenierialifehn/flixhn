@@ -28,6 +28,17 @@ api.interceptors.response.use(
     const data = error.response?.data;
     const url = error.config?.url || '';
 
+    // Ignorar completamente cualquier error proveniente de URLs de imágenes (/local-image, /logo, .jpg, .png, .webp, etc.)
+    // para que una carátula faltante jamás bloquee ni purgue una película o serie.
+    const isImageUrl =
+      url.includes('/local-image') ||
+      url.includes('/logo') ||
+      /\.(jpe?g|png|webp|svg|gif)(\?.*)?$/i.test(url);
+
+    if (isImageUrl) {
+      return Promise.reject(error);
+    }
+
     // Manejo de contenido eliminado o no disponible (404 o 410)
     const isTargetEndpoint =
       url.includes('/media') ||

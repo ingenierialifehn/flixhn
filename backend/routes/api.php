@@ -83,15 +83,17 @@ Route::get('/livetv/proxy', [LiveTvController::class, 'proxy']);
 Route::match(['get', 'post'], '/livetv/playback-info', [LiveTvController::class, 'getPlaybackInfo']);
 Route::match(['delete', 'post'], '/livetv/active-encoding', [LiveTvController::class, 'stopActiveEncoding']);
 
+// Endpoint prioritario de carátulas locales (declarado antes de /media/{id} para evitar colisiones)
+Route::get('/media/local-image', [App\Http\Controllers\MediaStreamController::class, 'localImage'])->name('media.local-image');
+
 // Catálogo público unificado y endpoints de integridad
 Route::get('/media', [TitleController::class, 'index']);
 Route::get('/catalog', [TitleController::class, 'index']);
-Route::get('/media/{id}', [TitleController::class, 'show']);
+Route::get('/media/{id}', [TitleController::class, 'show'])->whereNumber('id');
 
 // Streaming directo HTTP 206 y carátulas locales (sin depender de Emby)
 Route::match(['get', 'head'], '/stream/title/{id}', [App\Http\Controllers\MediaStreamController::class, 'streamTitle'])->name('stream.title');
 Route::match(['get', 'head'], '/stream/episode/{id}', [App\Http\Controllers\MediaStreamController::class, 'streamEpisode'])->name('stream.episode');
-Route::get('/media/local-image', [App\Http\Controllers\MediaStreamController::class, 'localImage'])->name('media.local-image');
 Route::match(['get', 'head'], '/media/{id}/stream', [App\Http\Controllers\MediaStreamController::class, 'streamTitle'])->name('media.stream');
 Route::match(['get', 'head'], '/episodes/{id}/stream', [App\Http\Controllers\MediaStreamController::class, 'streamEpisode'])->name('episodes.stream');
 Route::get('/media/{id}/play', [App\Http\Controllers\MediaStreamController::class, 'playMedia'])->name('media.play');

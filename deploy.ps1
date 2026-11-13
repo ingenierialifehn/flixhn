@@ -23,6 +23,7 @@ $RemoteCommands = @(
     "git checkout -- .",
     "git clean -fd -e frontend/public/mpegts.js",
     "git pull origin $Branch",
+    "docker compose up -d 2>/dev/null || docker-compose up -d 2>/dev/null || true",
 
     # 1. Blindar contenedor Frontend (eliminar /node_modules raíz duplicado y asegurar mpegts.js)
     "docker exec -u root flixhn_frontend rm -rf /node_modules /tmp/.vite 2>/dev/null || true",

@@ -619,6 +619,159 @@ class LocalMediaScannerService
     }
 
     /**
+     * Busca cualquier imagen válida (.jpg, .jpeg, .png, .webp) dentro de la carpeta y sus subcarpetas inmediatas,
+     * ignorando estrictamente index.jpeg, index2.jpeg e index.jpg.
+     */
+    public function findAnyLocalValidImage(string $dirPath): ?string
+    {
+        if (empty($dirPath) || !is_dir($dirPath)) {
+            return null;
+        }
+
+        $normalized = rtrim(str_replace('\\', '/', $dirPath), '/');
+        $validExts = ['jpg', 'jpeg', 'png', 'webp'];
+
+        try {
+            // 1. Explorar directorio directo
+            $entries = @scandir($normalized);
+            if ($entries) {
+                foreach ($entries as $entry) {
+                    if ($entry === '.' || $entry === '..') continue;
+                    $entryLower = strtolower($entry);
+                    if (in_array($entryLower, ['index.jpeg', 'index2.jpeg', 'index.jpg'])) {
+                        continue;
+                    }
+                    $fullPath = "{$normalized}/{$entry}";
+                    if (is_file($fullPath)) {
+                        $ext = strtolower(pathinfo($entryLower, PATHINFO_EXTENSION));
+                        if (in_array($ext, $validExts) && @filesize($fullPath) > 100) {
+                            return '/api/media/local-image?path=' . urlencode($fullPath);
+                        }
+                    }
+                }
+
+                // 2. Explorar subdirectorios (ej: Season 1, etc.)
+                foreach ($entries as $entry) {
+                    if ($entry === '.' || $entry === '..') continue;
+                    $subPath = "{$normalized}/{$entry}";
+                    if (is_dir($subPath) && !$this->isIgnoredDir($entry)) {
+                        $subEntries = @scandir($subPath);
+                        if ($subEntries) {
+                            foreach ($subEntries as $subEntry) {
+                                if ($subEntry === '.' || $subEntry === '..') continue;
+                                $subLower = strtolower($subEntry);
+                                if (in_array($subLower, ['index.jpeg', 'index2.jpeg', 'index.jpg'])) {
+                                    continue;
+                                }
+                                $subFullPath = "{$subPath}/{$subEntry}";
+                                if (is_file($subFullPath)) {
+                                    $subExt = strtolower(pathinfo($subLower, PATHINFO_EXTENSION));
+                                    if (in_array($subExt, $validExts) && @filesize($subFullPath) > 100) {
+                                        return '/api/media/local-image?path=' . urlencode($subFullPath);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::debug("findAnyLocalValidImage error en {$dirPath}: " . $e->getMessage());
+        }
+
+        return null;
+    }
+
+    /**
+     * Consulta APIs públicas gratuitas (TVMaze e iTunes Search API) sin requerir API Key,
+     * para obtener carátula oficial en alta resolución y metadatos de series o películas.
+     */
+    public function fetchPublicOnlineArtwork(string $name, bool $isSeries = false): ?array
+    {
+        $parsed = $this->cleanFileName($name);
+        $cleanName = trim($parsed['title'] ?: $name);
+        if (empty($cleanName)) {
+            return null;
+        }
+
+        $headers = [
+            'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 FlixHN/2.0',
+            'Accept' => 'application/json',
+        ];
+
+        // 1. TVMaze: Excelente para series de TV y anime (Hajime no Ippo, Dragon Ball Z, Jujutsu Kaisen, Death Note)
+        if ($isSeries) {
+            try {
+                $tvmazeUrl = 'https://api.tvmaze.com/singlesearch/shows?q=' . urlencode($cleanName);
+                $resp = Http::timeout(6)->withHeaders($headers)->get($tvmazeUrl);
+                if ($resp->successful()) {
+                    $json = $resp->json();
+                    $poster = $json['image']['original'] ?? $json['image']['medium'] ?? null;
+                    if ($poster) {
+                        return [
+                            'poster_url' => $poster,
+                            'backdrop_url' => $poster,
+                            'imdb_id' => $json['externals']['imdb'] ?? null,
+                            'source' => 'tvmaze',
+                        ];
+                    }
+                }
+            } catch (\Throwable $e) {
+                Log::debug("fetchPublicOnlineArtwork TVMaze error para {$cleanName}: " . $e->getMessage());
+            }
+        }
+
+        // 2. iTunes Search API (100% gratuita, sin clave de API):
+        // Reemplaza artworkUrl100 (100x100bb) por 600x900bb para resolución óptima
+        $mediaTypes = $isSeries ? ['tvShow', 'movie'] : ['movie', 'tvShow'];
+        foreach ($mediaTypes as $media) {
+            try {
+                $itunesUrl = "https://itunes.apple.com/search?term=" . urlencode($cleanName) . "&media={$media}&limit=1";
+                $resp = Http::timeout(6)->withHeaders($headers)->get($itunesUrl);
+                if ($resp->successful()) {
+                    $json = $resp->json();
+                    if (!empty($json['results'][0]['artworkUrl100'])) {
+                        $rawArtwork = $json['results'][0]['artworkUrl100'];
+                        $hqArtwork = str_replace('100x100bb', '600x900bb', $rawArtwork);
+                        return [
+                            'poster_url' => $hqArtwork,
+                            'backdrop_url' => $hqArtwork,
+                            'imdb_id' => null,
+                            'source' => 'itunes',
+                        ];
+                    }
+                }
+            } catch (\Throwable $e) {
+                Log::debug("fetchPublicOnlineArtwork iTunes error para {$cleanName} ({$media}): " . $e->getMessage());
+            }
+        }
+
+        // 3. Fallback inverso de TVMaze si era película pero puede ser serie/anime
+        if (!$isSeries) {
+            try {
+                $tvmazeUrl = 'https://api.tvmaze.com/singlesearch/shows?q=' . urlencode($cleanName);
+                $resp = Http::timeout(6)->withHeaders($headers)->get($tvmazeUrl);
+                if ($resp->successful()) {
+                    $json = $resp->json();
+                    $poster = $json['image']['original'] ?? $json['image']['medium'] ?? null;
+                    if ($poster) {
+                        return [
+                            'poster_url' => $poster,
+                            'backdrop_url' => $poster,
+                            'imdb_id' => $json['externals']['imdb'] ?? null,
+                            'source' => 'tvmaze',
+                        ];
+                    }
+                }
+            } catch (\Throwable $e) {
+                // silenciar fallback
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * Asignación automática de Carátula y Fondo (poster_url y backdrop_url):
      * 1. Imagen local específica con el mismo nombre del video (NombreArchivo-poster.jpg, NombreArchivo.jpg)
      *    o en carpeta exclusiva (poster.jpg, folder.jpg), ignorando SIEMPRE index.jpeg e index2.jpeg -> /api/media/local-image?path=...
@@ -626,17 +779,23 @@ class LocalMediaScannerService
      *    poster_url = "https://images.metahub.space/poster/medium/{$imdbId}/img"
      *    backdrop_url = "https://images.metahub.space/background/medium/{$imdbId}/img"
      * 3. Si además TMDB_API_KEY está configurada en .env y solo hay tmdb_id, consúltalo en TMDb.
+     * 4. Fallback si el .nfo incluye URLs públicas seguras de image.tmdb.org.
+     * 5. Búsqueda de cualquier imagen válida (.jpg, .png, .webp) en carpeta o subcarpetas.
+     * 6. Consulta a APIs públicas gratuitas (TVMaze / iTunes Search API).
      */
-    public function resolvePosterAndBackdrop(string $dirPath, string $fileName = '', ?array $nfo = null, bool $isSeries = false): array
+    public function resolvePosterAndBackdrop(string $dirPath, string $fileName = '', ?array $nfo = null, bool $isSeries = false, ?string $titleName = null): array
     {
         $posterUrl = null;
         $backdropUrl = null;
+        $foundImdbId = null;
 
         // 1. Imagen local específica o en carpeta exclusiva (PROHIBIDO index.jpeg e index2.jpeg)
-        $art = $this->findLocalArtwork($dirPath, $fileName);
-        if (!empty($art['poster']) && !str_contains($art['poster'], 'index.jpeg') && !str_contains($art['poster'], 'index2.jpeg')) {
-            $posterUrl = $art['poster'];
-            $backdropUrl = $art['backdrop'] ?: $posterUrl;
+        if (!empty($dirPath) && is_dir($dirPath)) {
+            $art = $this->findLocalArtwork($dirPath, $fileName);
+            if (!empty($art['poster']) && !str_contains($art['poster'], 'index.jpeg') && !str_contains($art['poster'], 'index2.jpeg')) {
+                $posterUrl = $art['poster'];
+                $backdropUrl = $art['backdrop'] ?: $posterUrl;
+            }
         }
 
         // 2. Metahub directo si hay <imdbid> válido (ej: tt2318092), sin necesidad de API Key
@@ -668,17 +827,43 @@ class LocalMediaScannerService
             $backdropUrl = $nfo['backdrop_url'];
         }
 
+        // 5. Si no tiene imdb_id ni imagen nombrada estándar, buscar CUALQUIER imagen válida (.jpg, .png, .webp) en carpeta o subcarpetas
+        if (!$posterUrl && !empty($dirPath) && is_dir($dirPath)) {
+            $anyLocal = $this->findAnyLocalValidImage($dirPath);
+            if ($anyLocal) {
+                $posterUrl = $anyLocal;
+                $backdropUrl = $anyLocal;
+            }
+        }
+
+        // 6. Si no hay imagen en carpeta local y no tiene imdb_id, consultar TVMaze o iTunes Search API
+        if (!$posterUrl) {
+            $searchTitle = $titleName ?: ($nfo['name'] ?? $nfo['title'] ?? ($fileName ? pathinfo($fileName, PATHINFO_FILENAME) : (is_dir($dirPath) ? basename($dirPath) : '')));
+            if (!empty($searchTitle)) {
+                $onlineArt = $this->fetchPublicOnlineArtwork($searchTitle, $isSeries);
+                if ($onlineArt && !empty($onlineArt['poster_url'])) {
+                    $posterUrl = $onlineArt['poster_url'];
+                    $backdropUrl = $onlineArt['backdrop_url'] ?: $posterUrl;
+                    if (!empty($onlineArt['imdb_id'])) {
+                        $foundImdbId = $onlineArt['imdb_id'];
+                    }
+                }
+            }
+        }
+
         return [
             'poster_url' => $posterUrl,
             'backdrop_url' => $backdropUrl ?: $posterUrl,
+            'imdb_id' => $foundImdbId,
         ];
     }
 
     /**
      * Sincroniza rápidamente las carátulas (poster_url y backdrop_url) y metadatos reales de .nfo
      * para películas y series locales en /mnt/media_library/Disk2..Disk7.
+     * Recorre en chunks de 100 títulos para no saturar memoria.
      */
-    public function syncPosters(?\Closure $progressCallback = null): array
+    public function syncPosters(?\Closure $progressCallback = null, bool $forceAll = false): array
     {
         $stats = [
             'updated_movies' => 0,
@@ -688,150 +873,174 @@ class LocalMediaScannerService
             'synced_channels' => 0,
         ];
 
-        $titles = Title::all();
-        $stats['total'] = $titles->count();
+        $query = Title::query();
+        if (!$forceAll) {
+            $query->where(function ($q) {
+                $q->whereNull('poster_url')
+                  ->orWhere('poster_url', '')
+                  ->orWhere('poster_url', '/placeholder-poster.png')
+                  ->orWhere('poster_url', 'LIKE', '%index.jpeg%')
+                  ->orWhere('poster_url', 'LIKE', '%index2.jpeg%')
+                  ->orWhere('poster_url', 'LIKE', '%45.4.87.126%');
+            });
+        }
 
-        foreach ($titles as $title) {
-            $isSeries = $title->type === 'series';
-            $dirPath = null;
-            $fileName = '';
-            $nfo = null;
+        $stats['total'] = (clone $query)->count();
 
-            $sourcePath = $title->source_path ?: $title->file_path;
-            if (empty($sourcePath) && !empty($title->stream_path) && !str_starts_with($title->stream_path, '/api/')) {
-                $sourcePath = $title->stream_path;
-            }
+        $query->chunkById(100, function ($titles) use (&$stats, $progressCallback) {
+            foreach ($titles as $title) {
+                $isSeries = $title->type === 'series';
+                $dirPath = null;
+                $fileName = '';
+                $nfo = null;
 
-            if ($isSeries) {
-                if (!empty($title->source_path) && is_dir($title->source_path)) {
-                    $dirPath = $title->source_path;
-                } else {
-                    $ep = Episode::where('title_id', $title->id)->whereNotNull('file_path')->first();
-                    if ($ep && !empty($ep->file_path)) {
-                        $epPath = str_replace('\\', '/', $ep->file_path);
-                        $parts = explode('/', $epPath);
-                        for ($i = count($parts) - 2; $i >= 0; $i--) {
-                            $part = $parts[$i];
-                            if (preg_match('/^(temporada|season|\bdisk\d+\b|series|anime)/i', $part)) {
-                                continue;
+                $sourcePath = $title->source_path ?: $title->file_path;
+                if (empty($sourcePath) && !empty($title->stream_path) && !str_starts_with($title->stream_path, '/api/')) {
+                    $sourcePath = $title->stream_path;
+                }
+
+                if ($isSeries) {
+                    if (!empty($title->source_path) && is_dir($title->source_path)) {
+                        $dirPath = $title->source_path;
+                    } else {
+                        $ep = Episode::where('title_id', $title->id)->whereNotNull('file_path')->first();
+                        if ($ep && !empty($ep->file_path)) {
+                            $epPath = str_replace('\\', '/', $ep->file_path);
+                            $parts = explode('/', $epPath);
+                            for ($i = count($parts) - 2; $i >= 0; $i--) {
+                                $part = $parts[$i];
+                                if (preg_match('/^(temporada|season|\bdisk\d+\b|series|anime)/i', $part)) {
+                                    continue;
+                                }
+                                $dirPath = implode('/', array_slice($parts, 0, $i + 1));
+                                break;
                             }
-                            $dirPath = implode('/', array_slice($parts, 0, $i + 1));
-                            break;
+                        }
+                    }
+
+                    if ($dirPath && is_dir($dirPath)) {
+                        $tvNfoPath = "{$dirPath}/tvshow.nfo";
+                        if (file_exists($tvNfoPath) && is_readable($tvNfoPath)) {
+                            $nfo = $this->parseLocalNfo($dirPath, '', $tvNfoPath);
+                        }
+                    }
+                } else {
+                    if (!empty($sourcePath)) {
+                        $sourcePath = str_replace('\\', '/', $sourcePath);
+                        $dirPath = is_dir($sourcePath) ? $sourcePath : dirname($sourcePath);
+                        $fileName = is_file($sourcePath) ? basename($sourcePath) : '';
+                        $nfo = $this->parseLocalNfo($dirPath, $fileName, $sourcePath);
+                    }
+                }
+
+                if (!$dirPath || !is_dir($dirPath)) {
+                    $stats['not_found']++;
+                }
+
+                // Determinar poster_url y backdrop_url usando la regla de prioridad estricta
+                $artAndNfo = $this->resolvePosterAndBackdrop($dirPath ?: '', $fileName, $nfo, $isSeries, $title->name);
+                $posterUrl = $artAndNfo['poster_url'];
+                $backdropUrl = $artAndNfo['backdrop_url'];
+                if (!empty($artAndNfo['imdb_id']) && empty($title->imdb_id)) {
+                    if (!is_array($nfo)) $nfo = [];
+                    $nfo['imdb_id'] = $artAndNfo['imdb_id'];
+                }
+
+                // Si aún no se encontró y no tiene poster válido, consultar directamente APIs públicas online por el nombre del título
+                if (!$posterUrl || $posterUrl === '/placeholder-poster.png' || str_contains($posterUrl, 'index.jpeg') || str_contains($posterUrl, 'index2.jpeg')) {
+                    $onlineArt = $this->fetchPublicOnlineArtwork($title->name, $isSeries);
+                    if ($onlineArt && !empty($onlineArt['poster_url'])) {
+                        $posterUrl = $onlineArt['poster_url'];
+                        $backdropUrl = $onlineArt['backdrop_url'] ?: $posterUrl;
+                        if (!empty($onlineArt['imdb_id']) && empty($title->imdb_id)) {
+                            if (!is_array($nfo)) $nfo = [];
+                            $nfo['imdb_id'] = $onlineArt['imdb_id'];
                         }
                     }
                 }
 
-                if ($dirPath && is_dir($dirPath)) {
-                    $tvNfoPath = "{$dirPath}/tvshow.nfo";
-                    if (file_exists($tvNfoPath) && is_readable($tvNfoPath)) {
-                        $nfo = $this->parseLocalNfo($dirPath, '', $tvNfoPath);
+                // Si el título quedó con index.jpeg, index2.jpeg o la IP muerta 45.4.87.126, purgarlo
+                $isCorruptedCurrentPoster = empty($title->poster_url)
+                    || str_contains($title->poster_url, 'index.jpeg')
+                    || str_contains($title->poster_url, 'index2.jpeg')
+                    || str_contains($title->poster_url, '45.4.87.126');
+
+                if ($isCorruptedCurrentPoster && !$posterUrl) {
+                    $posterUrl = '/placeholder-poster.png';
+                    $backdropUrl = $backdropUrl ?: '/placeholder-poster.png';
+                }
+
+                // Preparar actualizaciones de metadatos reales y carátulas
+                $updates = [];
+
+                if ($posterUrl && $posterUrl !== $title->poster_url) {
+                    $updates['poster_url'] = $posterUrl;
+                }
+                if ($backdropUrl && $backdropUrl !== $title->backdrop_url) {
+                    $updates['backdrop_url'] = $backdropUrl;
+                }
+
+                if (!empty($nfo['name']) && $nfo['name'] !== $title->name && mb_strlen($nfo['name']) > 1) {
+                    $updates['name'] = $nfo['name'];
+                    $updates['sort_title'] = $nfo['name'];
+                }
+                if (!empty($nfo['description']) && $nfo['description'] !== $title->description && mb_strlen($nfo['description']) > 5) {
+                    $updates['description'] = $nfo['description'];
+                }
+                if (!empty($nfo['release_year']) && $nfo['release_year'] > 1900 && $nfo['release_year'] !== (int) $title->release_year) {
+                    $updates['release_year'] = $nfo['release_year'];
+                }
+                if (!empty($nfo['community_rating']) && $nfo['community_rating'] > 0 && (float)$nfo['community_rating'] !== (float)$title->community_rating) {
+                    $updates['community_rating'] = $nfo['community_rating'];
+                }
+                if (!empty($nfo['parental_rating']) && $nfo['parental_rating'] !== $title->parental_rating) {
+                    $updates['parental_rating'] = $nfo['parental_rating'];
+                }
+                if (!empty($nfo['duration_seconds']) && $nfo['duration_seconds'] > 0 && (int)$nfo['duration_seconds'] !== (int)$title->duration_seconds) {
+                    $updates['duration_seconds'] = $nfo['duration_seconds'];
+                }
+                if (!empty($nfo['genre']) && $nfo['genre'] !== $title->genre) {
+                    $updates['genre'] = $nfo['genre'];
+                }
+                if (!empty($nfo['tmdb_id']) && $nfo['tmdb_id'] !== $title->tmdb_id) {
+                    $updates['tmdb_id'] = $nfo['tmdb_id'];
+                }
+                if (!empty($nfo['imdb_id']) && $nfo['imdb_id'] !== $title->imdb_id) {
+                    $updates['imdb_id'] = $nfo['imdb_id'];
+                }
+
+                if (!empty($updates)) {
+                    $title->update($updates);
+
+                    if (\Illuminate\Support\Facades\Schema::hasTable('media_items')) {
+                        $mediaUpdates = [
+                            'poster_url' => $title->poster_url,
+                            'backdrop_url' => $title->backdrop_url,
+                        ];
+                        if (!empty($updates['name'])) $mediaUpdates['title'] = $updates['name'];
+                        if (!empty($updates['description'])) $mediaUpdates['overview'] = $updates['description'];
+                        if (!empty($updates['release_year'])) $mediaUpdates['release_year'] = $updates['release_year'];
+                        if (!empty($updates['duration_seconds'])) $mediaUpdates['duration_seconds'] = $updates['duration_seconds'];
+
+                        MediaItem::where('title_id', $title->id)->update($mediaUpdates);
+                    }
+
+                    if ($isSeries) {
+                        $stats['updated_series']++;
+                    } else {
+                        $stats['updated_movies']++;
+                    }
+
+                    if ($progressCallback) {
+                        $progressCallback($title, $title->poster_url, true);
+                    }
+                } else {
+                    if ($progressCallback) {
+                        $progressCallback($title, $title->poster_url, false);
                     }
                 }
-            } else {
-                if (!empty($sourcePath)) {
-                    $sourcePath = str_replace('\\', '/', $sourcePath);
-                    $dirPath = is_dir($sourcePath) ? $sourcePath : dirname($sourcePath);
-                    $fileName = is_file($sourcePath) ? basename($sourcePath) : '';
-
-                    // 1. Lee el archivo .nfo homónimo de cada película (preg_replace('/\.[^.]+$/', '.nfo', $videoPath))
-                    $nfo = $this->parseLocalNfo($dirPath, $fileName, $sourcePath);
-                }
             }
-
-            if (!$dirPath || !is_dir($dirPath)) {
-                $stats['not_found']++;
-                if ($progressCallback) {
-                    $progressCallback($title, null, false);
-                }
-                continue;
-            }
-
-            // 2. Determinar poster_url y backdrop_url usando la regla de prioridad estricta
-            $artAndNfo = $this->resolvePosterAndBackdrop($dirPath, $fileName, $nfo, $isSeries);
-            $posterUrl = $artAndNfo['poster_url'];
-            $backdropUrl = $artAndNfo['backdrop_url'];
-
-            // Si el título quedó con index.jpeg, index2.jpeg o la IP muerta 45.4.87.126, purgarlo
-            $isCorruptedCurrentPoster = empty($title->poster_url)
-                || str_contains($title->poster_url, 'index.jpeg')
-                || str_contains($title->poster_url, 'index2.jpeg')
-                || str_contains($title->poster_url, '45.4.87.126');
-
-            if ($isCorruptedCurrentPoster && !$posterUrl) {
-                $posterUrl = '/placeholder-poster.png';
-                $backdropUrl = $backdropUrl ?: '/placeholder-poster.png';
-            }
-
-            // 3. Preparar actualizaciones de metadatos reales y carátulas
-            $updates = [];
-
-            if ($posterUrl && $posterUrl !== $title->poster_url) {
-                $updates['poster_url'] = $posterUrl;
-            }
-            if ($backdropUrl && $backdropUrl !== $title->backdrop_url) {
-                $updates['backdrop_url'] = $backdropUrl;
-            }
-
-            if (!empty($nfo['name']) && $nfo['name'] !== $title->name && mb_strlen($nfo['name']) > 1) {
-                $updates['name'] = $nfo['name'];
-                $updates['sort_title'] = $nfo['name'];
-            }
-            if (!empty($nfo['description']) && $nfo['description'] !== $title->description && mb_strlen($nfo['description']) > 5) {
-                $updates['description'] = $nfo['description'];
-            }
-            if (!empty($nfo['release_year']) && $nfo['release_year'] > 1900 && $nfo['release_year'] !== (int) $title->release_year) {
-                $updates['release_year'] = $nfo['release_year'];
-            }
-            if (!empty($nfo['community_rating']) && $nfo['community_rating'] > 0 && (float)$nfo['community_rating'] !== (float)$title->community_rating) {
-                $updates['community_rating'] = $nfo['community_rating'];
-            }
-            if (!empty($nfo['parental_rating']) && $nfo['parental_rating'] !== $title->parental_rating) {
-                $updates['parental_rating'] = $nfo['parental_rating'];
-            }
-            if (!empty($nfo['duration_seconds']) && $nfo['duration_seconds'] > 0 && (int)$nfo['duration_seconds'] !== (int)$title->duration_seconds) {
-                $updates['duration_seconds'] = $nfo['duration_seconds'];
-            }
-            if (!empty($nfo['genre']) && $nfo['genre'] !== $title->genre) {
-                $updates['genre'] = $nfo['genre'];
-            }
-            if (!empty($nfo['tmdb_id']) && $nfo['tmdb_id'] !== $title->tmdb_id) {
-                $updates['tmdb_id'] = $nfo['tmdb_id'];
-            }
-            if (!empty($nfo['imdb_id']) && $nfo['imdb_id'] !== $title->imdb_id) {
-                $updates['imdb_id'] = $nfo['imdb_id'];
-            }
-
-            if (!empty($updates)) {
-                $title->update($updates);
-
-                if (\Illuminate\Support\Facades\Schema::hasTable('media_items')) {
-                    $mediaUpdates = [
-                        'poster_url' => $title->poster_url,
-                        'backdrop_url' => $title->backdrop_url,
-                    ];
-                    if (!empty($updates['name'])) $mediaUpdates['title'] = $updates['name'];
-                    if (!empty($updates['description'])) $mediaUpdates['overview'] = $updates['description'];
-                    if (!empty($updates['release_year'])) $mediaUpdates['release_year'] = $updates['release_year'];
-                    if (!empty($updates['duration_seconds'])) $mediaUpdates['duration_seconds'] = $updates['duration_seconds'];
-
-                    MediaItem::where('title_id', $title->id)->update($mediaUpdates);
-                }
-
-                if ($isSeries) {
-                    $stats['updated_series']++;
-                } else {
-                    $stats['updated_movies']++;
-                }
-
-                if ($progressCallback) {
-                    $progressCallback($title, $title->poster_url, true);
-                }
-            } else {
-                if ($progressCallback) {
-                    $progressCallback($title, $title->poster_url, false);
-                }
-            }
-        }
+        });
 
         // CORRECCIÓN 3: Sincronización y verificación de logos de canales de TV en vivo
         try {
