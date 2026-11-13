@@ -199,9 +199,9 @@ class M3uSyncService
 
                 $currentChannel = [
                     'tv_source_id' => $sourceId,
-                    'name' => $name,
+                    'name' => \App\Models\TvChannel::fixMojibake($name),
                     'logo_url' => $logoUrl,
-                    'group_title' => $groupTitle ?: 'General',
+                    'group_title' => \App\Models\TvChannel::fixMojibake($groupTitle ?: 'General'),
                     'channel_number' => $chno,
                     'tvg_id' => $tvgId,
                     'tvg_name' => $tvgName,

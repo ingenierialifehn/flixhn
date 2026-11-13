@@ -528,46 +528,62 @@ class MetadataManagerController extends Controller
      */
     public function destroy(string $type, int|string $id): JsonResponse
     {
+        $integrity = app(\App\Services\MediaIntegrityService::class);
+
         if ($type === 'movie' || $type === 'series' || $type === 'title') {
             $item = Title::findOrFail($id);
             $name = $item->name;
+            $deletedId = $item->id;
+            $mediaType = $item->type ?? 'movie';
 
-            // Eliminar temporadas y episodios dependientes
-            $item->seasons()->delete();
-            $item->episodes()->delete();
-            $item->playbackProgresses()->delete();
-            $item->delete();
+            $integrity->purgeTitle($item);
 
             return response()->json([
                 'status' => 'success',
+                'deleted' => true,
+                'id' => $deletedId,
+                'type' => $mediaType,
                 'message' => "El título \"{$name}\" ha sido eliminado exitosamente del catálogo.",
             ]);
         } elseif ($type === 'episode') {
             $ep = Episode::findOrFail($id);
             $name = $ep->title;
-            $ep->playbackProgresses()->delete();
-            $ep->delete();
+            $deletedId = $ep->id;
+
+            $integrity->purgeEpisode($ep, true);
 
             return response()->json([
                 'status' => 'success',
+                'deleted' => true,
+                'id' => $deletedId,
+                'type' => 'episode',
                 'message' => "El episodio \"{$name}\" ha sido eliminado correctamente.",
             ]);
         } elseif ($type === 'season') {
             $s = Season::findOrFail($id);
             $s->episodes()->delete();
             $s->delete();
+            $integrity->clearCatalogCache();
 
             return response()->json([
                 'status' => 'success',
+                'deleted' => true,
+                'id' => $id,
+                'type' => 'season',
                 'message' => "La temporada ha sido eliminada.",
             ]);
         } elseif ($type === 'channel') {
             $ch = TvChannel::findOrFail($id);
             $name = $ch->name;
-            $ch->delete();
+            $deletedId = $ch->id;
+
+            $integrity->purgeChannel($ch);
 
             return response()->json([
                 'status' => 'success',
+                'deleted' => true,
+                'id' => $deletedId,
+                'type' => 'channel',
                 'message' => "El canal \"{$name}\" ha sido eliminado.",
             ]);
         }

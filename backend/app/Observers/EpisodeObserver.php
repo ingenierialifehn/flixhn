@@ -22,7 +22,7 @@ class EpisodeObserver
     public function deleting(Episode $episode): void
     {
         Log::info("EpisodeObserver@deleting: Purgando registros asociados de episodio [ID {$episode->id}: {$episode->title}]");
-        $this->integrityService->purgeAssociatedData('episode', $episode->id);
+        $this->integrityService->purgeAssociatedData('episode', $episode->id, $episode->title);
     }
 
     /**

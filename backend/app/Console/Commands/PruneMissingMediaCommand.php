@@ -40,18 +40,14 @@ class PruneMissingMediaCommand extends Command
         // 1. Recorrer películas locales
         $localMovies = Title::where('type', 'movie')
             ->where(function ($q) {
-                $q->where('source_type', 'local')
-                  ->orWhere('provider', 'local')
+                $q->where('provider', 'local')
                   ->orWhere('source_path', 'LIKE', '/mnt/%')
-                  ->orWhere('source_path', 'LIKE', '%media_library%')
-                  ->orWhere('file_path', 'LIKE', '/mnt/%')
-                  ->orWhere('file_path', 'LIKE', '/var/%')
-                  ->orWhere('file_path', 'LIKE', '%media_library%');
+                  ->orWhere('source_path', 'LIKE', '%media_library%');
             })
             ->get();
 
         foreach ($localMovies as $movie) {
-            $filePath = $movie->source_path ?: $movie->file_path ?: $movie->stream_path;
+            $filePath = $movie->source_path ?: $movie->stream_path;
             if (!$integrityService->doesPhysicalFileExist($filePath)) {
                 $this->warn("  - Película eliminada del disco: [ID: {$movie->id}] {$movie->name} (Ruta: {$filePath})");
                 $integrityService->purgeTitle($movie);
@@ -62,19 +58,16 @@ class PruneMissingMediaCommand extends Command
         // 2. Recorrer episodios locales
         $localEpisodes = Episode::where(function ($q) {
                 $q->where('source_type', 'local')
-                  ->orWhere('source_path', 'LIKE', '/mnt/%')
-                  ->orWhere('source_path', 'LIKE', '%media_library%')
                   ->orWhere('file_path', 'LIKE', '/mnt/%')
                   ->orWhere('file_path', 'LIKE', '/var/%')
                   ->orWhere('file_path', 'LIKE', '%media_library%')
-                  ->orWhereNotNull('source_path')
                   ->orWhereNotNull('file_path');
             })
             ->get();
 
         foreach ($localEpisodes as $episode) {
             if ($integrityService->isLocalEpisode($episode)) {
-                $filePath = $episode->source_path ?: $episode->file_path ?: $episode->stream_path;
+                $filePath = $episode->file_path ?: $episode->stream_path;
                 if (!$integrityService->doesPhysicalFileExist($filePath)) {
                     $this->warn("  - Episodio eliminado del disco: [ID: {$episode->id}] {$episode->title} (Ruta: {$filePath})");
                     $integrityService->purgeEpisode($episode, false);

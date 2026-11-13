@@ -23,7 +23,7 @@ class TitleObserver
     public function deleting(Title $title): void
     {
         Log::info("TitleObserver@deleting: Purgando registros asociados y progreso del título [ID {$title->id}: {$title->name}]");
-        $this->integrityService->purgeAssociatedData('title', $title->id);
+        $this->integrityService->purgeAssociatedData('title', $title->id, $title->name);
 
         // Si es serie, eliminar temporadas y episodios asociados
         if ($title->type === 'series') {

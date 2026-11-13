@@ -135,10 +135,21 @@ const MovieCard = ({ item, title: propTitle, isProgress, onPlay, onOpenModal, on
   let closeTimeout = useRef(null);
   const [isHovered, setIsHovered] = useState(false);
   const [cardRect, setCardRect] = useState(null);
+  const [imgError, setImgError] = useState(false);
 
   // Manejar si el item viene de prop directa title, PlaybackProgress o Title directo
   const title = propTitle || (isProgress ? item?.title : item);
   const episode = isProgress ? item?.episode : null;
+
+  const rawPoster = isProgress && episode?.thumbnail_url
+    ? episode.thumbnail_url
+    : (title?.poster_url || title?.image || title?.poster);
+  const posterUrl = resolvePosterUrl(rawPoster);
+
+  // Resetear estado de error al cambiar la URL del poster
+  useEffect(() => {
+    setImgError(false);
+  }, [posterUrl]);
 
   // Temporizador con retardo (debounce) para apertura y cierre fluido estilo Netflix
   const handleMouseEnter = useCallback(() => {
@@ -192,10 +203,8 @@ const MovieCard = ({ item, title: propTitle, isProgress, onPlay, onOpenModal, on
 
   if (!title) return null;
 
-  const rawPoster = isProgress && episode?.thumbnail_url
-    ? episode.thumbnail_url
-    : (title?.poster_url || title?.image || title?.poster);
-  const posterUrl = resolvePosterUrl(rawPoster);
+  const titleName = title?.name || title?.title || 'Sin Título';
+  const hasNoImage = !posterUrl || posterUrl.includes('placeholder') || imgError;
 
   // Detección de proveedor/plataforma OTT ('netflix', 'disney', 'hbo_max', 'prime', 'local')
   const providerRaw = title?.provider || title?.source_platform || item?.provider || item?.source_platform || 'local';
@@ -244,23 +253,49 @@ const MovieCard = ({ item, title: propTitle, isProgress, onPlay, onOpenModal, on
             : 'hover:scale-105 hover:z-20 hover:shadow-2xl hover:ring-2 hover:ring-[#E50914]/50 cursor-pointer'
         }`}
       >
-        {/* Imagen del Poster */}
-        <div className="relative aspect-[16/9] md:aspect-[2/3] w-full overflow-hidden bg-zinc-200 dark:bg-neutral-900">
-          <img
-            src={posterUrl}
-            alt={title.name || title.title}
-            loading="lazy"
-            onError={(e) => {
-              if (e && e.target) {
-                e.target.onerror = null;
-                e.target.src = 'https://images.unsplash.com/photo-1594909122845-11baa439b7bf?w=500';
-              }
-              if (typeof onError === 'function') {
-                onError(e);
-              }
-            }}
-            className="w-full h-full object-cover object-center group-hover:brightness-110 transition-all duration-300 rounded"
-          />
+        {/* Imagen del Poster o Poster Estilizado si no hay imagen local */}
+        <div className="relative aspect-[16/9] md:aspect-[2/3] w-full overflow-hidden bg-zinc-900">
+          {!hasNoImage ? (
+            <img
+              src={posterUrl}
+              alt={titleName}
+              loading="lazy"
+              onError={(e) => {
+                setImgError(true);
+                if (typeof onError === 'function') {
+                  onError(e);
+                }
+              }}
+              className="w-full h-full object-cover object-center group-hover:brightness-110 transition-all duration-300 rounded"
+            />
+          ) : (
+            <div className="w-full h-full flex flex-col justify-between p-3.5 bg-gradient-to-b from-neutral-900 via-[#181818] to-black border border-zinc-800/80 rounded select-none group-hover:border-zinc-700 transition-all">
+              <div className="flex justify-end">
+                <span className="text-[10px] font-mono text-zinc-500 font-bold">
+                  {title.release_year || title.year || ''}
+                </span>
+              </div>
+              <div className="my-auto py-2 flex flex-col items-center text-center">
+                <div className="w-10 h-10 rounded-full bg-red-600/10 border border-red-500/20 flex items-center justify-center mb-2 shadow-inner group-hover:scale-105 group-hover:bg-red-600/20 transition-transform">
+                  <span className="text-xs font-black tracking-wider text-red-500">
+                    {title.type === 'series' ? 'SERIE' : 'FLIX'}
+                  </span>
+                </div>
+                <h3 className="text-xs sm:text-sm font-black text-white leading-tight line-clamp-3 group-hover:text-red-400 transition-colors">
+                  {titleName}
+                </h3>
+                {title.genre && (
+                  <span className="text-[10px] text-zinc-400 mt-1 line-clamp-1">
+                    {title.genre}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center justify-between pt-1 border-t border-zinc-800/60 text-[9px] text-zinc-500 font-semibold uppercase tracking-wider">
+                <span>FlixHN On-Net</span>
+                <span>{title.type === 'series' ? 'Temporadas' : 'Película'}</span>
+              </div>
+            </div>
+          )}
 
           {/* Badges en la esquina superior izquierda: Plataforma Distintiva + Tipo */}
           <div className="absolute top-2 left-2 z-10 pointer-events-none flex flex-col items-start gap-1">

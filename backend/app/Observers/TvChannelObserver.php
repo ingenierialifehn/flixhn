@@ -25,9 +25,13 @@ class TvChannelObserver
     {
         Log::info("TvChannelObserver@deleting: Purgando sesiones activas de canal [ID {$channel->id}: {$channel->name}]");
         if (Schema::hasTable('device_sessions')) {
-            DeviceSession::where('channel_id', $channel->id)
-                ->orWhere('media_id', $channel->id)
-                ->delete();
+            try {
+                if (!empty($channel->name)) {
+                    DeviceSession::where('current_media_title', $channel->name)->delete();
+                }
+            } catch (\Throwable $e) {
+                Log::debug("TvChannelObserver@deleting: Error al limpiar device_sessions: " . $e->getMessage());
+            }
         }
     }
 

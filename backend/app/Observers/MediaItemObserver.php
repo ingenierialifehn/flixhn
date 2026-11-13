@@ -22,7 +22,7 @@ class MediaItemObserver
     {
         Log::info("MediaItemObserver@deleting: Purgando registros asociados de MediaItem [ID {$item->id}: {$item->title}]");
         if ($item->title_id) {
-            $this->integrityService->purgeAssociatedData('title', $item->title_id);
+            $this->integrityService->purgeAssociatedData('title', $item->title_id, $item->title);
         }
     }
 

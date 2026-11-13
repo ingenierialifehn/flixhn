@@ -169,9 +169,9 @@ class LocalMediaScannerService
      */
     public function scan($customPaths = null, bool $cleanRemote = true): array
     {
-        @set_time_limit(0);
-        @ini_set('max_execution_time', '0');
-        @ini_set('memory_limit', '1024M');
+        set_time_limit(0);
+        ini_set('max_execution_time', '0');
+        ini_set('memory_limit', '1024M');
         @ignore_user_abort(true);
 
         $targetPaths = [];
@@ -230,35 +230,35 @@ class LocalMediaScannerService
     public function cleanRemoteEmbyRecords(): int
     {
         $purged = 0;
-        $remoteTitles = Title::where(function ($q) {
-            $q->where('stream_path', 'LIKE', '%45.4.87.126%')
-              ->orWhere('source_path', 'LIKE', '%45.4.87.126%')
-              ->orWhere('source_path', 'LIKE', 'remote://%')
-              ->orWhere('poster_url', 'LIKE', '%45.4.87.126%')
-              ->orWhere('provider', 'emby')
-              ->orWhere(function ($sub) {
-                  $sub->where('provider', '!=', 'local')
-                      ->where('source_type', '!=', 'local')
-                      ->where('source_path', 'NOT LIKE', '/mnt/%')
-                      ->where('file_path', 'NOT LIKE', '/mnt/%');
-              });
-        })->get();
+        try {
+            $remoteTitles = Title::where(function ($q) {
+                $q->where('source_path', 'LIKE', 'remote://%')
+                  ->orWhere('stream_path', 'LIKE', '%45.4.87.126%')
+                  ->orWhere('source_path', 'LIKE', '%45.4.87.126%')
+                  ->orWhere('poster_url', 'LIKE', '%45.4.87.126%')
+                  ->orWhere('provider', 'emby');
+            })->get();
 
-        $integrity = app(MediaIntegrityService::class);
-        foreach ($remoteTitles as $rt) {
-            Log::info("cleanRemoteEmbyRecords: Purgando título remoto huérfano [ID {$rt->id}: {$rt->name}]");
-            $integrity->purgeTitle($rt);
-            $purged++;
+            $integrity = app(MediaIntegrityService::class);
+            foreach ($remoteTitles as $rt) {
+                Log::info("cleanRemoteEmbyRecords: Purgando título remoto huérfano [ID {$rt->id}: {$rt->name}]");
+                $integrity->purgeTitle($rt);
+                $purged++;
+            }
+        } catch (\Throwable $e) {
+            Log::warning("cleanRemoteEmbyRecords error: " . $e->getMessage());
         }
 
         // Purgar también ítems de medios huérfanos remotos
         try {
-            MediaItem::where(function ($q) {
-                $q->where('file_path', 'LIKE', '%45.4.87.126%')
-                  ->orWhere('file_path', 'LIKE', 'remote://%')
-                  ->orWhere('stream_url', 'LIKE', '%45.4.87.126%')
-                  ->orWhere('provider', 'emby');
-            })->delete();
+            if (\Illuminate\Support\Facades\Schema::hasTable('media_items')) {
+                MediaItem::where(function ($q) {
+                    $q->where('file_path', 'LIKE', '%45.4.87.126%')
+                      ->orWhere('file_path', 'LIKE', 'remote://%')
+                      ->orWhere('stream_url', 'LIKE', '%45.4.87.126%')
+                      ->orWhere('provider', 'emby');
+                })->delete();
+            }
         } catch (\Throwable $e) {
             Log::debug("cleanRemoteEmbyRecords: MediaItem delete: " . $e->getMessage());
         }
@@ -520,6 +520,23 @@ class LocalMediaScannerService
             }
         }
 
+        // 3. Fallback: Cualquier imagen (.jpg, .jpeg, .png, .webp) encontrada en la carpeta
+        if (!$result['poster']) {
+            foreach ($filesLower as $fileNameLower => $actualFileName) {
+                $ext = pathinfo($fileNameLower, PATHINFO_EXTENSION);
+                if (in_array($ext, $imageExtensions)) {
+                    $cand = "{$normalizedDir}/{$actualFileName}";
+                    if (@filesize($cand) > 500) {
+                        $result['poster'] = '/api/media/local-image?path=' . urlencode($cand);
+                        if (!$result['backdrop']) {
+                            $result['backdrop'] = $result['poster'];
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
         // Si hay poster pero no backdrop, usar el poster como backdrop y viceversa
         if ($result['poster'] && !$result['backdrop']) {
             $result['backdrop'] = $result['poster'];
@@ -646,7 +663,6 @@ class LocalMediaScannerService
 
         // Buscar registro existente por ruta física, slug o título + año
         $title = Title::where('source_path', $filePath)
-            ->orWhere('file_path', $filePath)
             ->orWhere('stream_path', $filePath)
             ->orWhere('slug', $slug)
             ->first();
@@ -655,79 +671,71 @@ class LocalMediaScannerService
             // Actualizar manteniendo el ID existente (vital para no romper historial de visualización)
             $updateData = [
                 'name' => $finalTitle,
+                'sort_title' => $finalTitle,
                 'slug' => $slug,
                 'type' => 'movie',
+                'provider' => 'local',
+                'source_path' => $filePath,
                 'category_id' => $category?->id ?: $title->category_id,
                 'description' => $overview,
                 'release_year' => $finalYear,
                 'genre' => $genre,
-                'community_rating' => $rating,
                 'duration_seconds' => $duration,
-                'source_path' => $filePath,
-                'file_path' => $filePath,
-                'stream_path' => '/api/stream/title/' . $title->id,
-                'source_type' => 'local',
-                'provider' => 'local',
             ];
 
             // Reemplazar poster si es local nuevo o si el previo apuntaba a Emby
-            if (!empty($localArt['poster']) || empty($title->poster_url) || str_contains($title->poster_url, '45.4.87.126:6789') || str_contains($title->poster_url, 'placeholder')) {
+            if (!empty($localArt['poster']) || empty($title->poster_url) || str_contains((string) $title->poster_url, '45.4.87.126') || str_contains((string) $title->poster_url, 'placeholder')) {
                 $updateData['poster_url'] = $posterUrl;
             }
-            if (!empty($localArt['backdrop']) || empty($title->backdrop_url) || str_contains($title->backdrop_url, '45.4.87.126:6789') || str_contains($title->backdrop_url, 'placeholder')) {
+            if (!empty($localArt['backdrop']) || empty($title->backdrop_url) || str_contains((string) $title->backdrop_url, '45.4.87.126') || str_contains((string) $title->backdrop_url, 'placeholder')) {
                 $updateData['backdrop_url'] = $backdropUrl;
-            }
-            if (!empty($tmdbId) && empty($title->tmdb_id)) {
-                $updateData['tmdb_id'] = $tmdbId;
-            }
-            if (!empty($imdbId) && empty($title->imdb_id)) {
-                $updateData['imdb_id'] = $imdbId;
             }
 
             $title->update($updateData);
+            $title->update(['stream_path' => '/api/stream/title/' . $title->id]);
         } else {
             $title = Title::create([
                 'name' => $finalTitle,
+                'sort_title' => $finalTitle,
                 'slug' => $slug,
                 'type' => 'movie',
+                'provider' => 'local',
                 'category_id' => $category?->id,
                 'description' => $overview,
                 'poster_url' => $posterUrl,
                 'backdrop_url' => $backdropUrl,
                 'release_year' => $finalYear,
                 'genre' => $genre,
-                'community_rating' => $rating,
-                'duration_seconds' => $duration,
                 'source_path' => $filePath,
-                'file_path' => $filePath,
                 'stream_path' => '',
-                'source_type' => 'local',
-                'provider' => 'local',
-                'tmdb_id' => $tmdbId,
-                'imdb_id' => $imdbId,
+                'duration_seconds' => $duration,
             ]);
             $title->update(['stream_path' => '/api/stream/title/' . $title->id]);
             $stats['total_movies']++;
         }
 
-        // Sincronizar MediaItem
-        MediaItem::updateOrCreate(
-            ['title_id' => $title->id],
-            [
-                'title' => $finalTitle,
-                'type' => 'movie',
-                'provider' => 'local',
-                'file_path' => $filePath,
-                'stream_url' => "/api/stream/title/{$title->id}",
-                'overview' => $overview,
-                'poster_url' => $title->poster_url,
-                'backdrop_url' => $title->backdrop_url,
-                'release_year' => $finalYear,
-                'genre' => $genre,
-                'duration_seconds' => $duration,
-                'file_size' => @filesize($filePath) ?: 0,
-            ]
-        );
+        // Sincronizar MediaItem si existe la tabla
+        try {
+            if (\Illuminate\Support\Facades\Schema::hasTable('media_items')) {
+                MediaItem::updateOrCreate(
+                    ['title_id' => $title->id],
+                    [
+                        'title' => $finalTitle,
+                        'type' => 'movie',
+                        'provider' => 'local',
+                        'file_path' => $filePath,
+                        'stream_url' => "/api/stream/title/{$title->id}",
+                        'overview' => $overview,
+                        'poster_url' => $title->poster_url,
+                        'backdrop_url' => $title->backdrop_url,
+                        'release_year' => $finalYear,
+                        'genre' => $genre,
+                        'duration_seconds' => $duration,
+                        'file_size' => @filesize($filePath) ?: 0,
+                    ]
+                );
+            }
+        } catch (\Throwable) {}
     }
 
     /**
@@ -782,62 +790,59 @@ class LocalMediaScannerService
         if (!$series) {
             $series = Title::create([
                 'name' => $finalSeriesTitle,
+                'sort_title' => $finalSeriesTitle,
                 'slug' => $slug,
                 'type' => 'series',
+                'provider' => 'local',
                 'category_id' => $category?->id,
                 'description' => $overview,
                 'poster_url' => $seriesPoster,
                 'backdrop_url' => $seriesBackdrop,
                 'release_year' => $finalYear,
                 'genre' => $seriesGenre,
-                'community_rating' => (float) $seriesRating,
-                'source_type' => 'local',
-                'provider' => 'local',
                 'source_path' => $seriesDir,
-                'file_path' => $seriesDir,
                 'stream_path' => '',
-                'tmdb_id' => $tmdbId,
+                'duration_seconds' => 0,
             ]);
             $series->update(['stream_path' => '/api/stream/title/' . $series->id]);
             $stats['total_series']++;
         } else {
             $updateData = [
                 'provider' => 'local',
-                'source_type' => 'local',
                 'source_path' => $seriesDir,
-                'file_path' => $seriesDir,
                 'stream_path' => '/api/stream/title/' . $series->id,
             ];
-            if (!empty($seriesArt['poster']) || empty($series->poster_url) || str_contains($series->poster_url, '45.4.87.126:6789')) {
+            if (!empty($seriesArt['poster']) || empty($series->poster_url) || str_contains((string) $series->poster_url, '45.4.87.126')) {
                 $updateData['poster_url'] = $seriesPoster;
             }
-            if (!empty($seriesArt['backdrop']) || empty($series->backdrop_url) || str_contains($series->backdrop_url, '45.4.87.126:6789')) {
+            if (!empty($seriesArt['backdrop']) || empty($series->backdrop_url) || str_contains((string) $series->backdrop_url, '45.4.87.126')) {
                 $updateData['backdrop_url'] = $seriesBackdrop;
-            }
-            if (!empty($tmdbId) && empty($series->tmdb_id)) {
-                $updateData['tmdb_id'] = $tmdbId;
             }
             $series->update($updateData);
         }
 
         // Sincronizar MediaItem para la Serie
-        MediaItem::updateOrCreate(
-            ['title_id' => $series->id],
-            [
-                'title' => $finalSeriesTitle,
-                'type' => 'series',
-                'provider' => 'local',
-                'file_path' => $seriesDir,
-                'stream_url' => "/api/stream/title/{$series->id}",
-                'overview' => $overview,
-                'poster_url' => $series->poster_url,
-                'backdrop_url' => $series->backdrop_url,
-                'release_year' => $finalYear,
-                'genre' => $seriesGenre,
-                'duration_seconds' => 0,
-                'file_size' => @filesize($filePath) ?: 0,
-            ]
-        );
+        try {
+            if (\Illuminate\Support\Facades\Schema::hasTable('media_items')) {
+                MediaItem::updateOrCreate(
+                    ['title_id' => $series->id],
+                    [
+                        'title' => $finalSeriesTitle,
+                        'type' => 'series',
+                        'provider' => 'local',
+                        'file_path' => $seriesDir,
+                        'stream_url' => "/api/stream/title/{$series->id}",
+                        'overview' => $overview,
+                        'poster_url' => $series->poster_url,
+                        'backdrop_url' => $series->backdrop_url,
+                        'release_year' => $finalYear,
+                        'genre' => $seriesGenre,
+                        'duration_seconds' => 0,
+                        'file_size' => @filesize($filePath) ?: 0,
+                    ]
+                );
+            }
+        } catch (\Throwable) {}
 
         // 2. Encontrar o crear la Temporada
         $seasonNumber = $classification['season_number'] ?: 1;
@@ -867,9 +872,7 @@ class LocalMediaScannerService
             ->first();
 
         if (!$episode) {
-            $episode = Episode::where('source_path', $filePath)
-                ->orWhere('file_path', $filePath)
-                ->first();
+            $episode = Episode::where('file_path', $filePath)->first();
         }
 
         $duration = $this->estimateDuration($filePath);
@@ -881,11 +884,10 @@ class LocalMediaScannerService
                 'episode_number' => $episodeNumber,
                 'title' => $epTitle,
                 'description' => $epOverview,
-                'source_path' => $filePath,
                 'file_path' => $filePath,
                 'stream_path' => '/api/stream/episode/' . $episode->id,
                 'source_type' => 'local',
-                'thumbnail_url' => str_contains((string) $episode->thumbnail_url, '45.4.87.126:6789') ? $epThumbnail : ($episode->thumbnail_url ?: $epThumbnail),
+                'thumbnail_url' => str_contains((string) $episode->thumbnail_url, '45.4.87.126') ? $epThumbnail : ($episode->thumbnail_url ?: $epThumbnail),
                 'duration_seconds' => $duration,
             ]);
         } else {
@@ -895,7 +897,6 @@ class LocalMediaScannerService
                 'episode_number' => $episodeNumber,
                 'title' => $epTitle,
                 'description' => $epOverview,
-                'source_path' => $filePath,
                 'file_path' => $filePath,
                 'stream_path' => '',
                 'source_type' => 'local',

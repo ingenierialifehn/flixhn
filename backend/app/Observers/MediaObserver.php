@@ -23,7 +23,7 @@ class MediaObserver
     {
         if ($media instanceof Title) {
             Log::info("MediaObserver@deleting: Purgando registros asociados de título [ID {$media->id}: {$media->name}]");
-            $this->integrityService->purgeAssociatedData('title', $media->id);
+            $this->integrityService->purgeAssociatedData('title', $media->id, $media->name);
 
             // Si es serie, eliminar temporadas y episodios asociados
             if ($media->type === 'series') {
@@ -34,7 +34,7 @@ class MediaObserver
             }
         } elseif ($media instanceof MediaItem) {
             if ($media->title_id) {
-                $this->integrityService->purgeAssociatedData('title', $media->title_id);
+                $this->integrityService->purgeAssociatedData('title', $media->title_id, $media->title);
             }
         }
     }

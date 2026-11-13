@@ -107,7 +107,14 @@ class TvChannel extends Model
     public function getLogoUrlAttribute(?string $value): ?string
     {
         if (!empty($value) && str_starts_with($value, '/storage/')) {
-            return $value;
+            $relPath = preg_replace('#^/storage/#', '', $value);
+            $pubPath = public_path('storage/' . $relPath);
+            $appPubPath = storage_path('app/public/' . $relPath);
+            if (file_exists($pubPath) || file_exists($appPubPath)) {
+                return $value;
+            }
+            // Si el archivo físico en /storage/ no existe en disco, retornar null para mostrar avatar limpio con iniciales
+            return null;
         }
 
         if (!empty($this->id)) {

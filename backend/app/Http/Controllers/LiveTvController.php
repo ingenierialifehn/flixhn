@@ -22,24 +22,29 @@ class LiveTvController extends Controller
      */
     public function getChannels(Request $request): JsonResponse
     {
-        // Sanitizar permanentemente en base de datos si existen registros con mojibake UTF-8
-        if (Cache::add('repaired_tv_channels_mojibake_v2', true, 86400)) {
-            try {
-                TvChannel::where('group_title', 'LIKE', '%M%sica%')
-                    ->orWhere('group_title', 'LIKE', '%├%')
-                    ->orWhere('group_title', 'LIKE', '%Ã%')
-                    ->each(function ($channel) {
-                        $fixedGroup = TvChannel::fixMojibake($channel->group_title);
-                        $fixedName = TvChannel::fixMojibake($channel->name);
-                        if ($fixedGroup !== $channel->group_title || $fixedName !== $channel->name) {
-                            $channel->group_title = $fixedGroup;
-                            $channel->name = $fixedName;
-                            $channel->saveQuietly();
-                        }
-                    });
-            } catch (\Throwable $e) {
-                Log::debug("LiveTvController: No se pudo auto-sanitizar DB: " . $e->getMessage());
-            }
+        // Sanitizar permanentemente en base de datos si existen registros con mojibake UTF-8 (ej. M├║sica -> Música)
+        try {
+            DB::table('tv_channels')
+                ->where('group_title', 'LIKE', '%M├║sica%')
+                ->orWhere('group_title', 'LIKE', '%M├ºsica%')
+                ->orWhere('group_title', 'LIKE', '%MÃºsica%')
+                ->update(['group_title' => 'Música']);
+
+            TvChannel::where('group_title', 'LIKE', '%├%')
+                ->orWhere('group_title', 'LIKE', '%Ã%')
+                ->orWhere('name', 'LIKE', '%├%')
+                ->orWhere('name', 'LIKE', '%Ã%')
+                ->each(function ($channel) {
+                    $fixedGroup = TvChannel::fixMojibake($channel->group_title);
+                    $fixedName = TvChannel::fixMojibake($channel->name);
+                    if ($fixedGroup !== $channel->group_title || $fixedName !== $channel->name) {
+                        $channel->group_title = $fixedGroup;
+                        $channel->name = $fixedName;
+                        $channel->saveQuietly();
+                    }
+                });
+        } catch (\Throwable $e) {
+            Log::debug("LiveTvController: No se pudo auto-sanitizar DB: " . $e->getMessage());
         }
 
         $channels = TvChannel::where('is_active', true)

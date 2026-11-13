@@ -7,22 +7,33 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const isContainer = fs.existsSync('/app/node_modules/react') || fs.existsSync('/app');
+const isContainer = fs.existsSync('/app');
 const appRoot = isContainer ? '/app' : __dirname;
 
 export default defineConfig({
   root: appRoot,
+  cacheDir: isContainer ? '/app/node_modules/.vite' : path.resolve(__dirname, 'node_modules/.vite'),
   resolve: {
     dedupe: ['react', 'react-dom', 'react/jsx-runtime', 'react/jsx-dev-runtime', 'lucide-react'],
-    alias: {
-      react: isContainer ? '/app/node_modules/react' : path.resolve(__dirname, 'node_modules/react'),
-      'react-dom': isContainer ? '/app/node_modules/react-dom' : path.resolve(__dirname, 'node_modules/react-dom'),
-      'react/jsx-runtime': isContainer ? '/app/node_modules/react/jsx-runtime' : path.resolve(__dirname, 'node_modules/react/jsx-runtime'),
-      'react/jsx-dev-runtime': isContainer ? '/app/node_modules/react/jsx-dev-runtime' : path.resolve(__dirname, 'node_modules/react/jsx-dev-runtime'),
-      '@': isContainer ? '/app/src' : path.resolve(__dirname, './src'),
-      '@api': isContainer ? '/app/src/api' : path.resolve(__dirname, './src/api'),
-      '@services': isContainer ? '/app/src/services' : path.resolve(__dirname, './src/services'),
-    },
+    alias: isContainer
+      ? {
+          react: '/app/node_modules/react',
+          'react-dom': '/app/node_modules/react-dom',
+          'react/jsx-runtime': '/app/node_modules/react/jsx-runtime',
+          'react/jsx-dev-runtime': '/app/node_modules/react/jsx-dev-runtime',
+          '@': '/app/src',
+          '@api': '/app/src/api',
+          '@services': '/app/src/services',
+        }
+      : {
+          react: path.resolve(__dirname, 'node_modules/react'),
+          'react-dom': path.resolve(__dirname, 'node_modules/react-dom'),
+          'react/jsx-runtime': path.resolve(__dirname, 'node_modules/react/jsx-runtime'),
+          'react/jsx-dev-runtime': path.resolve(__dirname, 'node_modules/react/jsx-dev-runtime'),
+          '@': path.resolve(__dirname, './src'),
+          '@api': path.resolve(__dirname, './src/api'),
+          '@services': path.resolve(__dirname, './src/services'),
+        },
     extensions: ['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json'],
   },
   plugins: [
@@ -37,7 +48,6 @@ export default defineConfig({
       },
     },
   ],
-  cacheDir: fs.existsSync('/tmp') ? '/tmp/.vite' : undefined,
   optimizeDeps: {
     force: true,
     include: ['react', 'react-dom', 'react/jsx-runtime', 'react/jsx-dev-runtime', 'lucide-react', 'hls.js'],

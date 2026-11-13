@@ -236,9 +236,9 @@ class M3uParserService
 
                 $currentChannel = [
                     'tv_source_id' => $source->id,
-                    'name' => $name,
+                    'name' => \App\Models\TvChannel::fixMojibake($name),
                     'logo_url' => $tvgLogo ?: null,
-                    'group_title' => $groupTitle ?: 'General',
+                    'group_title' => \App\Models\TvChannel::fixMojibake($groupTitle ?: 'General'),
                     'channel_number' => $tvgChno ?: (string)$channelCounter,
                     'tvg_id' => $tvgId ?: null,
                     'tvg_name' => $tvgName ?: null,
@@ -249,7 +249,7 @@ class M3uParserService
             } elseif (str_starts_with($line, '#EXTGRP:') && $currentChannel) {
                 $extGrp = trim(substr($line, 8));
                 if (!empty($extGrp)) {
-                    $currentChannel['group_title'] = $extGrp;
+                    $currentChannel['group_title'] = \App\Models\TvChannel::fixMojibake($extGrp);
                 }
             } elseif (!str_starts_with($line, '#') && $currentChannel) {
                 // Esta es la URL del stream

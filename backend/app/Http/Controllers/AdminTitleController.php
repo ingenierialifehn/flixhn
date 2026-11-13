@@ -250,9 +250,9 @@ class AdminTitleController extends Controller
      */
     public function syncRemoteMedia(Request $request, \App\Services\RemoteMediaConnectorService $remoteService): JsonResponse
     {
-        @set_time_limit(0);
-        @ini_set('max_execution_time', '0');
-        @ini_set('memory_limit', '1024M');
+        set_time_limit(0);
+        ini_set('max_execution_time', '0');
+        ini_set('memory_limit', '1024M');
         @ignore_user_abort(true);
 
         $sourceMode = $request->input('source_mode') ?: \App\Models\ServerSetting::get('media_source_mode', 'local');
@@ -297,9 +297,9 @@ class AdminTitleController extends Controller
      */
     public function syncMedia(Request $request, \App\Services\RemoteMediaConnectorService $remoteService, \App\Services\MediaSyncService $syncService): JsonResponse
     {
-        @set_time_limit(0);
-        @ini_set('max_execution_time', '0');
-        @ini_set('memory_limit', '1024M');
+        set_time_limit(0);
+        ini_set('max_execution_time', '0');
+        ini_set('memory_limit', '1024M');
         @ignore_user_abort(true);
 
         $sourceMode = $request->input('source_mode') ?: \App\Models\ServerSetting::get('media_source_mode', 'local');
@@ -375,9 +375,9 @@ class AdminTitleController extends Controller
      */
     public function scanLocalMedia(Request $request, \App\Services\LocalMediaScannerService $scanner): JsonResponse
     {
-        @set_time_limit(0);
-        @ini_set('max_execution_time', '0');
-        @ini_set('memory_limit', '1024M');
+        set_time_limit(0);
+        ini_set('max_execution_time', '0');
+        ini_set('memory_limit', '1024M');
         @ignore_user_abort(true);
 
         try {
@@ -1018,18 +1018,15 @@ class AdminTitleController extends Controller
             OttDownloadTask::where('title_id', $titleId)->orWhere('title', $titleName)->delete();
         } catch (\Throwable) {}
 
-        // 3. Eliminar temporadas y episodios
-        if ($title->seasons()->exists()) {
-            foreach ($title->seasons as $season) {
-                $season->episodes()->delete();
-                $season->delete();
-            }
-        }
-
-        $title->delete();
+        $integrityService = app(\App\Services\MediaIntegrityService::class);
+        $mediaType = $title->type ?? 'movie';
+        $integrityService->purgeTitle($title);
 
         return response()->json([
             'success' => true,
+            'deleted' => true,
+            'id' => $titleId,
+            'type' => $mediaType,
             'message' => "Título \"{$titleName}\" eliminado del catálogo.",
         ]);
     }

@@ -98,11 +98,10 @@ class MediaIntegrityService
      */
     public function isLocalTitle(Title $title): bool
     {
-        $sourceType = $title->source_type ?? 'local';
         $provider = $title->provider ?? 'local';
-        $filePath = $title->file_path ?? $title->stream_path ?? null;
+        $filePath = $title->source_path ?? $title->stream_path ?? null;
 
-        if ($sourceType === 'local' || $provider === 'local') {
+        if ($provider === 'local') {
             return true;
         }
 
@@ -153,7 +152,7 @@ class MediaIntegrityService
     {
         if ($title->type === 'movie') {
             if ($this->isLocalTitle($title)) {
-                $filePath = $title->source_path ?: $title->file_path ?: $title->stream_path;
+                $filePath = $title->source_path ?: $title->stream_path;
                 if (!$this->doesPhysicalFileExist($filePath)) {
                     Log::warning("MediaIntegrityService: Película física eliminada del disco [ID {$title->id}: {$title->name}]. Purgando de la base de datos.");
                     $this->purgeTitle($title);
@@ -170,7 +169,7 @@ class MediaIntegrityService
                 $validEpisodesCount = 0;
 
                 foreach ($episodes as $ep) {
-                    $epPath = $ep->source_path ?: $ep->file_path ?: $ep->stream_path;
+                    $epPath = $ep->file_path ?: $ep->stream_path;
                     if ($this->isLocalEpisode($ep)) {
                         if (!$this->doesPhysicalFileExist($epPath)) {
                             Log::warning("MediaIntegrityService: Episodio físico eliminado del disco [ID {$ep->id}: {$ep->title}]. Purgando episodio.");
@@ -201,7 +200,7 @@ class MediaIntegrityService
     public function verifyOrPurgeEpisode(Episode $episode): bool
     {
         if ($this->isLocalEpisode($episode)) {
-            $epPath = $episode->source_path ?: $episode->file_path ?: $episode->stream_path;
+            $epPath = $episode->file_path ?: $episode->stream_path;
             if (!$this->doesPhysicalFileExist($epPath)) {
                 Log::warning("MediaIntegrityService: Archivo de episodio no encontrado [ID {$episode->id}: {$episode->title}]. Purgando.");
                 $this->purgeEpisode($episode, true);
@@ -217,15 +216,16 @@ class MediaIntegrityService
     public function purgeTitle(Title $title): void
     {
         $titleId = $title->id;
+        $titleName = $title->name;
 
         // Eliminar registros asociados en cascada
-        $this->purgeAssociatedData('title', $titleId);
+        $this->purgeAssociatedData('title', $titleId, $titleName);
 
         // Si es serie, eliminar temporadas y episodios
         if ($title->type === 'series') {
             $episodes = Episode::where('title_id', $titleId)->get();
             foreach ($episodes as $ep) {
-                $this->purgeAssociatedData('episode', $ep->id);
+                $this->purgeAssociatedData('episode', $ep->id, $ep->title);
                 $ep->delete();
             }
             Season::where('title_id', $titleId)->delete();
@@ -245,8 +245,9 @@ class MediaIntegrityService
     {
         $episodeId = $episode->id;
         $titleId = $episode->title_id;
+        $epTitle = $episode->title;
 
-        $this->purgeAssociatedData('episode', $episodeId);
+        $this->purgeAssociatedData('episode', $episodeId, $epTitle);
         $episode->delete();
 
         if ($checkParentSeries && $titleId) {
@@ -268,12 +269,16 @@ class MediaIntegrityService
      */
     public function purgeChannel(TvChannel $channel): void
     {
-        $channelId = $channel->id;
+        $channelName = $channel->name;
 
         if (Schema::hasTable('device_sessions')) {
-            DeviceSession::where('channel_id', $channelId)
-                ->orWhere('media_id', $channelId)
-                ->delete();
+            try {
+                if (!empty($channelName)) {
+                    DeviceSession::where('current_media_title', $channelName)->delete();
+                }
+            } catch (\Throwable $e) {
+                Log::debug("MediaIntegrityService::purgeChannel: Error limpiando device_sessions: " . $e->getMessage());
+            }
         }
 
         $channel->delete();
@@ -287,17 +292,23 @@ class MediaIntegrityService
      * Elimina en cascada todos los registros en tablas dependientes
      * (watch_history, playback_progress, favorites, my_list, downloads, device_sessions).
      */
-    public function purgeAssociatedData(string $type, int $id): void
+    public function purgeAssociatedData(string $type, int $id, ?string $titleName = null): void
     {
         $idColumn = $type === 'episode' ? 'episode_id' : 'title_id';
 
         // 1. playback_progress / watch_history
         if (Schema::hasTable('playback_progress')) {
-            DB::table('playback_progress')->where($idColumn, $id)->delete();
+            try {
+                DB::table('playback_progress')->where($idColumn, $id)->delete();
+            } catch (\Throwable $e) {
+                Log::debug("MediaIntegrityService: Error limpiando playback_progress: " . $e->getMessage());
+            }
         }
 
         if (Schema::hasTable('watch_history')) {
-            DB::table('watch_history')->where($idColumn, $id)->delete();
+            try {
+                DB::table('watch_history')->where($idColumn, $id)->delete();
+            } catch (\Throwable $e) {}
         }
 
         // 2. favorites / my_list
@@ -316,11 +327,15 @@ class MediaIntegrityService
         // 3. Tareas de descargas (MediaIngestTask, OttDownloadTask, downloads)
         if ($type === 'title') {
             if (Schema::hasTable('media_items')) {
-                MediaItem::where('title_id', $id)->delete();
+                try {
+                    MediaItem::where('title_id', $id)->delete();
+                } catch (\Throwable $e) {}
             }
 
             if (Schema::hasTable('ott_download_tasks')) {
-                OttDownloadTask::where('media_item_id', $id)->delete();
+                try {
+                    OttDownloadTask::where('media_item_id', $id)->delete();
+                } catch (\Throwable $e) {}
             }
 
             if (Schema::hasTable('downloads')) {
@@ -330,9 +345,15 @@ class MediaIntegrityService
             }
         }
 
-        // 4. device_sessions (telemetría de sesiones activas)
+        // 4. device_sessions (telemetría de sesiones activas: filtrado por current_media_title)
         if (Schema::hasTable('device_sessions')) {
-            DeviceSession::where('media_id', $id)->delete();
+            try {
+                if (!empty($titleName)) {
+                    DeviceSession::where('current_media_title', $titleName)->delete();
+                }
+            } catch (\Throwable $e) {
+                Log::debug("MediaIntegrityService: Error limpiando device_sessions: " . $e->getMessage());
+            }
         }
     }
 
