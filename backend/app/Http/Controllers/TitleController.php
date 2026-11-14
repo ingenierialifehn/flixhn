@@ -72,9 +72,7 @@ class TitleController extends Controller
                         }
 
                         // Verificar si existe en la base de datos completa de títulos
-                        $existsInDb = Title::where('name', $itemTitle)
-                            ->orWhere('title', $itemTitle)
-                            ->exists();
+                        $existsInDb = Title::where('name', $itemTitle)->exists();
                         if ($existsInDb) {
                             continue;
                         }

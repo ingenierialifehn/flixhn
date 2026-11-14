@@ -457,9 +457,7 @@ class OttProviderController extends Controller
         $genre = $request->input('genre') ?? 'Streaming';
 
         // 1. Verificar si ya existe en la base de datos y tiene archivo físico disponible en disco
-        $existing = Title::where('name', $titleName)
-            ->orWhere('title', $titleName)
-            ->first();
+        $existing = Title::where('name', $titleName)->first();
 
         if ($existing && $existing->file_path && file_exists($existing->file_path) && filesize($existing->file_path) > 1024) {
             return response()->json([
@@ -488,7 +486,6 @@ class OttProviderController extends Controller
         if (!$existing) {
             $existing = Title::create([
                 'name' => $titleName,
-                'title' => $titleName,
                 'slug' => Str::slug($titleName) ?: ('ott-' . time()),
                 'type' => $mediaType,
                 'provider' => $provider,
@@ -537,7 +534,7 @@ class OttProviderController extends Controller
         $title = $titleId ? Title::find($titleId) : null;
 
         if (!$title && $task) {
-            $title = Title::where('name', $task->title)->orWhere('title', $task->title)->first();
+            $title = Title::where('name', $task->title)->first();
         }
 
         // Si el archivo físico ya existe en disco y tiene contenido válido (> 2 MB para arranque progresivo o completado)
