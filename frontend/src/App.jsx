@@ -10,6 +10,7 @@ import MovieCard from './components/MovieCard';
 import Top10Row from './components/Top10Row';
 import DetailModal from './components/DetailModal';
 import OnDemandLoadingModal from './components/OnDemandLoadingModal';
+import FlixGrabSearchGrid from './components/FlixGrabSearchGrid';
 import VideoPlayer from './components/VideoPlayer';
 import LiveTvPlayer from './components/LiveTvPlayer';
 import LiveTvView from './components/LiveTvView';
@@ -671,38 +672,14 @@ function App() {
             }}
           />
         ) : isSearchActive ? (
-          <section className="pt-24 px-4 md:px-12 pb-16 min-h-[75vh] animate-fadeIn">
-            <div className="mb-6 flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 dark:border-zinc-800 pb-4">
-              <h1 className="text-xl md:text-2xl font-bold text-gray-900 dark:text-white">
-                {t('search_results_for', 'Resultados para')}: <span className="text-[#E50914]">"{searchQuery}"</span>
-              </h1>
-              <span className="text-xs text-zinc-500 font-medium">
-                {(searchResults || []).length} {(searchResults || []).length === 1 ? 'título' : 'títulos'}
-              </span>
-            </div>
-
-            {(searchResults || []).length === 0 ? (
-              <div className="py-24 text-center space-y-3">
-                <p className="text-base text-zinc-600 dark:text-zinc-400">
-                  {t('no_results_found', 'No se encontraron títulos que coincidan con')} "{searchQuery}".
-                </p>
-                <p className="text-xs text-zinc-500">
-                  Sugerencias: prueba con otros términos, actores, directores o géneros.
-                </p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 md:gap-5">
-                {(searchResults || []).map((item) => (
-                  <MovieCard
-                    key={item?.id}
-                    item={item}
-                    onPlay={(t, ep) => handlePlay(t, ep)}
-                    onOpenModal={(t) => handleOpenModal(t)}
-                  />
-                ))}
-              </div>
-            )}
-          </section>
+          <div className="pt-20">
+            <FlixGrabSearchGrid
+              searchQuery={searchQuery}
+              results={searchResults}
+              onPlay={(t, ep) => handlePlay(t, ep)}
+              onOpenModal={(t) => handleOpenModal(t)}
+            />
+          </div>
         ) : (
           /* VISTA 2: CATÁLOGO REGULAR COMPLETO CON BILLBOARD Y TODAS LAS FILAS */
           <>

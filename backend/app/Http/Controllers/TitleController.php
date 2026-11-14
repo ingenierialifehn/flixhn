@@ -48,7 +48,18 @@ class TitleController extends Controller
             })
             ->orderBy('created_at', 'desc')
             ->take(60)
-            ->get();
+            ->get()
+            ->map(function ($item) {
+                $item->title = $item->name;
+                $item->year = $item->release_year;
+                $item->overview = $item->description;
+                $item->media_type = $item->type;
+                $item->is_already_downloaded = true;
+                $item->is_available_locally = true;
+                $item->is_ott = false;
+                $item->status = 'En Catálogo';
+                return $item;
+            });
 
             // Si la búsqueda tiene 3 o más caracteres, buscar automáticamente en todas las plataformas OTT conectadas
             $ottResults = [];
@@ -87,16 +98,22 @@ class TitleController extends Controller
                             'title' => $itemTitle,
                             'slug' => Str::slug($itemTitle) ?: $uniqueOttId,
                             'type' => $mediaType,
+                            'media_type' => $mediaType,
                             'provider' => $providerKey,
                             'source_platform' => $providerKey,
                             'description' => $item['overview'] ?? ($item['description'] ?? "Disponible para descarga e ingesta On-Net desde " . ucfirst($providerKey)),
+                            'overview' => $item['overview'] ?? ($item['description'] ?? "Disponible para descarga e ingesta On-Net desde " . ucfirst($providerKey)),
                             'poster_url' => $item['poster_url'] ?? null,
                             'backdrop_url' => $item['backdrop_url'] ?? ($item['poster_url'] ?? null),
                             'release_year' => $item['year'] ?? ($item['release_year'] ?? date('Y')),
-                            'genre' => is_array($item['genres'] ?? null) ? implode(', ', $item['genres']) : ($item['genres'] ?? ($item['genre'] ?? 'Streaming OTT')),
+                            'year' => $item['year'] ?? ($item['release_year'] ?? date('Y')),
+                            'genre' => is_array($item['genres'] ?? null) ? implode(', ', $item['genres']) : ($item['genres'] ?? ($item['genre'] ?? ($mediaType === 'series' ? 'Serie Original' : 'Largometraje'))),
                             'duration_seconds' => $item['duration_seconds'] ?? 7200,
                             'is_ott' => true,
                             'is_downloaded' => false,
+                            'is_already_downloaded' => false,
+                            'is_available_locally' => false,
+                            'status' => 'Disponible OTT',
                             'created_at' => now()->toIso8601String(),
                             'metadata' => $item,
                         ];
