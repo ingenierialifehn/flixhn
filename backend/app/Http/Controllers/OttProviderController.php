@@ -611,7 +611,6 @@ class OttProviderController extends Controller
                     ]);
                 }
             }
-        }
             return response()->json([
                 'success' => false,
                 'ready' => false,
