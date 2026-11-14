@@ -25,6 +25,7 @@ const Navbar = ({
   onOpenModal,
   onSearchResults,
   onSearchQueryChange,
+  onSearchingChange,
 }) => {
   const { user, activeProfile, clientIp, isOnNet, logout, clearProfile } = useAuth();
   const { theme, toggleTheme } = useTheme();
@@ -39,6 +40,7 @@ const Navbar = ({
   const [isSearching, setIsSearching] = useState(false);
   const searchInputRef = useRef(null);
   const searchContainerRef = useRef(null);
+  const abortControllerRef = useRef(null);
 
   // Referencia de guardia estricta para evitar bucles infinitos de renderizado
   const prevQueryRef = useRef('');
@@ -56,52 +58,65 @@ const Navbar = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [searchQuery]);
 
-  // Filtrado reactivo en tiempo real: debounce con guarda estricta contra renders infinitos
+  // Ejecución directa de búsqueda cancelando peticiones en vuelo anteriores
+  const executeSearch = useCallback(async (query) => {
+    const trimmed = query.trim();
+    prevQueryRef.current = trimmed;
+
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+
+    if (typeof onSearchQueryChange === 'function') {
+      onSearchQueryChange(trimmed);
+    }
+
+    if (!trimmed) {
+      setIsSearching(false);
+      if (typeof onSearchingChange === 'function') onSearchingChange(false);
+      if (typeof onSearchResults === 'function') onSearchResults([], '');
+      return;
+    }
+
+    setIsSearching(true);
+    if (typeof onSearchingChange === 'function') onSearchingChange(true);
+
+    try {
+      const res = await api.get(`/titles?q=${encodeURIComponent(trimmed)}`, {
+        signal: abortControllerRef.current.signal,
+      });
+      const results = res.data?.results || res.data?.data || [];
+      if (typeof onSearchResults === 'function') {
+        onSearchResults(results, trimmed);
+      }
+    } catch (err) {
+      if (err.name === 'CanceledError' || err.code === 'ERR_CANCELED') {
+        return; // Búsqueda anterior cancelada por una más reciente
+      }
+      console.warn('Error en búsqueda reactiva de títulos:', err);
+      if (typeof onSearchResults === 'function') {
+        onSearchResults([], trimmed);
+      }
+    } finally {
+      setIsSearching(false);
+      if (typeof onSearchingChange === 'function') onSearchingChange(false);
+    }
+  }, [onSearchQueryChange, onSearchResults, onSearchingChange]);
+
+  // Filtrado reactivo en tiempo real con debounce
   useEffect(() => {
     const trimmed = searchQuery.trim();
-
-    // Condición de guarda: evitar llamadas redundantes si la consulta no cambió
     if (trimmed === prevQueryRef.current) {
       return;
     }
 
-    const timer = setTimeout(async () => {
-      if (trimmed === prevQueryRef.current) {
-        return;
-      }
-      prevQueryRef.current = trimmed;
-
-      if (typeof onSearchQueryChange === 'function') {
-        onSearchQueryChange(trimmed);
-      }
-
-      if (!trimmed) {
-        setIsSearching(false);
-        if (typeof onSearchResults === 'function') {
-          onSearchResults([], '');
-        }
-        return;
-      }
-
-      setIsSearching(true);
-      try {
-        const res = await api.get(`/titles?q=${encodeURIComponent(trimmed)}`);
-        const results = res.data?.results || res.data?.data || [];
-        if (typeof onSearchResults === 'function') {
-          onSearchResults(results, trimmed);
-        }
-      } catch (err) {
-        console.warn('Error en búsqueda reactiva de títulos:', err);
-        if (typeof onSearchResults === 'function') {
-          onSearchResults([], trimmed);
-        }
-      } finally {
-        setIsSearching(false);
-      }
-    }, 250);
+    const timer = setTimeout(() => {
+      executeSearch(trimmed);
+    }, 280);
 
     return () => clearTimeout(timer);
-  }, [searchQuery, onSearchQueryChange, onSearchResults]);
+  }, [searchQuery, executeSearch]);
 
   const handleToggleSearch = useCallback(() => {
     setSearchOpen((prev) => {
@@ -114,25 +129,32 @@ const Navbar = ({
   }, []);
 
   const handleClearSearch = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
     setSearchQuery('');
     setSearchOpen(false);
-    if (prevQueryRef.current !== '') {
-      prevQueryRef.current = '';
-      if (typeof onSearchQueryChange === 'function') {
-        onSearchQueryChange('');
-      }
-      if (typeof onSearchResults === 'function') {
-        onSearchResults([], '');
-      }
+    prevQueryRef.current = '';
+    if (typeof onSearchQueryChange === 'function') {
+      onSearchQueryChange('');
     }
-  }, [onSearchQueryChange, onSearchResults]);
+    if (typeof onSearchResults === 'function') {
+      onSearchResults([], '');
+    }
+    if (typeof onSearchingChange === 'function') {
+      onSearchingChange(false);
+    }
+  }, [onSearchQueryChange, onSearchResults, onSearchingChange]);
 
   const handleKeyDown = useCallback((e) => {
     if (e.key === 'Escape') {
       handleClearSearch();
       searchInputRef.current?.blur();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      executeSearch(searchQuery);
     }
-  }, [handleClearSearch]);
+  }, [handleClearSearch, executeSearch, searchQuery]);
 
   useEffect(() => {
     const handleScroll = () => {

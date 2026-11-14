@@ -10,7 +10,7 @@ import MovieCard from './components/MovieCard';
 import Top10Row from './components/Top10Row';
 import DetailModal from './components/DetailModal';
 import OnDemandLoadingModal from './components/OnDemandLoadingModal';
-import FlixGrabSearchGrid from './components/FlixGrabSearchGrid';
+import BrowseSearchGrid from './components/BrowseSearchGrid';
 import VideoPlayer from './components/VideoPlayer';
 import LiveTvPlayer from './components/LiveTvPlayer';
 import LiveTvView from './components/LiveTvView';
@@ -49,6 +49,7 @@ function App() {
   // Estados de búsqueda reactiva en tiempo real (Estilo Netflix)
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
+  const [isSearching, setIsSearching] = useState(false);
   const [hasActiveDownloads, setHasActiveDownloads] = useState(false);
 
   // Estados de modales y reproducción
@@ -660,6 +661,7 @@ function App() {
         onOpenModal={handleOpenModal}
         onSearchResults={handleSearchResults}
         onSearchQueryChange={handleSearchQueryChange}
+        onSearchingChange={setIsSearching}
       />
 
       <main className="flex-1 pb-16">
@@ -672,14 +674,13 @@ function App() {
             }}
           />
         ) : isSearchActive ? (
-          <div className="pt-20">
-            <FlixGrabSearchGrid
-              searchQuery={searchQuery}
-              results={searchResults}
-              onPlay={(t, ep) => handlePlay(t, ep)}
-              onOpenModal={(t) => handleOpenModal(t)}
-            />
-          </div>
+          <BrowseSearchGrid
+            searchQuery={searchQuery}
+            results={searchResults}
+            isSearching={isSearching}
+            onPlay={(t, ep) => handlePlay(t, ep)}
+            onOpenModal={(t) => handleOpenModal(t)}
+          />
         ) : (
           /* VISTA 2: CATÁLOGO REGULAR COMPLETO CON BILLBOARD Y TODAS LAS FILAS */
           <>

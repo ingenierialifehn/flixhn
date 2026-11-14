@@ -61,14 +61,22 @@ class TitleController extends Controller
                 return $item;
             });
 
-            // Si la búsqueda tiene 3 o más caracteres, buscar automáticamente en todas las plataformas OTT conectadas
+            // Si la búsqueda tiene 2 o más caracteres, buscar automáticamente en todas las plataformas OTT conectadas
             $ottResults = [];
-            if (mb_strlen($searchQuery) >= 3) {
+            if (mb_strlen($searchQuery) >= 2) {
                 try {
                     $cacheKey = 'ott_search_agg_' . md5(mb_strtolower($searchQuery));
-                    $ottRaw = Cache::remember($cacheKey, 300, function () use ($searchQuery) {
-                        return OttSyncService::searchReal($searchQuery);
-                    });
+                    $ottRaw = null;
+                    try {
+                        $ottRaw = Cache::get($cacheKey);
+                    } catch (\Throwable $e) {}
+
+                    if (!$ottRaw) {
+                        $ottRaw = OttSyncService::searchReal($searchQuery);
+                        try {
+                            Cache::put($cacheKey, $ottRaw, 300);
+                        } catch (\Throwable $e) {}
+                    }
 
                     // Nombres locales existentes en minúsculas para evitar duplicados
                     $localNames = $matched->map(fn($t) => mb_strtolower(trim($t->name ?? '')))->toArray();
@@ -101,8 +109,8 @@ class TitleController extends Controller
                             'media_type' => $mediaType,
                             'provider' => $providerKey,
                             'source_platform' => $providerKey,
-                            'description' => $item['overview'] ?? ($item['description'] ?? "Disponible para descarga e ingesta On-Net desde " . ucfirst($providerKey)),
-                            'overview' => $item['overview'] ?? ($item['description'] ?? "Disponible para descarga e ingesta On-Net desde " . ucfirst($providerKey)),
+                            'description' => $item['overview'] ?? ($item['description'] ?? "Disponible para transmisión On-Net desde " . ucfirst($providerKey)),
+                            'overview' => $item['overview'] ?? ($item['description'] ?? "Disponible para transmisión On-Net desde " . ucfirst($providerKey)),
                             'poster_url' => $item['poster_url'] ?? null,
                             'backdrop_url' => $item['backdrop_url'] ?? ($item['poster_url'] ?? null),
                             'release_year' => $item['year'] ?? ($item['release_year'] ?? date('Y')),
@@ -119,7 +127,9 @@ class TitleController extends Controller
                         ];
 
                         // Guardar en caché individual para consultas rápidas por id (show/modal)
-                        Cache::put('ott_item_' . $uniqueOttId, $formattedOtt, 3600);
+                        try {
+                            Cache::put('ott_item_' . $uniqueOttId, $formattedOtt, 3600);
+                        } catch (\Throwable $e) {}
 
                         $ottResults[] = $formattedOtt;
                     }
