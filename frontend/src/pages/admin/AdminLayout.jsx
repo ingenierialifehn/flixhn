@@ -238,12 +238,11 @@ const AdminLayout = ({ onBackToBrowse }) => {
   const [refreshing, setRefreshing] = useState(false);
   const [activeDevicesCount, setActiveDevicesCount] = useState(0);
 
-  const loadData = useCallback(async () => {
+  // Carga instantánea de métricas del Dashboard (Telemetría y Dispositivos)
+  const loadDashboardData = useCallback(async () => {
     try {
-      const [resStatsSettled, resTitlesSettled, resSubsSettled, resDevicesSettled] = await Promise.allSettled([
+      const [resStatsSettled, resDevicesSettled] = await Promise.allSettled([
         api.get('/admin/dashboard-stats'),
-        api.get('/admin/titles'),
-        api.get('/admin/users'),
         api.get('/admin/devices'),
       ]);
 
@@ -253,16 +252,6 @@ const AdminLayout = ({ onBackToBrowse }) => {
         setNowPlaying(statsData?.active_streams || statsData?.now_playing || []);
         setAlerts(statsData?.alerts || []);
         setActivity(statsData?.activity || []);
-      }
-
-      if (resTitlesSettled.status === 'fulfilled') {
-        const tData = resTitlesSettled.value?.data;
-        setTitles(tData?.titles || tData?.data || []);
-      }
-
-      if (resSubsSettled.status === 'fulfilled') {
-        const sData = resSubsSettled.value?.data;
-        setSubscribers(sData?.users || sData?.data || []);
       }
 
       if (resDevicesSettled.status === 'fulfilled') {
@@ -279,13 +268,50 @@ const AdminLayout = ({ onBackToBrowse }) => {
     }
   }, []);
 
+  // Carga bajo demanda (Lazy Load) para Biblioteca / Catálogo
+  const loadTitlesData = useCallback(async () => {
+    try {
+      const res = await api.get('/admin/titles');
+      const tData = res?.data;
+      setTitles(tData?.titles || tData?.data || []);
+    } catch (err) {
+      console.error('Error cargando catálogo:', err);
+    }
+  }, []);
+
+  // Carga bajo demanda (Lazy Load) para Suscriptores
+  const loadUsersData = useCallback(async () => {
+    try {
+      const res = await api.get('/admin/users');
+      const sData = res?.data;
+      setSubscribers(sData?.users || sData?.data || []);
+    } catch (err) {
+      console.error('Error cargando usuarios:', err);
+    }
+  }, []);
+
+  // Cargar Dashboard al iniciar
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    loadDashboardData();
+  }, [loadDashboardData]);
+
+  // Cargar catálogo o suscriptores cuando se activa su pestaña
+  useEffect(() => {
+    if (activeTab === 'library' || activeTab === 'catalog') {
+      loadTitlesData();
+    } else if (activeTab === 'users') {
+      loadUsersData();
+    }
+  }, [activeTab, loadTitlesData, loadUsersData]);
 
   const handleRefresh = () => {
     setRefreshing(true);
-    loadData();
+    loadDashboardData();
+    if (activeTab === 'library' || activeTab === 'catalog') {
+      loadTitlesData();
+    } else if (activeTab === 'users') {
+      loadUsersData();
+    }
   };
 
   const handleSessionStopped = (stoppedId) => {

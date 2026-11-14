@@ -10,9 +10,11 @@ use App\Models\PlaybackProgress;
 use App\Models\MediaIngestTask;
 use App\Services\RemoteMediaConnectorService;
 use App\Services\MediaIntegrityService;
+use App\Services\OttSyncService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class TitleController extends Controller
@@ -32,7 +34,7 @@ class TitleController extends Controller
 
         $searchQuery = trim($request->query('q') ?? $request->query('search') ?? '');
 
-        // Búsqueda reactiva en tiempo real por término (rápida y ligera)
+        // Búsqueda reactiva en tiempo real por término (rápida, ligera e integrada con OTT)
         if ($searchQuery !== '') {
             $matched = Title::select([
                 'id', 'name', 'slug', 'type', 'provider', 'description',
@@ -48,11 +50,79 @@ class TitleController extends Controller
             ->take(60)
             ->get();
 
+            // Si la búsqueda tiene 3 o más caracteres, buscar automáticamente en todas las plataformas OTT conectadas
+            $ottResults = [];
+            if (mb_strlen($searchQuery) >= 3) {
+                try {
+                    $cacheKey = 'ott_search_agg_' . md5(mb_strtolower($searchQuery));
+                    $ottRaw = Cache::remember($cacheKey, 300, function () use ($searchQuery) {
+                        return OttSyncService::searchReal($searchQuery);
+                    });
+
+                    // Nombres locales existentes en minúsculas para evitar duplicados
+                    $localNames = $matched->map(fn($t) => mb_strtolower(trim($t->name ?? '')))->toArray();
+
+                    foreach ($ottRaw as $item) {
+                        $itemTitle = trim($item['title'] ?? '');
+                        if (empty($itemTitle)) continue;
+
+                        $itemTitleLower = mb_strtolower($itemTitle);
+                        if (in_array($itemTitleLower, $localNames)) {
+                            continue;
+                        }
+
+                        // Verificar si existe en la base de datos completa de títulos
+                        $existsInDb = Title::where('name', $itemTitle)
+                            ->orWhere('title', $itemTitle)
+                            ->exists();
+                        if ($existsInDb) {
+                            continue;
+                        }
+
+                        $providerKey = strtolower($item['provider'] ?? 'netflix');
+                        $mediaType = ($item['type'] ?? 'movie') === 'series' ? 'series' : 'movie';
+                        $uniqueOttId = 'ott_' . md5($providerKey . '_' . $itemTitle);
+
+                        $formattedOtt = [
+                            'id' => $uniqueOttId,
+                            'name' => $itemTitle,
+                            'title' => $itemTitle,
+                            'slug' => Str::slug($itemTitle) ?: $uniqueOttId,
+                            'type' => $mediaType,
+                            'provider' => $providerKey,
+                            'source_platform' => $providerKey,
+                            'description' => $item['overview'] ?? ($item['description'] ?? "Disponible para descarga e ingesta On-Net desde " . ucfirst($providerKey)),
+                            'poster_url' => $item['poster_url'] ?? null,
+                            'backdrop_url' => $item['backdrop_url'] ?? ($item['poster_url'] ?? null),
+                            'release_year' => $item['year'] ?? ($item['release_year'] ?? date('Y')),
+                            'genre' => is_array($item['genres'] ?? null) ? implode(', ', $item['genres']) : ($item['genres'] ?? ($item['genre'] ?? 'Streaming OTT')),
+                            'duration_seconds' => $item['duration_seconds'] ?? 7200,
+                            'is_ott' => true,
+                            'is_downloaded' => false,
+                            'created_at' => now()->toIso8601String(),
+                            'metadata' => $item,
+                        ];
+
+                        // Guardar en caché individual para consultas rápidas por id (show/modal)
+                        Cache::put('ott_item_' . $uniqueOttId, $formattedOtt, 3600);
+
+                        $ottResults[] = $formattedOtt;
+                    }
+                } catch (\Throwable $e) {
+                    Log::warning("Error integrando búsqueda OTT en TitleController@index: " . $e->getMessage());
+                }
+            }
+
+            // Combinar: Catálogo local On-Net primero, seguido por resultados remotos OTT listos para descarga
+            $allResults = collect($matched)->concat($ottResults)->values();
+
             return response()->json([
                 'status' => 'success',
-                'data' => $matched,
-                'results' => $matched,
-                'total_titles' => $matched->count(),
+                'data' => $allResults,
+                'results' => $allResults,
+                'total_titles' => $allResults->count(),
+                'local_count' => $matched->count(),
+                'ott_count' => count($ottResults),
             ]);
         }
 
@@ -362,6 +432,18 @@ class TitleController extends Controller
             $token = $request->user()->currentAccessToken();
             $profileId = ($token ? Cache::get("token_{$token->id}_current_profile") : null)
                 ?? Cache::get("user_{$request->user()->id}_current_profile");
+        }
+
+        // Si es un contenido OTT que aún no ha sido descargado al servidor local
+        if (str_starts_with((string) $id, 'ott_')) {
+            $cachedOtt = Cache::get('ott_item_' . $id);
+            if ($cachedOtt) {
+                return response()->json([
+                    'status' => 'success',
+                    'title' => (object) $cachedOtt,
+                    'progress' => null,
+                ]);
+            }
         }
 
         $title = Title::with(['category'])->find($id);

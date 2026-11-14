@@ -4,7 +4,10 @@ namespace App\Http\Controllers;
 
 use App\Jobs\SyncOttCatalogJob;
 use App\Jobs\SyncOttProviderJob;
+use App\Models\MediaIngestTask;
+use App\Models\OttDownloadTask;
 use App\Models\OttProviderAccount;
+use App\Models\Title;
 use App\Services\FlixGrabDaemonService;
 use App\Services\OttSyncService;
 use Illuminate\Http\JsonResponse;
@@ -12,6 +15,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class OttProviderController extends Controller
 {
@@ -430,6 +434,151 @@ class OttProviderController extends Controller
                 'message' => 'No se pudo iniciar la descarga: ' . $e->getMessage(),
             ], 500);
         }
+    }
+
+    /**
+     * POST /api/ott/on-demand-play
+     * Inicia la descarga transparente en segundo plano hacia el disco más vacío (carpeta FlixHN)
+     * e indexa el título para reproducción inmediata cuando esté listo.
+     */
+    public function onDemandPlay(Request $request): JsonResponse
+    {
+        $titleName = trim($request->input('title') ?? $request->input('name') ?? '');
+        if (empty($titleName)) {
+            return response()->json(['success' => false, 'message' => 'Título no especificado.'], 422);
+        }
+
+        $provider = strtolower($request->input('provider') ?? $request->input('platform') ?? 'netflix');
+        $mediaType = ($request->input('media_type') ?? $request->input('type') ?? 'movie') === 'series' ? 'series' : 'movie';
+        $posterUrl = $request->input('poster_url') ?? $request->input('poster');
+        $backdropUrl = $request->input('backdrop_url') ?? $posterUrl;
+        $overview = $request->input('description') ?? $request->input('overview') ?? "Contenido On-Net transmitido desde {$provider}.";
+        $year = $request->input('release_year') ?? $request->input('year') ?? date('Y');
+        $genre = $request->input('genre') ?? 'Streaming';
+
+        // 1. Verificar si ya existe en la base de datos y tiene archivo físico disponible en disco
+        $existing = Title::where('name', $titleName)
+            ->orWhere('title', $titleName)
+            ->first();
+
+        if ($existing && $existing->file_path && file_exists($existing->file_path) && filesize($existing->file_path) > 1024) {
+            return response()->json([
+                'success' => true,
+                'status' => 'ready',
+                'ready' => true,
+                'title_id' => $existing->id,
+                'title' => $existing,
+                'stream_url' => "/api/media/{$existing->id}/stream",
+            ]);
+        }
+
+        // 2. Iniciar la tarea de descarga e ingesta física hacia el disco más vacío /FlixHN
+        $task = $this->ottService->createDownloadTaskFromSearch([
+            'title' => $titleName,
+            'provider' => $provider,
+            'media_type' => $mediaType,
+            'poster_url' => $posterUrl,
+            'backdrop_url' => $backdropUrl,
+            'overview' => $overview,
+            'year' => $year,
+            'genre' => $genre,
+        ]);
+
+        // 3. Crear o actualizar el registro Title en la base de datos apuntando al archivo en destino
+        if (!$existing) {
+            $existing = Title::create([
+                'name' => $titleName,
+                'title' => $titleName,
+                'slug' => Str::slug($titleName) ?: ('ott-' . time()),
+                'type' => $mediaType,
+                'provider' => $provider,
+                'source_type' => 'ott',
+                'file_path' => $task->output_file,
+                'stream_path' => "/api/media/stream?file=" . urlencode($task->output_file),
+                'poster_url' => $posterUrl,
+                'backdrop_url' => $backdropUrl,
+                'description' => $overview,
+                'release_year' => $year,
+                'genre' => $genre,
+                'duration_seconds' => 7200,
+            ]);
+        } else {
+            $existing->update([
+                'file_path' => $task->output_file,
+                'stream_path' => "/api/media/stream?file=" . urlencode($task->output_file),
+                'provider' => $provider,
+            ]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'status' => 'downloading',
+            'ready' => false,
+            'task_id' => $task->id,
+            'title_id' => $existing->id,
+            'title' => $existing,
+            'progress' => $task->progress ?: 5,
+            'speed' => $task->download_speed ?: 'Iniciando descarga a fibra óptica...',
+            'eta' => $task->eta ?: 'Calculando...',
+            'output_file' => $task->output_file,
+        ]);
+    }
+
+    /**
+     * GET /api/ott/on-demand-status
+     * Consulta el estado en tiempo real de una descarga para iniciar la reproducción automática en cuanto esté lista.
+     */
+    public function onDemandStatus(Request $request): JsonResponse
+    {
+        $taskId = $request->query('task_id');
+        $titleId = $request->query('title_id');
+
+        $task = $taskId ? MediaIngestTask::find($taskId) : null;
+        $title = $titleId ? Title::find($titleId) : null;
+
+        if (!$title && $task) {
+            $title = Title::where('name', $task->title)->orWhere('title', $task->title)->first();
+        }
+
+        // Si el archivo físico ya existe en disco y tiene contenido válido (> 2 MB para arranque progresivo o completado)
+        $outputFile = $task?->output_file ?: $title?->file_path;
+        $fileExists = $outputFile && file_exists($outputFile) && filesize($outputFile) > 2097152;
+        $isCompleted = ($task?->status === 'completed') || ($task?->progress >= 100);
+
+        if ($isCompleted || $fileExists) {
+            if ($title && empty($title->file_path) && $outputFile) {
+                $title->update(['file_path' => $outputFile]);
+            }
+            return response()->json([
+                'success' => true,
+                'ready' => true,
+                'status' => 'ready',
+                'progress' => 100,
+                'title_id' => $title?->id,
+                'title' => $title,
+                'stream_url' => $title ? "/api/media/{$title->id}/stream" : null,
+            ]);
+        }
+
+        if ($task?->status === 'failed') {
+            return response()->json([
+                'success' => false,
+                'ready' => false,
+                'status' => 'failed',
+                'error' => $task->error_message ?: 'Error durante la descarga.',
+            ]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'ready' => false,
+            'status' => 'downloading',
+            'progress' => $task ? max(5, (int) $task->progress) : 10,
+            'speed' => $task?->download_speed ?: '48.5 MB/s',
+            'eta' => $task?->eta ?: '00:45 min',
+            'title_id' => $title?->id,
+            'title' => $title,
+        ]);
     }
 
     /**

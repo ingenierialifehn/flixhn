@@ -14,6 +14,7 @@ use App\Models\OttDownloadTask;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Cache;
 
 class AdminTitleController extends Controller
 {
@@ -22,11 +23,21 @@ class AdminTitleController extends Controller
      */
     public function dashboardStats(): JsonResponse
     {
-        $titlesCount = Title::count();
-        $totalMovies = Title::where('type', 'movie')->count();
-        $totalSeries = Title::where('type', 'series')->count();
-        $subscribersCount = User::where('role', 'subscriber')->count();
-        $activeSubscribers = User::where('role', 'subscriber')->where('is_active', true)->count();
+        $counts = Cache::remember('admin_dashboard_counts', 30, function () {
+            return [
+                'titles_count' => Title::count(),
+                'total_movies' => Title::where('type', 'movie')->count(),
+                'total_series' => Title::where('type', 'series')->count(),
+                'subscribers_count' => User::where('role', 'subscriber')->count(),
+                'active_subscribers' => User::where('role', 'subscriber')->where('is_active', true)->count(),
+            ];
+        });
+
+        $titlesCount = $counts['titles_count'];
+        $totalMovies = $counts['total_movies'];
+        $totalSeries = $counts['total_series'];
+        $subscribersCount = $counts['subscribers_count'];
+        $activeSubscribers = $counts['active_subscribers'];
 
         // 1. Telemetría Real del Servidor
         $hostname = gethostname() ?: 'FlixHN-Node';
@@ -630,19 +641,20 @@ class AdminTitleController extends Controller
             $downloadedTitles = Title::with(['seasons:id,title_id,season_number'])
                 ->where(function ($q) {
                     $q->where('provider', '!=', 'local')
+                      ->orWhere('stream_path', 'LIKE', '%/FlixHN/%')
+                      ->orWhere('source_path', 'LIKE', '%/FlixHN/%')
                       ->orWhere('stream_path', 'LIKE', '%storage/media%')
-                      ->orWhere('stream_path', 'LIKE', '%netflix%')
-                      ->orWhere('stream_path', 'LIKE', '%disney%')
-                      ->orWhere('stream_path', 'LIKE', '%hbo%')
-                      ->orWhere('source_path', 'LIKE', '%storage/media%')
-                      ->orWhere('source_path', 'LIKE', '%media%');
+                      ->orWhere('source_path', 'LIKE', '%storage/media%');
                 })
                 ->orderBy('created_at', 'desc')
+                ->take(50)
                 ->get();
 
+            $existingIds = $titles->pluck('id')->filter()->flip();
             foreach ($downloadedTitles as $dt) {
-                if (!$titles->contains('id', $dt->id)) {
+                if (!isset($existingIds[$dt->id])) {
                     $titles->push($dt);
+                    $existingIds[$dt->id] = true;
                 }
             }
         } elseif ($cleanPath === 'movies' || $cleanPath === 'peliculas') {

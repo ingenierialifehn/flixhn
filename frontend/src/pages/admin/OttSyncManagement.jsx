@@ -43,7 +43,7 @@ import OttPlayerModal from './OttPlayerModal';
 import { notifyCatalogUpdated } from '../../utils/catalogEvents';
 
 /* =========================================================================
-   LOGOS OFICIALES EN BADGES VECTORIALES NÃTITOS (#141414)
+   LOGOS OFICIALES EN BADGES VECTORIALES NÍTITOS (#141414)
    ========================================================================= */
 
 // Netflix: Vector SVG oficial de NETFLIX en rojo #E50914 sobre fondo #141414
@@ -238,7 +238,7 @@ export const CrunchyrollLogo = () => (
   </div>
 );
 
-// Logo genÃ©rico para proveedores personalizados
+// Logo genérico para proveedores personalizados
 export const CustomOttLogo = ({ name = 'OTT', color = '#8B5CF6' }) => (
   <div
     className="flex items-center justify-center px-3 py-1 rounded-md border shadow-sm select-none"
@@ -251,12 +251,12 @@ export const CustomOttLogo = ({ name = 'OTT', color = '#8B5CF6' }) => (
   </div>
 );
 
-// Proveedores por defecto con diseÃ±o institucional FlixHN
+// Proveedores por defecto con diseño institucional FlixHN
 const DEFAULT_PROVIDERS = [
   {
     provider: 'netflix',
     name: 'Netflix',
-    description: 'CatÃ¡logo de series originales, pelÃ­culas 4K UHD y producciones exclusivas globales.',
+    description: 'Catálogo de series originales, películas 4K UHD y producciones exclusivas globales.',
     color: '#E50914',
     status: 'disconnected',
     account_name: '',
@@ -280,7 +280,7 @@ const DEFAULT_PROVIDERS = [
   {
     provider: 'hbo_max',
     name: 'Max (HBO)',
-    description: 'Series galardonadas de HBO, universo cinematogrÃ¡fico Warner Bros, DC Comics y Discovery.',
+    description: 'Series galardonadas de HBO, universo cinematográfico Warner Bros, DC Comics y Discovery.',
     color: '#5822b4',
     status: 'disconnected',
     account_name: '',
@@ -292,7 +292,7 @@ const DEFAULT_PROVIDERS = [
   {
     provider: 'amazon_prime',
     name: 'Amazon Prime Video',
-    description: 'Series Amazon Originals, producciones cinematogrÃ¡ficas de MGM y estrenos taquilleros.',
+    description: 'Series Amazon Originals, producciones cinematográficas de MGM y estrenos taquilleros.',
     color: '#00A8E1',
     status: 'disconnected',
     account_name: '',
@@ -380,7 +380,7 @@ export default function OttSyncManagement({
     });
   }, []);
 
-  // Sub-navegaciÃ³n: 'all' | 'dashboard' | 'search' | 'queue'
+  // Sub-navegación: 'all' | 'dashboard' | 'search' | 'queue'
   const [activeViewTab, setActiveViewTab] = useState(() => {
     if (initialView === 'queue') return 'queue';
     if (initialView === 'dashboard') return 'dashboard';
@@ -470,7 +470,7 @@ export default function OttSyncManagement({
   });
   const [addingPlatform, setAddingPlatform] = useState(false);
 
-  // Modal de confirmaciÃ³n estilizado
+  // Modal de confirmación estilizado
   const [confirmModal, setConfirmModal] = useState(null);
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
   const [folderPickerTarget, setFolderPickerTarget] = useState('connect');
@@ -487,7 +487,7 @@ export default function OttSyncManagement({
   const [daemonLoading, setDaemonLoading] = useState(false);
 
   /* -------------------------------------------------------------------------
-     CARGA DE DATOS REALES CON PRESERVACIÃ“N DE DEFAULTS VISUALES
+     CARGA DE DATOS REALES CON PRESERVACIÓN DE DEFAULTS VISUALES
      ------------------------------------------------------------------------- */
   const loadOttData = useCallback(
     async (isPolling = false) => {
@@ -535,7 +535,7 @@ export default function OttSyncManagement({
         }
       } catch (err) {
         if (!isPolling) {
-          console.warn('Usando catÃ¡logo local sincronizado FlixHN:', err);
+          console.warn('Usando catálogo local sincronizado FlixHN:', err);
         }
       } finally {
         setLoading(false);
@@ -553,7 +553,7 @@ export default function OttSyncManagement({
     return () => clearInterval(pollInterval);
   }, [loadOttData]);
 
-  // Recalcular mÃ©tricas en base al estado reactivo
+  // Recalcular métricas en base al estado reactivo
   useEffect(() => {
     const activeAccountsCount = providers.filter((p) => p.status === 'connected').length;
     const downloadingTasks = tasks.filter((t) => t.status === 'downloading' || t.status === 'processing');
@@ -606,7 +606,7 @@ export default function OttSyncManagement({
     setIsAddPlatformOpen(true);
   };
 
-  // Abrir modal de conexiÃ³n
+  // Abrir modal de conexión
   const handleOpenConnectModal = (provider) => {
     setConnectModalProvider(provider);
     setAuthMethod('oauth2');
@@ -622,7 +622,7 @@ export default function OttSyncManagement({
     });
   };
 
-  // ConexiÃ³n rÃ¡pida simulada OAuth2 (1-Clic)
+  // Conexión rápida simulada OAuth2 (1-Clic)
   const handleQuickOAuth2Connect = async (providerItem) => {
     setConnecting(true);
     try {
@@ -653,13 +653,13 @@ export default function OttSyncManagement({
       setConnectModalProvider(null);
       showToast(
         'success',
-        `Cuenta de ${providerItem.name} autorizada y vinculada vÃ­a OAuth2 con Ã©xito. Ya puedes buscar y descargar su catÃ¡logo.`,
+        `Cuenta de ${providerItem.name} autorizada y vinculada vía OAuth2 con éxito. Ya puedes buscar y descargar su catálogo.`,
         'OAuth2 Conectado'
       );
     }, 750);
   };
 
-  // Guardar conexiÃ³n tradicional (Credenciales/Cookies/Token)
+  // Guardar conexión tradicional (Credenciales/Cookies/Token)
   const handleSaveConnection = async (e) => {
     if (e) e.preventDefault();
     if (!connectModalProvider) return;
@@ -697,8 +697,8 @@ export default function OttSyncManagement({
 
       showToast(
         'success',
-        `Cuenta de ${connectModalProvider.name} conectada con Ã©xito.`,
-        'ConexiÃ³n Exitosa'
+        `Cuenta de ${connectModalProvider.name} conectada con éxito.`,
+        'Conexión Exitosa'
       );
       setConnectModalProvider(null);
     } catch (err) {
@@ -712,7 +712,7 @@ export default function OttSyncManagement({
   const handleDisconnect = (providerItem) => {
     setConfirmModal({
       title: `Desconectar ${providerItem.name}`,
-      message: `Â¿EstÃ¡s seguro de desconectar la cuenta de ${providerItem.name}? Se detendrÃ¡n las sincronizaciones automÃ¡ticas para esta plataforma.`,
+      message: `¿Estás seguro de desconectar la cuenta de ${providerItem.name}? Se detendrán las sincronizaciones automáticas para esta plataforma.`,
       confirmText: 'Desconectar Cuenta',
       danger: true,
       onConfirm: async () => {
@@ -740,17 +740,17 @@ export default function OttSyncManagement({
     setProviders((prev) =>
       prev.map((p) => (p.provider === providerId ? { ...p, auto_download: !currentVal } : p))
     );
-    showToast('success', `Descarga automÃ¡tica ${!currentVal ? 'activada' : 'desactivada'}.`);
+    showToast('success', `Descarga automática ${!currentVal ? 'activada' : 'desactivada'}.`);
     try {
       api.post(`/admin/ott-providers/${providerId}/toggle-auto-download`).catch(() => {});
     } catch {}
   };
 
-  // "Sync Ahora" con spinner y actualizaciÃ³n de contadores
+  // "Sync Ahora" con spinner y actualización de contadores
   const handleSyncNow = (providerItem) => {
     setSyncingProviders((prev) => ({ ...prev, [providerItem.provider]: true }));
 
-    // SimulaciÃ³n visual inmediata
+    // Simulación visual inmediata
     setProviders((prev) =>
       prev.map((p) =>
         p.provider === providerItem.provider
@@ -781,14 +781,14 @@ export default function OttSyncManagement({
       );
       showToast(
         'success',
-        `SincronizaciÃ³n completada con ${providerItem.name}. 3 nuevos tÃ­tulos agregados al catÃ¡logo remoto.`,
+        `Sincronización completada con ${providerItem.name}. 3 nuevos títulos agregados al catálogo remoto.`,
         'Sync OTT Exitoso'
       );
       notifyCatalogUpdated({ action: 'sync_completed', provider: providerItem.provider });
     }, 1200);
   };
 
-  // AcciÃ³n "Buscar en Plataforma" desde la tarjeta
+  // Acción "Buscar en Plataforma" desde la tarjeta
   const handleSearchOnProvider = (providerItem) => {
     setTargetSearchProvider(providerItem.provider);
     setActiveViewTab('search');
@@ -942,7 +942,7 @@ export default function OttSyncManagement({
         </div>
       )}
 
-      {/* Cabecera Principal y TelemetrÃ­a On-Net */}
+      {/* Cabecera Principal y Telemetría On-Net */}
       <div className="relative overflow-hidden bg-gradient-to-r from-[#111827] via-[#141b2d] to-[#0f172a] border border-zinc-800 rounded-2xl p-6 shadow-2xl">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
           <div className="space-y-2">
@@ -956,17 +956,17 @@ export default function OttSyncManagement({
               </span>
             </div>
             <h1 className="text-2xl md:text-3xl font-black text-white tracking-tight flex items-center gap-3">
-              <span>SincronizaciÃ³n OTT & FlixGrab Engine</span>
+              <span>Sincronización OTT & FlixGrab Engine</span>
             </h1>
             <p className="text-sm text-zinc-400 max-w-2xl leading-relaxed">
-              ConexiÃ³n directa OAuth2 con <strong className="text-white">Netflix</strong>,{' '}
+              Conexión directa OAuth2 con <strong className="text-white">Netflix</strong>,{' '}
               <strong className="text-white">Disney+</strong>,{' '}
               <strong className="text-white">Max (HBO)</strong> y{' '}
-              <strong className="text-white">Prime Video</strong>. Busca pelÃ­culas o series On-Demand e ingiÃ©stalas de inmediato a la red perimetral On-Net.
+              <strong className="text-white">Prime Video</strong>. Busca películas o series On-Demand e ingiéstalas de inmediato a la red perimetral On-Net.
             </p>
           </div>
 
-          {/* Selector de sub-vistas / pestaÃ±as del mÃ³dulo */}
+          {/* Selector de sub-vistas / pestañas del módulo */}
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 bg-zinc-950/80 p-1.5 rounded-xl border border-zinc-800/80 shadow-inner">
             <button
               onClick={() => setActiveViewTab('dashboard')}
@@ -1028,7 +1028,7 @@ export default function OttSyncManagement({
           </div>
         </div>
 
-        {/* MÃ©tricas Agregadas Reales */}
+        {/* Métricas Agregadas Reales */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-6 pt-6 border-t border-zinc-800/80">
           <div className="bg-zinc-950/60 border border-zinc-800/80 p-3.5 rounded-xl">
             <span className="text-[11px] uppercase tracking-wider text-zinc-400 font-medium">
@@ -1068,7 +1068,7 @@ export default function OttSyncManagement({
 
           <div className="bg-zinc-950/60 border border-zinc-800/80 p-3.5 rounded-xl">
             <span className="text-[11px] uppercase tracking-wider text-zinc-400 font-medium">
-              TÃ­tulos Listos en Disco
+              Títulos Listos en Disco
             </span>
             <div className="flex items-baseline gap-2 mt-1">
               <span className="text-2xl font-black text-white">
@@ -1080,7 +1080,7 @@ export default function OttSyncManagement({
         </div>
       </div>
 
-      {/* SECCIÃ“N 1: Tarjetas de Plataformas Conectadas (Dashboard) */}
+      {/* SECCIÓN 1: Tarjetas de Plataformas Conectadas (Dashboard) */}
       {(activeViewTab === 'dashboard' || activeViewTab === 'all') && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
@@ -1090,7 +1090,7 @@ export default function OttSyncManagement({
                 Plataformas Conectadas & Cuentas OTT
               </h2>
               <p className="text-xs text-zinc-400">
-                Conecta tus suscripciones para habilitar bÃºsquedas instantÃ¡neas y descargas perimetrales con FlixGrab.
+                Conecta tus suscripciones para habilitar búsquedas instantáneas y descargas perimetrales con FlixGrab.
               </p>
             </div>
 
@@ -1113,7 +1113,7 @@ export default function OttSyncManagement({
                   key={provider.provider}
                   className="bg-[#141b2d]/90 border border-zinc-800 hover:border-zinc-700 rounded-2xl p-6 flex flex-col justify-between transition-all duration-200 shadow-xl relative overflow-hidden group hover:shadow-black/70"
                 >
-                  {/* Acento superior de color segÃºn la plataforma */}
+                  {/* Acento superior de color según la plataforma */}
                   <div
                     className="absolute top-0 left-0 right-0 h-1.5 transition-all duration-200 group-hover:h-2"
                     style={{ backgroundColor: provider.color || '#E50914' }}
@@ -1147,7 +1147,7 @@ export default function OttSyncManagement({
                       </div>
                     </div>
 
-                    {/* DescripciÃ³n */}
+                    {/* Descripción */}
                     <p className="text-xs text-zinc-400 line-clamp-2 leading-relaxed mb-4">
                       {provider.description}
                     </p>
@@ -1187,7 +1187,7 @@ export default function OttSyncManagement({
                       </div>
                     </div>
 
-                    {/* Contadores pequeÃ±os: Importados, En Cola, Listas */}
+                    {/* Contadores pequeños: Importados, En Cola, Listas */}
                     <div className="grid grid-cols-3 gap-2 mb-4 text-center">
                       <div className="bg-zinc-950/60 p-2 rounded-xl border border-zinc-800/70">
                         <span className="block text-sm font-black text-white">
@@ -1230,7 +1230,7 @@ export default function OttSyncManagement({
                             ? 'bg-zinc-800 text-zinc-400 border border-zinc-700/50 cursor-not-allowed'
                             : 'bg-[#E50914] hover:bg-red-700'
                         }`}
-                        title="Sincronizar catÃ¡logo remoto ahora"
+                        title="Sincronizar catálogo remoto ahora"
                       >
                         <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-sky-400' : ''}`} />
                         <span>{isSyncing ? 'Sync...' : 'Sync Ahora'}</span>
@@ -1239,7 +1239,7 @@ export default function OttSyncManagement({
                       <button
                         onClick={() => handleSearchOnProvider(provider)}
                         className="flex items-center justify-center gap-1 px-2 py-2 bg-gradient-to-r from-zinc-800 to-zinc-900 hover:from-zinc-700 hover:to-zinc-800 text-white text-xs font-bold rounded-xl border border-zinc-700 transition-all active:scale-95 cursor-pointer shadow-sm"
-                        title={`Buscar pelÃ­culas y series en ${provider.name}`}
+                        title={`Buscar películas y series en ${provider.name}`}
                       >
                         <Search className="w-3.5 h-3.5 text-red-500" />
                         <span>Buscar</span>
@@ -1267,7 +1267,7 @@ export default function OttSyncManagement({
         </div>
       )}
 
-      {/* SECCIÃ“N 2: Buscador FlixGrab On-Demand */}
+      {/* SECCIÓN 2: Buscador FlixGrab On-Demand */}
       {(activeViewTab === 'search' || activeViewTab === 'all') && (
         <div ref={searchSectionRef}>
           <OttRemoteCatalogExplorer
@@ -1285,7 +1285,7 @@ export default function OttSyncManagement({
         </div>
       )}
 
-      {/* SECCIÃ“N 3: Cola de Descarga e Ingesta On-Net (Tabla de Monitoreo) */}
+      {/* SECCIÓN 3: Cola de Descarga e Ingesta On-Net (Tabla de Monitoreo) */}
       {(activeViewTab === 'queue' || activeViewTab === 'all') && (
         <div ref={queueSectionRef} className="bg-[#111827]/90 border border-zinc-800 rounded-2xl p-6 shadow-2xl space-y-5">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -1304,11 +1304,11 @@ export default function OttSyncManagement({
                 Cola de Descarga e Ingesta On-Net
               </h2>
               <p className="text-xs text-zinc-400">
-                Monitoreo en tiempo real de medios en ingesta fÃ­sica, tasa de transferencia y almacenamiento perimetral.
+                Monitoreo en tiempo real de medios en ingesta física, tasa de transferencia y almacenamiento perimetral.
               </p>
             </div>
 
-            {/* BotÃ³n limpiar completadas */}
+            {/* Botón limpiar completadas */}
             {metrics.completed > 0 && (
               <button
                 onClick={handleClearCompleted}
@@ -1320,14 +1320,14 @@ export default function OttSyncManagement({
             )}
           </div>
 
-          {/* Barra de Filtros y BÃºsqueda Superior */}
+          {/* Barra de Filtros y Búsqueda Superior */}
           <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 bg-zinc-950/70 p-3 rounded-xl border border-zinc-800/80">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 flex-1">
               <div className="relative">
                 <Search className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
-                  placeholder="Buscar contenido o tÃ­tulo en cola..."
+                  placeholder="Buscar contenido o título en cola..."
                   value={searchFilter}
                   onChange={(e) => setSearchFilter(e.target.value)}
                   className="w-full bg-[#141b2d] border border-zinc-800 rounded-lg pl-9 pr-3 py-2 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-red-500"
@@ -1366,7 +1366,7 @@ export default function OttSyncManagement({
               </div>
             </div>
 
-            {/* BotÃ³n rojo limpiar completadas si hay */}
+            {/* Botón rojo limpiar completadas si hay */}
             <div className="flex items-center gap-2 shrink-0">
               {tasks.some((t) => ['completed', 'failed', 'cancelled'].includes(t.status) || Number(t.progress || 0) >= 100) && (
                 <button
@@ -1389,7 +1389,7 @@ export default function OttSyncManagement({
                 No hay tareas de ingesta activas en este filtro.
               </p>
               <p className="text-xs text-zinc-500 max-w-md mx-auto">
-                Busca un tÃ­tulo en el Buscador FlixGrab superior y haz clic en '+ FlixGrab' para ordenar su descarga.
+                Busca un título en el Buscador FlixGrab superior y haz clic en '+ FlixGrab' para ordenar su descarga.
               </p>
             </div>
           ) : (
@@ -1397,7 +1397,7 @@ export default function OttSyncManagement({
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
                   <tr className="border-b border-zinc-800 bg-[#0f172a] text-zinc-400 font-mono uppercase text-[10px] tracking-wider">
-                    <th className="py-3.5 px-4">Contenido / TÃ­tulo</th>
+                    <th className="py-3.5 px-4">Contenido / Título</th>
                     <th className="py-3.5 px-3">Plataforma</th>
                     <th className="py-3.5 px-3">Calidad</th>
                     <th className="py-3.5 px-4 w-60">Progreso & Velocidad</th>
@@ -1419,7 +1419,7 @@ export default function OttSyncManagement({
 
                     return (
                       <tr key={task.id} className="hover:bg-zinc-900/50 transition-colors">
-                        {/* Contenido / TÃ­tulo */}
+                        {/* Contenido / Título */}
                         <td className="py-3.5 px-4">
                           <div className="flex items-center gap-3">
                             <img
@@ -1436,16 +1436,16 @@ export default function OttSyncManagement({
                                 {task.title}
                               </span>
                               <div className="flex items-center gap-1.5 text-[11px] text-zinc-400">
-                                <span className="capitalize">{task.media_type === 'series' ? 'Serie' : 'PelÃ­cula'}</span>
+                                <span className="capitalize">{task.media_type === 'series' ? 'Serie' : 'Película'}</span>
                                 {task.release_year && (
                                   <>
-                                    <span>â€¢</span>
+                                    <span>•</span>
                                     <span>{task.release_year}</span>
                                   </>
                                 )}
                                 {task.genre && (
                                   <>
-                                    <span>â€¢</span>
+                                    <span>•</span>
                                     <span className="truncate max-w-[140px]">{task.genre}</span>
                                   </>
                                 )}
@@ -1454,7 +1454,7 @@ export default function OttSyncManagement({
                           </div>
                         </td>
 
-                        {/* Plataforma: BotÃ³n redondo gris claro con texto como NETFLIX */}
+                        {/* Plataforma: Botón redondo gris claro con texto como NETFLIX */}
                         <td className="py-3.5 px-3">
                           <span className="inline-flex items-center px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-wider bg-zinc-800 text-zinc-100 border border-zinc-700 shadow-sm">
                             {task.provider ? task.provider.replace('_', ' ') : 'NETFLIX'}
@@ -1468,7 +1468,7 @@ export default function OttSyncManagement({
                           </span>
                         </td>
 
-                        {/* Progreso & Velocidad con barra verde y nÃºmeros decimales */}
+                        {/* Progreso & Velocidad con barra verde y números decimales */}
                         <td className="py-3.5 px-4">
                           <div className="space-y-1.5">
                             <div className="flex items-center justify-between text-[11px]">
@@ -1497,7 +1497,7 @@ export default function OttSyncManagement({
                             {isDownloading && task.eta && (
                               <div className="text-[10px] text-zinc-500 font-mono flex items-center justify-between">
                                 <span>ETA restante: {task.eta}</span>
-                                <span className="text-emerald-400">Fibra Ã“ptica ISP</span>
+                                <span className="text-emerald-400">Fibra Óptica ISP</span>
                               </div>
                             )}
                           </div>
@@ -1602,7 +1602,7 @@ export default function OttSyncManagement({
         </div>
       )}
 
-      {/* MODAL: Conectar / Configurar Cuenta con OpciÃ³n RÃ¡pida OAuth2 */}
+      {/* MODAL: Conectar / Configurar Cuenta con Opción Rápida OAuth2 */}
       {connectModalProvider && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
           <div className="relative w-full max-w-lg bg-[#181818] border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden">
@@ -1622,7 +1622,7 @@ export default function OttSyncManagement({
                       Conectar {connectModalProvider.name}
                     </h3>
                     <p className="text-xs text-zinc-400">
-                      AutorizaciÃ³n OAuth2 simulada o credenciales cifradas AES-256.
+                      Autorización OAuth2 simulada o credenciales cifradas AES-256.
                     </p>
                   </div>
                 </div>
@@ -1635,7 +1635,7 @@ export default function OttSyncManagement({
                 </button>
               </div>
 
-              {/* Selector de MÃ©todo */}
+              {/* Selector de Método */}
               <div className="grid grid-cols-2 gap-1.5 p-1 bg-zinc-950 border border-zinc-800 rounded-xl mb-5">
                 <button
                   type="button"
@@ -1646,7 +1646,7 @@ export default function OttSyncManagement({
                       : 'text-zinc-400 hover:text-white'
                   }`}
                 >
-                  âš¡ OAuth2 RÃ¡pido (1 Clic)
+                  ⚡ OAuth2 Rápido (1 Clic)
                 </button>
                 <button
                   type="button"
@@ -1662,7 +1662,7 @@ export default function OttSyncManagement({
               </div>
 
               {authMethod === 'oauth2' ? (
-                // ConexiÃ³n RÃ¡pida OAuth2 Simulado
+                // Conexión Rápida OAuth2 Simulado
                 <div className="space-y-4 py-2">
                   <div className="p-4 rounded-xl bg-zinc-950/80 border border-zinc-800 text-xs space-y-2">
                     <div className="flex items-center gap-2 text-emerald-400 font-bold">
@@ -1670,7 +1670,7 @@ export default function OttSyncManagement({
                       <span>FlixGrab Engine Token Handshake</span>
                     </div>
                     <p className="text-zinc-400">
-                      FlixGrab solicitarÃ¡ un token de sesiÃ³n seguro simulado con <strong>{connectModalProvider.name}</strong> para acceder a los metadatos y enlaces de streaming sin exponer tu contraseÃ±a principal.
+                      FlixGrab solicitará un token de sesión seguro simulado con <strong>{connectModalProvider.name}</strong> para acceder a los metadatos y enlaces de streaming sin exponer tu contraseña principal.
                     </p>
                   </div>
 
@@ -1707,7 +1707,7 @@ export default function OttSyncManagement({
 
                   <div>
                     <label className="block text-xs font-semibold text-zinc-300 mb-1.5">
-                      Correo ElectrÃ³nico
+                      Correo Electrónico
                     </label>
                     <input
                       type="email"
@@ -1720,12 +1720,12 @@ export default function OttSyncManagement({
 
                   <div>
                     <label className="block text-xs font-semibold text-zinc-300 mb-1.5">
-                      ContraseÃ±a
+                      Contraseña
                     </label>
                     <div className="relative">
                       <input
                         type={showPassword ? 'text' : 'password'}
-                        placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
+                        placeholder="••••••••••••"
                         value={connectForm.password}
                         onChange={(e) => setConnectForm({ ...connectForm, password: e.target.value })}
                         className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-red-500 pr-10"
@@ -1754,7 +1754,7 @@ export default function OttSyncManagement({
                       className="flex items-center gap-1.5 px-4 py-2 bg-red-600 hover:bg-red-500 text-white font-bold text-xs rounded-xl shadow cursor-pointer"
                     >
                       {connecting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : null}
-                      <span>Guardar ConexiÃ³n</span>
+                      <span>Guardar Conexión</span>
                     </button>
                   </div>
                 </form>
@@ -1843,7 +1843,7 @@ export default function OttSyncManagement({
         </div>
       )}
 
-      {/* Modal de ConfirmaciÃ³n Estilizado */}
+      {/* Modal de Confirmación Estilizado */}
       {confirmModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-150">
           <div className="bg-[#181818] border border-zinc-800 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
@@ -1869,7 +1869,7 @@ export default function OttSyncManagement({
         </div>
       )}
 
-      {/* Modal de ReproducciÃ³n On-Net Embebido */}
+      {/* Modal de Reproducción On-Net Embebido */}
       <OttPlayerModal
         isOpen={Boolean(activePlayerMedia)}
         onClose={() => setActivePlayerMedia(null)}

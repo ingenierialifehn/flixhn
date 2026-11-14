@@ -9,6 +9,7 @@ import MovieRow from './components/MovieRow';
 import MovieCard from './components/MovieCard';
 import Top10Row from './components/Top10Row';
 import DetailModal from './components/DetailModal';
+import OnDemandLoadingModal from './components/OnDemandLoadingModal';
 import VideoPlayer from './components/VideoPlayer';
 import LiveTvPlayer from './components/LiveTvPlayer';
 import LiveTvView from './components/LiveTvView';
@@ -51,6 +52,7 @@ function App() {
 
   // Estados de modales y reproducción
   const [modalTitleId, setModalTitleId] = useState(null);
+  const [onDemandTarget, setOnDemandTarget] = useState(null);
   const [activeVideo, setActiveVideo] = useState(null); // { title, episode, initialTime }
   const [activeLiveChannel, setActiveLiveChannel] = useState(null);
   const [liveChannelsList, setLiveChannelsList] = useState([]);
@@ -241,6 +243,17 @@ function App() {
 
   // Manejo de Reproducción con soporte para reanudación en el segundo exacto
   const handlePlay = useCallback((title, episode = null, resumeTime = null) => {
+    // Si es un contenido OTT que aún no está descargado localmente
+    const isUndownloadedOtt = Boolean(
+      (title?.is_ott && title?.is_downloaded === false) ||
+      (typeof title?.id === 'string' && title.id.startsWith('ott_'))
+    );
+
+    if (isUndownloadedOtt) {
+      setOnDemandTarget(title);
+      return;
+    }
+
     const startSec = resumeTime !== null
       ? resumeTime
       : (title?.progress_seconds || episode?.progress_seconds || 0);
@@ -919,6 +932,25 @@ function App() {
             setModalTitleId(null);
             handlePlay(t, ep, time);
           }}
+        />
+      )}
+
+      {/* Modal de Carga y Descarga On-Demand en Segundo Plano */}
+      {onDemandTarget && (
+        <OnDemandLoadingModal
+          target={onDemandTarget}
+          onReady={(readyTitle) => {
+            setOnDemandTarget(null);
+            setSearchResults((prev) =>
+              prev.map((item) =>
+                item.id === onDemandTarget.id || item.name === readyTitle?.name
+                  ? { ...item, ...readyTitle, is_downloaded: true }
+                  : item
+              )
+            );
+            handlePlay(readyTitle);
+          }}
+          onCancel={() => setOnDemandTarget(null)}
         />
       )}
 

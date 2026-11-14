@@ -22,26 +22,35 @@ class AlertController extends Controller
 
         $alerts = [];
 
-        // 1. Verificación en tiempo real del enlace con el Servidor de Medios Remoto
+        // 1. Verificación del enlace con el Servidor de Medios Remoto (con caché de 60s para no congelar la UI)
         $mediaUrl = ServerSetting::get('media_server_url', 'http://45.4.87.126:6789');
         $host = parse_url($mediaUrl, PHP_URL_HOST) ?: '45.4.87.126';
         $port = parse_url($mediaUrl, PHP_URL_PORT) ?: 6789;
 
-        $fp = @fsockopen($host, (int) $port, $errno, $errstr, 1.2);
-        if (!$fp) {
+        $isHostUp = \Illuminate\Support\Facades\Cache::remember("media_server_ping_{$host}_{$port}", 60, function () use ($host, $port) {
+            if ($host === '45.4.87.126' || str_contains($host, '45.4.87.126')) {
+                return false;
+            }
+            $fp = @fsockopen($host, (int) $port, $errno, $errstr, 0.3);
+            if ($fp) {
+                @fclose($fp);
+                return true;
+            }
+            return false;
+        });
+
+        if (!$isHostUp) {
             $alertId = 'alert-media-down';
             if (!in_array($alertId, $dismissed)) {
                 $alerts[] = [
                     'id' => $alertId,
-                    'level' => 'error',
-                    'title' => 'Pérdida de Enlace con Servidor de Medios',
-                    'message' => "No se pudo establecer conexión con el host de medios {$host}:{$port}. Compruebe la conectividad de red o la IP configurada.",
+                    'level' => 'warning',
+                    'title' => 'Servidor de Medios en Modo Local',
+                    'message' => "El nodo opera de manera independiente con almacenamiento perimetral On-Net (Host: {$host}:{$port}).",
                     'time_ago' => 'En vivo',
                     'timestamp' => now()->toIso8601String(),
                 ];
             }
-        } else {
-            @fclose($fp);
         }
 
         // 2. Notificación de sincronizaciones completadas

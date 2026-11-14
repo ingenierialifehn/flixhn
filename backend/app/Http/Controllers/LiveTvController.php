@@ -26,8 +26,8 @@ class LiveTvController extends Controller
         try {
             DB::table('tv_channels')
                 ->where('group_title', 'LIKE', '%M├║sica%')
-                ->orWhere('group_title', 'LIKE', '%M├ºsica%')
-                ->orWhere('group_title', 'LIKE', '%MÃºsica%')
+                ->orWhere('group_title', 'LIKE', '%Mçsica%')
+                ->orWhere('group_title', 'LIKE', '%Música%')
                 ->update(['group_title' => 'Música']);
 
             TvChannel::where('group_title', 'LIKE', '%├%')

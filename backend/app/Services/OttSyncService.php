@@ -14,6 +14,7 @@ use App\Models\Plugin;
 use App\Models\Season;
 use App\Models\Title;
 use App\Services\MediaIngestService;
+use App\Services\MediaStorageService;
 use App\Services\PosterDownloadService;
 use Exception;
 use Illuminate\Database\Eloquent\Collection;
@@ -49,7 +50,7 @@ class OttSyncService
             'name' => 'Netflix',
             'color' => '#E50914',
             'brand' => 'Netflix Original & Worldwide Releases',
-            'description' => 'CatÃ¡logo global de series originales, pelÃ­culas exclusivas, documentales y estrenos mundiales de Netflix.',
+            'description' => 'Catálogo global de series originales, películas exclusivas, documentales y estrenos mundiales de Netflix.',
             'bgGradient' => 'from-red-600/20 to-zinc-900',
             'badgeColor' => 'bg-red-600/20 text-red-400 border-red-500/30',
             'defaultQuality' => '1080p',
@@ -67,7 +68,7 @@ class OttSyncService
             'name' => 'HBO Max',
             'color' => '#2BE27B',
             'brand' => 'Warner Bros, HBO Originals & DC',
-            'description' => 'ColecciÃ³n completa de series de prestigio de HBO, Warner Bros Pictures, Universo DC, Discovery y Cartoon Network.',
+            'description' => 'Colección completa de series de prestigio de HBO, Warner Bros Pictures, Universo DC, Discovery y Cartoon Network.',
             'bgGradient' => 'from-purple-600/20 to-zinc-900',
             'badgeColor' => 'bg-purple-600/20 text-purple-400 border-purple-500/30',
             'defaultQuality' => '1080p',
@@ -76,7 +77,7 @@ class OttSyncService
             'name' => 'Amazon Prime Video',
             'color' => '#00A8E1',
             'brand' => 'Amazon MGM Studios & Prime Originals',
-            'description' => 'Producciones originales de Amazon, series exclusivas, pelÃ­culas taquilleras y contenido premium de Prime Video.',
+            'description' => 'Producciones originales de Amazon, series exclusivas, películas taquilleras y contenido premium de Prime Video.',
             'bgGradient' => 'from-sky-600/20 to-zinc-900',
             'badgeColor' => 'bg-sky-600/20 text-sky-400 border-sky-500/30',
             'defaultQuality' => '1080p',
@@ -85,7 +86,7 @@ class OttSyncService
             'name' => 'Apple TV+',
             'color' => '#A1A1AA',
             'brand' => 'Apple Original Films & Series',
-            'description' => 'Producciones y estrenos galardonados con calidad de imagen cinematogrÃ¡fica 4K HDR y audio espacial Dolby Atmos.',
+            'description' => 'Producciones y estrenos galardonados con calidad de imagen cinematográfica 4K HDR y audio espacial Dolby Atmos.',
             'bgGradient' => 'from-zinc-500/20 to-zinc-900',
             'badgeColor' => 'bg-zinc-700/30 text-zinc-300 border-zinc-600/30',
             'defaultQuality' => '4K HDR',
@@ -94,7 +95,7 @@ class OttSyncService
             'name' => 'Paramount+',
             'color' => '#0064FF',
             'brand' => 'Paramount Pictures, CBS, Showtime & MTV',
-            'description' => 'Blockbusters de Paramount Pictures, series exclusivas de Showtime y producciones originales de montaÃ±a.',
+            'description' => 'Blockbusters de Paramount Pictures, series exclusivas de Showtime y producciones originales de montaña.',
             'bgGradient' => 'from-blue-700/20 to-zinc-900',
             'badgeColor' => 'bg-blue-600/20 text-blue-400 border-blue-500/30',
             'defaultQuality' => '1080p',
@@ -102,7 +103,7 @@ class OttSyncService
     ];
 
     /**
-     * Normaliza los alias de plataformas hacia las claves de configuraciÃ³n canÃ³nicas
+     * Normaliza los alias de plataformas hacia las claves de configuración canónicas
      */
     public static function normalizePlatformKey(?string $platform): ?string
     {
@@ -173,8 +174,8 @@ class OttSyncService
     }
 
     /**
-     * MÃ©todo Principal: Buscar contenido REAL en la plataforma especificada.
-     * @param string $query Texto que escribiÃ³ el usuario (ej: "The Witcher")
+     * Método Principal: Buscar contenido REAL en la plataforma especificada.
+     * @param string $query Texto que escribió el usuario (ej: "The Witcher")
      * @param string|null $platform Plataforma objetivo ('netflix', 'disney_plus', etc.) o null para buscar en todas las conectadas.
      */
     public static function searchReal($query, ?string $platform = null): array
@@ -228,14 +229,14 @@ class OttSyncService
         }
 
         try {
-            // 1. Buscar en el catÃ¡logo remoto REAL de la plataforma conectada (Netflix, Disney+, etc.)
+            // 1. Buscar en el catálogo remoto REAL de la plataforma conectada (Netflix, Disney+, etc.)
             $remoteResults = self::searchRemoteOttCatalog($cleanQ, $platform);
             if (!empty($remoteResults)) {
                 return $remoteResults;
             }
 
-            // 2. Si no hubo coincidencias en el catÃ¡logo remoto, consultar tÃ­tulos ya catalogados
-            // EXCLUSIVAMENTE para esa plataforma conectada (NUNCA mezclar tÃ­tulos locales ni de otras fuentes)
+            // 2. Si no hubo coincidencias en el catálogo remoto, consultar títulos ya catalogados
+            // EXCLUSIVAMENTE para esa plataforma conectada (NUNCA mezclar títulos locales ni de otras fuentes)
             $localResults = self::searchLocalConnectedCatalog($cleanQ, $platform);
             if (!empty($localResults)) {
                 return $localResults;
@@ -399,7 +400,7 @@ class OttSyncService
 
         $ch = null;
         try {
-            // 1. Obtener Access Token vÃ¡lido desde Refresh Token OAuth2 Flow de Netflix Graph API
+            // 1. Obtener Access Token válido desde Refresh Token OAuth2 Flow de Netflix Graph API
             $accessTokenResponse = self::getAccessTokenFromRefresh(
                 'https://accounts.netflix.com/oauth/token',
                 [
@@ -410,10 +411,10 @@ class OttSyncService
             );
 
             if (!$accessTokenResponse || empty($accessTokenResponse['access_token'])) {
-                throw new \Exception("Refresh token invÃ¡lido o expirado.");
+                throw new \Exception("Refresh token inválido o expirado.");
             }
 
-            // 2. Llamar a endpoint especÃ­fico para bÃºsqueda: /v1/titles/search?q={query}
+            // 2. Llamar a endpoint específico para búsqueda: /v1/titles/search?q={query}
             $searchUrl = self::$base_url . '/titles/search';
 
             $ch = curl_init();
@@ -447,13 +448,13 @@ class OttSyncService
         } catch (\Exception $e) {
             Log::warning("Netflix Graph API Search: " . $e->getMessage());
 
-            // Consultar catÃ¡logo real conectado en DB
+            // Consultar catálogo real conectado en DB
             $localResults = self::searchLocalConnectedCatalog($query, 'netflix');
             if (!empty($localResults)) {
                 return $localResults;
             }
 
-            // Sin coincidencias: devolver array estrictamente vacÃ­o sin inventar datos
+            // Sin coincidencias: devolver array estrictamente vacío sin inventar datos
             return [];
         } finally {
             if ($ch) {
@@ -463,7 +464,7 @@ class OttSyncService
     }
 
     /**
-     * MÃ©todo auxiliar para obtener Access Token desde Refresh Token OAuth2 de Netflix Graph API v1.x
+     * Método auxiliar para obtener Access Token desde Refresh Token OAuth2 de Netflix Graph API v1.x
      */
     private static function getAccessTokenFromRefresh($tokenUrl, $params)
     {
@@ -492,7 +493,7 @@ class OttSyncService
 
             throw new \Exception("Error HTTP al obtener Access Token: {$responseCode}");
         } catch (\Exception $e) {
-            throw new \Exception("Fallback en obtenciÃ³n de token: " . $e->getMessage());
+            throw new \Exception("Fallback en obtención de token: " . $e->getMessage());
         } finally {
             if ($ch) {
                 curl_close($ch);
@@ -522,7 +523,7 @@ class OttSyncService
         $normalized = [];
         foreach ($rawItems as $item) {
             if (!is_array($item)) continue;
-            $title = $item['title'] ?? ($item['name'] ?? 'TÃ­tulo Desconocido');
+            $title = $item['title'] ?? ($item['name'] ?? 'Título Desconocido');
             $slugTitle = Str::slug($title);
 
             $posterUrl = $item['poster_url']
@@ -533,8 +534,8 @@ class OttSyncService
                 ?? ($item['image']
                 ?? "/storage/media/netflix/{$slugTitle}.jpg")))));
 
-            $type = $item['type'] ?? ($item['media_type'] ?? 'PelÃ­cula');
-            $type = in_array(strtolower($type), ['series', 'show', 'tv', 'serie']) ? 'Serie' : 'PelÃ­cula';
+            $type = $item['type'] ?? ($item['media_type'] ?? 'Película');
+            $type = in_array(strtolower($type), ['series', 'show', 'tv', 'serie']) ? 'Serie' : 'Película';
             $year = (int) ($item['year'] ?? ($item['releaseYear'] ?? ($item['release_date'] ? substr($item['release_date'], 0, 4) : date('Y'))));
             $localPath = $item['local_file_path'] ?? ("/storage/media/netflix/{$slugTitle}.mp4");
 
@@ -567,7 +568,7 @@ class OttSyncService
     }
 
     /**
-     * BÃºsqueda en catÃ¡logo conectado real en base de datos.
+     * Búsqueda en catálogo conectado real en base de datos.
      * Si no hay coincidencias exactas o parciales, devuelve estrictamente [].
      */
     public static function searchLocalConnectedCatalog(string $query, string $provider = 'netflix'): array
@@ -580,7 +581,7 @@ class OttSyncService
         $canonical = self::toDbProviderKey($provider);
         $norm = self::normalizePlatformKey($provider);
 
-        // Buscar estrictamente en tÃ­tulos ya catalogados del proveedor especÃ­fico (NUNCA provider = 'local')
+        // Buscar estrictamente en títulos ya catalogados del proveedor específico (NUNCA provider = 'local')
         $titles = DB::table('titles')
             ->where(function ($q) use ($canonical, $provider, $norm) {
                 $q->where('provider', $canonical)
@@ -604,7 +605,7 @@ class OttSyncService
             return $titles->map(function ($t) use ($provider) {
                 $slugTitle = Str::slug($t->name);
                 $posterUrl = $t->poster_url ?: "/storage/media/{$provider}/{$slugTitle}.jpg";
-                $type = ucfirst($t->type ?? 'PelÃ­cula');
+                $type = ucfirst($t->type ?? 'Película');
                 $streamPath = $t->stream_path ?: "/storage/media/{$provider}/{$slugTitle}.mp4";
                 $platformName = strtoupper($provider === 'hbo_max' ? 'Max (HBO)' : ($provider === 'disney' || $provider === 'disney_plus' ? 'Disney+' : $provider));
 
@@ -677,8 +678,8 @@ class OttSyncService
                 $id = $item['Id'] ?? null;
                 if (!$id) continue;
 
-                $name = $item['Name'] ?? 'TÃ­tulo';
-                $type = ($item['Type'] ?? 'Movie') === 'Series' ? 'Serie' : 'PelÃ­cula';
+                $name = $item['Name'] ?? 'Título';
+                $type = ($item['Type'] ?? 'Movie') === 'Series' ? 'Serie' : 'Película';
                 $year = (int) ($item['ProductionYear'] ?? date('Y'));
                 $overview = $item['Overview'] ?? '';
 
@@ -798,7 +799,7 @@ class OttSyncService
     }
 
     /**
-     * Devuelve el catÃ¡logo disponible ÃšNICAMENTE de las plataformas activas conectadas en BD
+     * Devuelve el catálogo disponible ÚNICAMENTE de las plataformas activas conectadas en BD
      */
     public static function getAvailableCatalog(?string $provider = null, ?string $filterType = null): array
     {
@@ -974,12 +975,12 @@ class OttSyncService
             Cache::forget("ott_catalog_{$targetProvider}");
         }
 
-        Log::info("CachÃ© OTT purgada completamente para proveedor: " . ($targetProvider ?: 'todos'));
+        Log::info("Caché OTT purgada completamente para proveedor: " . ($targetProvider ?: 'todos'));
         return true;
     }
 
     /**
-     * Retorna el estado global de proveedores basÃ¡ndose 100% en las cuentas vinculadas en DB
+     * Retorna el estado global de proveedores basándose 100% en las cuentas vinculadas en DB
      */
     public function getProvidersOverview(): array
     {
@@ -1022,11 +1023,11 @@ class OttSyncService
                 } catch (\Throwable $e) {}
             }
 
-            // Estado real: connected solo si existe cuenta conectada en BD o sesiÃ³n activa vÃ¡lida
+            // Estado real: connected solo si existe cuenta conectada en BD o sesión activa válida
             $status = ($acc && $acc->status === 'connected') || $hasActiveSession ? 'connected' : ($acc ? $acc->status : 'disconnected');
             $qualityProfile = $acc ? $acc->quality_profile : $config['defaultQuality'];
             $autoDownload = $acc ? (bool) $acc->auto_download : false;
-            $accountName = $acc ? $acc->account_name : ($hasActiveSession ? 'SesiÃ³n Activa ' . $config['name'] : null);
+            $accountName = $acc ? $acc->account_name : ($hasActiveSession ? 'Sesión Activa ' . $config['name'] : null);
             $lastSyncAt = $acc && $acc->last_sync_at ? $acc->last_sync_at->toIso8601String() : null;
             $errorMessage = $acc ? $acc->error_message : null;
             $lastError = $acc ? ($acc->last_error ?? $acc->error_message) : null;
@@ -1121,41 +1122,30 @@ class OttSyncService
     public static function resolveAndEnsureTargetFolder(?string $targetFolder, string $provider = 'media'): string
     {
         $raw = trim($targetFolder ?? '');
-        if (empty($raw)) {
-            $raw = "/storage/media/{$provider}";
+
+        // Si es vacío o apunta a la ruta local por defecto de storage, redirigir al disco más vacío en /FlixHN
+        if (empty($raw) || str_contains($raw, 'storage/media') || $raw === 'media' || $raw === $provider) {
+            return MediaStorageService::getEmptiestDiskFlixHnFolder($provider);
         }
 
-        $normalized = str_replace('\\', '/', $raw);
-
-        if (str_starts_with($normalized, '/storage/') || str_starts_with($normalized, 'storage/')) {
-            $relative = ltrim(preg_replace('#^/?storage/#', '', $normalized), '/');
-            $fullTargetPath = storage_path($relative);
-        } elseif (str_starts_with($normalized, '/var/www/html/storage/')) {
-            $fullTargetPath = $normalized;
-        } elseif (!str_starts_with($normalized, '/') && !preg_match('/^[a-zA-Z]:/', $normalized)) {
-            $fullTargetPath = storage_path($normalized);
-        } else {
-            $fullTargetPath = $normalized;
-        }
-
-        try {
-            if (!File::isDirectory($fullTargetPath)) {
-                File::makeDirectory($fullTargetPath, 0777, true, true);
+        // Si ya especifica una carpeta en disco montado (/mnt/media_library o /home/server01)
+        if (str_starts_with($raw, '/mnt/media_library') || str_starts_with($raw, '/home/server01/')) {
+            if (!str_contains($raw, 'FlixHN')) {
+                $raw = rtrim($raw, '/') . '/FlixHN/' . $provider;
             }
-            @chmod($fullTargetPath, 0777);
-        } catch (\Throwable $e) {
-            Log::warning("No se pudo crear directamente {$fullTargetPath}, aplicando fallback: " . $e->getMessage());
-            $fallback = storage_path("media/{$provider}");
             try {
-                if (!File::isDirectory($fallback)) {
-                    File::makeDirectory($fallback, 0777, true, true);
+                if (!File::isDirectory($raw)) {
+                    File::makeDirectory($raw, 0777, true, true);
                 }
-                @chmod($fallback, 0777);
-                $fullTargetPath = $fallback;
-            } catch (\Throwable $f) {}
+                @chmod($raw, 0777);
+                return $raw;
+            } catch (\Throwable $e) {
+                Log::warning("OttSyncService: Falló creación en {$raw}, recurriendo al disco más vacío: " . $e->getMessage());
+            }
         }
 
-        return $fullTargetPath;
+        // Ubicación en el disco con más espacio libre
+        return MediaStorageService::getEmptiestDiskFlixHnFolder($provider);
     }
 
     public function connectAccount(string $provider, array $payload): OttProviderAccount
@@ -1188,20 +1178,20 @@ class OttSyncService
         if ($authMethod === 'cookies') {
             $cookies = $payload['encrypted_cookies'] ?? $payload['cookies'] ?? '';
             if (empty($cookies)) {
-                throw new \InvalidArgumentException("Debes ingresar las cookies de sesiÃ³n exportadas.");
+                throw new \InvalidArgumentException("Debes ingresar las cookies de sesión exportadas.");
             }
             $credentialsData['cookies'] = is_string($cookies) ? trim($cookies) : json_encode($cookies);
         } elseif ($authMethod === 'token') {
             $token = $payload['encrypted_token'] ?? $payload['token'] ?? $payload['api_token'] ?? '';
             if (empty($token)) {
-                throw new \InvalidArgumentException("Debes ingresar el Token de API o clave de sesiÃ³n.");
+                throw new \InvalidArgumentException("Debes ingresar el Token de API o clave de sesión.");
             }
             $credentialsData['token'] = trim($token);
         } else {
             $email = trim($payload['email'] ?? $accountName);
             $password = $payload['encrypted_password'] ?? $payload['password'] ?? '';
             if (empty($password)) {
-                throw new \InvalidArgumentException("Debes ingresar la contraseÃ±a de la cuenta OTT.");
+                throw new \InvalidArgumentException("Debes ingresar la contraseña de la cuenta OTT.");
             }
             $credentialsData['email'] = $email;
             $credentialsData['password'] = $password;
@@ -1617,7 +1607,7 @@ class OttSyncService
         $item['available'] = $isDownloaded;
 
         if ($isDownloaded) {
-            $item['status'] = 'En CatÃ¡logo';
+            $item['status'] = 'En Catálogo';
         } elseif ($isDownloading || $isInQueue) {
             $item['status'] = 'Descargando';
         } else {
@@ -1642,7 +1632,7 @@ class OttSyncService
     {
         $title = trim($payload['title'] ?? '');
         if (empty($title)) {
-            throw new \InvalidArgumentException('El tÃ­tulo es requerido para ordenar la descarga.');
+            throw new \InvalidArgumentException('El título es requerido para ordenar la descarga.');
         }
 
         $connectedAccounts = OttProviderAccount::where('status', 'connected')->get();

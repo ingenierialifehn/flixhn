@@ -69,8 +69,16 @@ const HoverPreviewCard = ({
 
   // Normalización del objeto title
   const title = useMemo(() => {
-    return item?.title || item;
+    if (!item) return null;
+    if (item.title && typeof item.title === 'object') {
+      return item.title;
+    }
+    return item;
   }, [item]);
+
+  const titleName = useMemo(() => {
+    return title?.name || (typeof title?.title === 'string' ? title.title : '') || 'Sin Título';
+  }, [title]);
 
   // Cargar estado reactivo de "Mi Lista" y "Me gusta" desde localStorage
   useEffect(() => {
@@ -213,7 +221,9 @@ const HoverPreviewCard = ({
 
   // Lista de géneros limpios para píldoras
   const genreList = useMemo(() => {
-    const raw = title?.genre || '';
+    const raw = typeof title?.genre === 'string'
+      ? title.genre
+      : (Array.isArray(title?.genres) ? title.genres.map((g) => g?.name || g).join(', ') : (typeof title?.genres === 'string' ? title.genres : ''));
     return raw
       .split(/[\/,•-]/)
       .map((g) => g.trim())
@@ -227,9 +237,12 @@ const HoverPreviewCard = ({
   const platform = useMemo(() => getPlatformConfig(providerRaw), [providerRaw]);
 
   // Imagen del Banner panorámico (Backdrop preferido, poster como fallback)
-  const rawBanner = isProgress && episode?.thumbnail_url
-    ? episode.thumbnail_url
-    : (title?.backdrop_url || title?.poster_url || title?.image);
+  const rawBanner = (isProgress && episode?.thumbnail_url)
+    || title?.backdrop_url
+    || title?.poster_url
+    || title?.image
+    || item?.backdrop_url
+    || item?.poster_url;
   const bannerUrl = resolvePosterUrl(rawBanner);
 
   // Si no hay coordenadas o título, no renderizar
@@ -281,7 +294,7 @@ const HoverPreviewCard = ({
         <div className="relative aspect-[16/9] w-full overflow-hidden bg-zinc-900">
           <img
             src={bannerUrl}
-            alt={title.name || title.title}
+            alt={titleName}
             onError={handlePosterError}
             className="w-full h-full object-cover object-center filter brightness-95 hover:brightness-105 transition-all duration-300"
           />
@@ -327,7 +340,7 @@ const HoverPreviewCard = ({
           {/* Título en la parte inferior del Banner */}
           <div className="absolute bottom-2 left-3 right-3 pointer-events-none">
             <h3 className="font-display text-xl sm:text-2xl font-black text-white tracking-wide leading-tight drop-shadow-[0_2px_8px_rgba(0,0,0,0.95)] truncate">
-              {title.name}
+              {titleName}
             </h3>
           </div>
         </div>

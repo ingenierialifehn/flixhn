@@ -124,7 +124,7 @@
                         <i class="fa-solid fa-network-wired text-rose-500"></i>
                         <span>Cuentas y Plataformas Conectadas</span>
                     </h2>
-                    <p class="text-sm text-slate-400">Estado de sesiÃƒÂ³n, telemetrÃƒÂ­a y descargas automÃƒÂ¡ticas por nodo.</p>
+                    <p class="text-sm text-slate-400">Estado de sesión, telemetría y descargas automáticas por nodo.</p>
                 </div>
                 <div class="flex items-center gap-2">
                     <button type="button"
@@ -178,10 +178,10 @@
 
                             <p class="text-xs text-slate-400 line-clamp-2 mb-4 leading-relaxed" x-text="p.description"></p>
 
-                            <!-- EstadÃƒÂ­sticas RÃƒÂ¡pidas -->
+                            <!-- Estadísticas Rápidas -->
                             <div class="grid grid-cols-3 gap-2 bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/80 mb-4 text-center">
                                 <div>
-                                    <span class="block text-slate-400 text-[10px] uppercase font-bold">En CatÃƒÂ¡logo</span>
+                                    <span class="block text-slate-400 text-[10px] uppercase font-bold">En Catálogo</span>
                                     <span class="text-sm font-black text-white font-mono" x-text="p.stats?.imported_items || 0"></span>
                                 </div>
                                 <div>
@@ -195,7 +195,7 @@
                             </div>
                         </div>
 
-                        <!-- Acciones RÃƒÂ¡pidas -->
+                        <!-- Acciones Rápidas -->
                         <div class="pt-3 border-t border-slate-800 flex items-center justify-between gap-2">
                             <label class="flex items-center gap-2 cursor-pointer text-xs text-slate-300">
                                 <input type="checkbox"
@@ -222,33 +222,33 @@
                 </template>
             </div>
 
-            <!-- Estado VacÃƒÂ­o DinÃƒÂ¡mico cuando no hay resultados -->
+            <!-- Estado Vacío Dinámico cuando no hay resultados -->
             <div x-show="!loading && results.length === 0" class="py-16 text-center bg-slate-900/40 rounded-2xl border border-dashed border-slate-800">
                 <i class="fa-solid fa-film text-4xl text-slate-600 mb-3 block"></i>
                 <h3 class="text-base font-bold text-slate-300">No se encontraron coincidencias reales</h3>
                 <p class="text-xs text-slate-500 mt-1 max-w-sm mx-auto" x-show="searchQuery.trim() !== ''">
-                    El tÃƒÂ­tulo "<span class="text-rose-400 font-semibold" x-text="searchQuery"></span>" no existe en la cuenta de streaming conectada actualmente.
+                    El título "<span class="text-rose-400 font-semibold" x-text="searchQuery"></span>" no existe en la cuenta de streaming conectada actualmente.
                 </p>
                 <p class="text-xs text-slate-500 mt-1 max-w-sm mx-auto" x-show="searchQuery.trim() === ''">
-                    CatÃƒÂ¡logo vacÃƒÂ­o o limpio. Utiliza el buscador para explorar contenido en vivo.
+                    Catálogo vacío o limpio. Utiliza el buscador para explorar contenido en vivo.
                 </p>
             </div>
         </section>
 
         <!-- ========================================== -->
-        <!-- TAB 2: VISTA DE BÃƒÅ¡SQUEDA Y GRID DINÃƒÂMICO   -->
+        <!-- TAB 2: VISTA DE BÚSQUEDA Y GRID DINÁMICO   -->
         <!-- ========================================== -->
         <section x-show="activeTab === 'search'" x-cloak class="transition-view space-y-6">
-            <!-- Barra Superior de Filtros y BÃƒÂºsqueda Reactiva -->
+            <!-- Barra Superior de Filtros y Búsqueda Reactiva -->
             <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl space-y-4">
                 <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                    <!-- Input de BÃƒÂºsqueda -->
+                    <!-- Input de Búsqueda -->
                     <div class="relative flex-1">
                         <i class="fa-solid fa-magnifying-glass absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"></i>
                         <input type="text"
                                x-model="searchQuery"
                                @input.debounce.350ms="performSearch()"
-                               placeholder="Buscar series, pelÃƒÂ­culas o estrenos (ej: the witcher, stranger things)..."
+                               placeholder="Buscar series, películas o estrenos (ej: the witcher, stranger things)..."
                                class="w-full pl-11 pr-10 py-3 bg-slate-950/80 border border-slate-800 focus:border-rose-500 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none transition">
                         <button type="button"
                                 x-show="searchQuery.length > 0"
@@ -264,13 +264,13 @@
                                 class="bg-slate-950 border border-slate-800 text-xs rounded-xl px-3 py-2 text-slate-300 outline-none focus:border-rose-500">
                             <option value="ALL">Todos los Tipos</option>
                             <option value="Serie">Series</option>
-                            <option value="PelÃƒÂ­cula">PelÃƒÂ­culas</option>
+                            <option value="Película">Películas</option>
                         </select>
                         <button type="button"
                                 @click="clearCacheAndReload()"
                                 class="px-3 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 flex items-center gap-1.5 transition cursor-pointer">
                             <i class="fa-solid fa-broom" :class="isClearing ? 'fa-spin' : ''"></i>
-                            <span>Limpiar CachÃƒÂ©</span>
+                            <span>Limpiar Caché</span>
                         </button>
                     </div>
 
@@ -313,16 +313,16 @@
                 <div class="flex items-center justify-between text-xs text-slate-400 pt-2 border-t border-slate-800/80">
                     <span class="flex items-center gap-2">
                         <span class="inline-block w-2 h-2 rounded-full bg-emerald-400"></span>
-                        <span x-text="'Resultados disponibles: ' + results.length + ' tÃƒÂ­tulos'"></span>
+                        <span x-text="'Resultados disponibles: ' + results.length + ' títulos'"></span>
                     </span>
                     <span x-show="loading" class="text-rose-400 flex items-center gap-1.5 font-semibold">
                         <i class="fa-solid fa-spinner fa-spin"></i>
-                        Consultando catÃƒÂ¡logo OTT...
+                        Consultando catálogo OTT...
                     </span>
                 </div>
             </div>
 
-            <!-- Grid de Tarjetas de CatÃƒÂ¡logo (Fondo oscuro #0f172a, border-radius 8px, aspecto cinematogrÃƒÂ¡fico) -->
+            <!-- Grid de Tarjetas de Catálogo (Fondo oscuro #0f172a, border-radius 8px, aspecto cinematográfico) -->
             <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
                 <template x-for="(item, index) in results" :key="item.id || item.title">
                     <div class="movie-card bg-[#141b2d] border border-slate-800 hover:border-slate-700 rounded-[8px] p-2.5 flex flex-col justify-between transition-all duration-200 group shadow-lg hover:shadow-black/70 relative overflow-hidden"
@@ -331,7 +331,7 @@
                          :data-filepath="item.localFilePath || item.filePath || item.local_file_path">
 
                         <div>
-                            <!-- CarÃƒÂ¡tula con badges -->
+                            <!-- Carátula con badges -->
                             <div class="relative aspect-[2/3] w-full rounded-[6px] overflow-hidden bg-slate-950 border border-slate-800/80">
                                 <img :src="item.poster || item.poster_url"
                                      :alt="item.title"
@@ -339,7 +339,7 @@
                                      class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
                                      @error="$event.target.src = 'https://images.unsplash.com/photo-1594909122845-11baa439b7bf?w=500'">
 
-                                <!-- Gradientes de superposiciÃƒÂ³n -->
+                                <!-- Gradientes de superposición -->
                                 <div class="absolute inset-x-0 top-0 h-12 bg-gradient-to-b from-black/80 to-transparent pointer-events-none"></div>
                                 <div class="absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-black/90 to-transparent pointer-events-none"></div>
 
@@ -357,14 +357,14 @@
                                     </span>
                                 </div>
 
-                                <!-- AÃƒÂ±o y Tipo -->
+                                <!-- Año y Tipo -->
                                 <div class="absolute bottom-2 left-2 right-2 z-10 flex items-center justify-between text-[10px] font-semibold text-slate-300">
-                                    <span x-text="item.type || (item.media_type === 'series' ? 'Serie' : 'PelÃƒÂ­cula')"></span>
+                                    <span x-text="item.type || (item.media_type === 'series' ? 'Serie' : 'Película')"></span>
                                     <span class="font-mono bg-black/80 px-1.5 py-0.5 rounded border border-slate-800" x-text="item.year || 2024"></span>
                                 </div>
                             </div>
 
-                            <!-- TÃƒÂ­tulo y Metadatos -->
+                            <!-- Título y Metadatos -->
                             <div class="mt-2.5 space-y-1">
                                 <h3 class="font-bold text-xs text-white truncate leading-snug group-hover:text-rose-400 transition-colors"
                                     :title="item.title"
@@ -377,25 +377,25 @@
                         </div>
 
                         <!-- ============================================== -->
-                        <!-- BOTONES DE ACCIÃƒâ€œN SEGÃƒÅ¡N ESTADO SEMÃƒÂNTICO       -->
+                        <!-- BOTONES DE ACCIÓN SEGÚN ESTADO SEMÁNTICO       -->
                         <!-- ============================================== -->
                         <div class="mt-3 pt-2 border-t border-slate-800 space-y-1.5">
-                            <!-- ESTADO 1 & ESTADO AZUL/VERDE: "En CatÃƒÂ¡logo" + "Ã¢â€“Â¶ ReproducciÃƒÂ³n Local On-Net" -->
-                            <template x-if="item.is_already_downloaded || item.status === 'En CatÃƒÂ¡logo'">
+                            <!-- ESTADO 1 & ESTADO AZUL/VERDE: "En Catálogo" + "▶ Reproducción Local On-Net" -->
+                            <template x-if="item.is_already_downloaded || item.status === 'En Catálogo'">
                                 <div class="space-y-1.5">
                                     <button type="button"
                                             class="flex items-center justify-center gap-1.5 w-full py-1.5 px-2 rounded-[6px] text-xs font-bold bg-emerald-600/25 text-emerald-300 border border-emerald-500/40 cursor-default">
                                         <i class="fa-solid fa-check text-emerald-400"></i>
-                                        <span>Ã¢Å“â€œ En CatÃƒÂ¡logo</span>
+                                        <span>✓ En Catálogo</span>
                                     </button>
 
-                                    <!-- BotÃƒÂ³n CrÃƒÂ­tico: Ã¢â€“Â¶ ReproducciÃƒÂ³n Local On-Net -->
+                                    <!-- Botón Crítico: ▶ Reproducción Local On-Net -->
                                     <button type="button"
                                             @click="playVideo(item.localFilePath || item.filePath || item.local_file_path)"
                                             class="flex items-center justify-center gap-1.5 w-full py-1.5 px-2 rounded-[6px] text-[11px] font-bold bg-sky-950/80 hover:bg-sky-900/90 text-sky-300 border border-sky-500/40 transition active:scale-95 cursor-pointer shadow-sm"
                                             title="Reproducir archivo local On-Net en reproductor embebido">
                                         <i class="fa-solid fa-play text-sky-400 text-[10px]"></i>
-                                        <span>Ã¢â€“Â¶ ReproducciÃƒÂ³n Local On-Net</span>
+                                        <span>▶ Reproducción Local On-Net</span>
                                     </button>
                                 </div>
                             </template>
@@ -417,7 +417,7 @@
                             </template>
 
                             <!-- ESTADO 3: "+ FlixGrab / Descargar" (Rojo/Naranja) -->
-                            <template x-if="!item.is_already_downloaded && !item.is_downloading && item.status !== 'En CatÃƒÂ¡logo' && item.status !== 'Descargando'">
+                            <template x-if="!item.is_already_downloaded && !item.is_downloading && item.status !== 'En Catálogo' && item.status !== 'Descargando'">
                                 <button type="button"
                                         @click="enqueueDownload(item)"
                                         class="flex items-center justify-center gap-1.5 w-full py-1.5 px-2 rounded-[6px] text-xs font-bold bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/40 transition active:scale-95 cursor-pointer shadow-sm">
@@ -467,11 +467,11 @@
                     <table class="w-full text-left text-xs border-collapse">
                         <thead>
                             <tr class="border-b border-slate-800 text-slate-400 uppercase font-mono text-[10px]">
-                                <th class="py-3 px-3">TÃƒÂ­tulo / Medio</th>
+                                <th class="py-3 px-3">Título / Medio</th>
                                 <th class="py-3 px-3">Plataforma</th>
                                 <th class="py-3 px-3">Estado</th>
                                 <th class="py-3 px-3">Progreso</th>
-                                <th class="py-3 px-3">Ruta FÃƒÂ­sica (LocalFilePath)</th>
+                                <th class="py-3 px-3">Ruta Física (LocalFilePath)</th>
                                 <th class="py-3 px-3 text-right">Acciones</th>
                             </tr>
                         </thead>
@@ -564,17 +564,17 @@
                 <div class="flex items-center gap-3">
                     <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                         <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                        Ã¢â€“Â¶ Streaming Local On-Net
+                        â–¶ Streaming Local On-Net
                     </span>
                     <span class="text-xs font-mono text-slate-400" x-text="playerMedia.quality || '4K HDR'"></span>
-                    <h3 class="text-sm font-bold text-white truncate max-w-md" x-text="playerMedia.title || 'ReproducciÃƒÂ³n en Vivo'"></h3>
+                    <h3 class="text-sm font-bold text-white truncate max-w-md" x-text="playerMedia.title || 'Reproducción en Vivo'"></h3>
                 </div>
 
                 <div class="flex items-center gap-2">
                     <button type="button"
                             @click="copyToClipboard(playerMedia.filePath)"
                             class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition cursor-pointer"
-                            title="Copiar ruta fÃƒÂ­sica del archivo">
+                            title="Copiar ruta física del archivo">
                         <i class="fa-solid fa-copy mr-1"></i> Copiar Ruta
                     </button>
                     <button type="button"
@@ -592,11 +592,11 @@
                        autoplay
                        class="w-full h-full object-contain"
                        :src="playerMedia.streamUrl">
-                    Tu navegador no soporta la reproducciÃƒÂ³n de video HTML5.
+                    Tu navegador no soporta la reproducción de video HTML5.
                 </video>
             </div>
 
-            <!-- Footer con informaciÃƒÂ³n tÃƒÂ©cnica y diagnÃƒÂ³stico -->
+            <!-- Footer con información técnica y diagnóstico -->
             <div class="px-5 py-3 bg-slate-950 border-t border-slate-800 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div class="flex items-center gap-2 text-slate-400 font-mono truncate">
                     <i class="fa-solid fa-hard-drive text-slate-500"></i>
@@ -614,15 +614,15 @@
     <!-- LOGICA JAVASCRIPT ROBUSTA (Alpine + Nativo)    -->
     <!-- ============================================== -->
     <script>
-        // FunciÃƒÂ³n global nativa solicitada para compatibilidad directa sin framework
+        // Función global nativa solicitada para compatibilidad directa sin framework
         function openPlayer(filePath) {
             if (!filePath || filePath === undefined || filePath === null || typeof filePath !== 'string') {
-                console.warn('[FlixGrab] Intentando abrir player con ruta invÃƒÂ¡lida:', filePath);
-                alert('Aviso: La ruta fÃƒÂ­sica del archivo local aÃƒÂºn no estÃƒÂ¡ disponible o viene vacÃƒÂ­a.');
+                console.warn('[FlixGrab] Intentando abrir player con ruta inválida:', filePath);
+                alert('Aviso: La ruta física del archivo local aún no está disponible o viene vacía.');
                 return;
             }
 
-            // NormalizaciÃƒÂ³n de URL absoluta On-Net
+            // Normalización de URL absoluta On-Net
             const cleanPath = filePath.replace('/var/www/html', '');
             const absoluteUrl = window.location.origin + (cleanPath.startsWith('/') ? cleanPath : '/' + cleanPath);
 
@@ -631,19 +631,19 @@
                 resolvedUrl: absoluteUrl
             });
 
-            // Disparar reproducciÃƒÂ³n reactiva en el componente si estÃƒÂ¡ disponible
+            // Disparar reproducción reactiva en el componente si está disponible
             if (window.dispatchEvent) {
                 window.dispatchEvent(new CustomEvent('flixgrab:play', { detail: { filePath } }));
             }
         }
 
-        // FunciÃƒÂ³n global solicitada para pruebas inmediatas
+        // Función global solicitada para pruebas inmediatas
         function playVideo(filePath) {
             console.log('Clic en reproducir para:', filePath);
 
             if (!filePath || filePath === undefined || filePath === null) {
                 console.warn('Ruta de archivo no definida:', filePath);
-                alert('Error: filePath no estÃƒÂ¡ definido en el objeto del medio seleccionado.');
+                alert('Error: filePath no está definido en el objeto del medio seleccionado.');
                 return;
             }
 
@@ -738,7 +738,7 @@
                             const data = await res.json();
                             this.results = Array.isArray(data) ? data : (data.results || []);
                             this.syncResultsWithTasks();
-                            console.log('[FlixGrab] Resultados obtenidos vÃƒÂ­a API:', this.results);
+                            console.log('[FlixGrab] Resultados obtenidos vía API:', this.results);
                             return;
                         } else {
                             this.results = [];
@@ -770,9 +770,9 @@
                         this.searchQuery = '';
                         this.results = [];
                         await this.performSearch();
-                        alert(`CachÃƒÂ© de [${prov.toUpperCase()}] purgada exitosamente. Estado limpio sin datos huÃƒÂ©rfanos.`);
+                        alert(`Caché de [${prov.toUpperCase()}] purgada exitosamente. Estado limpio sin datos huérfanos.`);
                     } catch (e) {
-                        console.error('Error al limpiar cachÃƒÂ©:', e);
+                        console.error('Error al limpiar caché:', e);
                     } finally {
                         this.isClearing = false;
                     }
@@ -784,8 +784,8 @@
 
                 playVideo(filePath) {
                     if (!filePath) {
-                        console.warn('[FlixGrab] playVideo recibiÃƒÂ³ un filePath vacÃƒÂ­o.');
-                        alert('Aviso: Ruta de archivo no definida para este tÃƒÂ­tulo.');
+                        console.warn('[FlixGrab] playVideo recibió un filePath vacío.');
+                        alert('Aviso: Ruta de archivo no definida para este título.');
                         return;
                     }
 
@@ -798,7 +798,7 @@
                     const found = this.results.find(r => r.localFilePath === filePath || r.filePath === filePath);
 
                     this.playerMedia = {
-                        title: found ? found.title : 'ReproducciÃƒÂ³n Local On-Net',
+                        title: found ? found.title : 'Reproducción Local On-Net',
                         quality: found ? found.quality : '4K HDR On-Net',
                         filePath: filePath,
                         streamUrl: streamUrl
@@ -810,7 +810,7 @@
                         const video = this.$refs.videoElement;
                         if (video) {
                             video.load();
-                            video.play().catch(e => console.log('Autoplay bloqueado por polÃƒÂ­ticas del navegador:', e));
+                            video.play().catch(e => console.log('Autoplay bloqueado por políticas del navegador:', e));
                         }
                     });
                 },

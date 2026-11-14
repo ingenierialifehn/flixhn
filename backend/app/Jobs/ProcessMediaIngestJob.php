@@ -38,7 +38,7 @@ class ProcessMediaIngestJob implements ShouldQueue
 
     /**
 
-     * Tiempo lÃ­mite de ejecuciÃ³n (segundos): 4 horas.
+     * Tiempo límite de ejecución (segundos): 4 horas.
 
      */
 
@@ -144,7 +144,7 @@ class ProcessMediaIngestJob implements ShouldQueue
                 $this->executeProgressiveDownload($task, $ingestService);
             }
 
-            // 3. Al completar la descarga fÃ­sica (100%):
+            // 3. Al completar la descarga física (100%):
 
             $task->refresh();
 
@@ -166,11 +166,11 @@ class ProcessMediaIngestJob implements ShouldQueue
 
                         'status' => 'failed',
 
-                        'error_message' => "El archivo en disco '{$task->output_file}' no existe o su tamaÃ±o es menor a 1 MB.",
+                        'error_message' => "El archivo en disco '{$task->output_file}' no existe o su tamaño es menor a 1 MB.",
 
                         'download_speed' => '0.0 MB/s',
 
-                        'eta' => 'Error de validaciÃ³n',
+                        'eta' => 'Error de validación',
 
                     ]);
 
@@ -182,7 +182,7 @@ class ProcessMediaIngestJob implements ShouldQueue
 
                 if ($task->auto_index) {
 
-                    // Registra el archivo automÃ¡ticamente en media_items para que aparezca al instante en /browse
+                    // Registra el archivo automáticamente en media_items para que aparezca al instante en /browse
 
                     $ingestService->indexMediaContent($task);
 
@@ -206,7 +206,7 @@ class ProcessMediaIngestJob implements ShouldQueue
 
         } catch (\Throwable $e) {
 
-            Log::error("ProcessMediaIngestJob fallÃ³ para tarea #{$this->taskId}: " . $e->getMessage(), [
+            Log::error("ProcessMediaIngestJob falló para tarea #{$this->taskId}: " . $e->getMessage(), [
 
                 'trace' => $e->getTraceAsString(),
 
@@ -240,7 +240,7 @@ class ProcessMediaIngestJob implements ShouldQueue
 
     /**
 
-     * SimulaciÃ³n progresiva reactiva de descarga con actualizaciones en tiempo real.
+     * Simulación progresiva reactiva de descarga con actualizaciones en tiempo real.
 
      */
 
@@ -655,7 +655,7 @@ class ProcessMediaIngestJob implements ShouldQueue
 
         }
 
-        // PelÃ­culas completas autÃ©nticas de alta definiciÃ³n (dominio pÃºblico / licencias abiertas)
+        // Películas completas auténticas de alta definición (dominio público / licencias abiertas)
 
         $candidates[] = 'https://archive.org/download/Sita_Sings_the_Blues_1080p/Sita_Sings_the_Blues_1080p.mp4';
 
@@ -667,7 +667,7 @@ class ProcessMediaIngestJob implements ShouldQueue
 
     /**
 
-     * Resolver la ruta absoluta en disco a partir de una ruta canÃ³nica o relativa.
+     * Resolver la ruta absoluta en disco a partir de una ruta canónica o relativa.
 
      */
 
@@ -729,7 +729,7 @@ class ProcessMediaIngestJob implements ShouldQueue
 
     /**
 
-     * Sincronizar estado con la tabla ott_download_tasks si existe registro homÃ³logo.
+     * Sincronizar estado con la tabla ott_download_tasks si existe registro homólogo.
 
      */
 
@@ -795,7 +795,7 @@ class ProcessMediaIngestJob implements ShouldQueue
 
                 'status' => 'failed',
 
-                'error_message' => $exception ? $exception->getMessage() : 'Error crÃ­tico en el Job de cola asÃ­ncrona.',
+                'error_message' => $exception ? $exception->getMessage() : 'Error crítico en el Job de cola asíncrona.',
 
                 'download_speed' => '0.0 MB/s',
 

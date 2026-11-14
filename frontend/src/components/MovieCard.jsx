@@ -136,6 +136,8 @@ const MovieCard = ({ item, title: propTitle, isProgress, onPlay, onOpenModal, on
   const [isHovered, setIsHovered] = useState(false);
   const [cardRect, setCardRect] = useState(null);
   const [imgError, setImgError] = useState(false);
+  const [isOverPlayBtn, setIsOverPlayBtn] = useState(false);
+  const isOverPlayBtnRef = useRef(false);
 
   // Manejar si el item viene de prop directa title, PlaybackProgress o Title directo
   const title = propTitle || (isProgress ? item?.title : item);
@@ -153,12 +155,13 @@ const MovieCard = ({ item, title: propTitle, isProgress, onPlay, onOpenModal, on
 
   // Temporizador con retardo (debounce) para apertura y cierre fluido estilo Netflix
   const handleMouseEnter = useCallback(() => {
+    if (isOverPlayBtnRef.current) return;
     if (closeTimeout.current) clearTimeout(closeTimeout.current);
     hoverTimeout.current = setTimeout(() => {
-      if (!cardRef.current) return;
+      if (!cardRef.current || isOverPlayBtnRef.current) return;
       setCardRect(cardRef.current.getBoundingClientRect());
       setIsHovered(true);
-    }, 300); // 300ms de espera antes de abrir
+    }, 380); // 380ms de espera antes de abrir
   }, []);
 
   const handleMouseLeave = useCallback(() => {
@@ -240,6 +243,13 @@ const MovieCard = ({ item, title: propTitle, isProgress, onPlay, onOpenModal, on
             e.preventDefault();
             e.stopPropagation();
             return;
+          }
+          // Si es un contenido OTT que aún no está descargado localmente, iniciar descarga y reproducción On-Demand
+          if ((title?.is_ott && title?.is_downloaded === false) || (typeof title?.id === 'string' && title.id.startsWith('ott_'))) {
+            if (onPlay) {
+              onPlay(title);
+              return;
+            }
           }
           if (onOpenModal) onOpenModal(title);
         }}
@@ -343,14 +353,30 @@ const MovieCard = ({ item, title: propTitle, isProgress, onPlay, onOpenModal, on
             </button>
           )}
 
-          {/* Botón flotante de reproducción en hover */}
+          {/* Botón flotante de reproducción en hover (con protección anti-colisión para HoverPreviewCard) */}
           <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
             <button
               onClick={(e) => {
                 e.stopPropagation();
+                if (hoverTimeout.current) clearTimeout(hoverTimeout.current);
+                if (closeTimeout.current) clearTimeout(closeTimeout.current);
+                setIsHovered(false);
                 if (onPlay) onPlay(title, episode);
               }}
-              className="w-12 h-12 rounded-full bg-[#E50914] text-white flex items-center justify-center hover:bg-[#F40612] hover:scale-110 active:scale-95 transition-all shadow-xl pointer-events-auto cursor-pointer"
+              onMouseEnter={(e) => {
+                e.stopPropagation();
+                isOverPlayBtnRef.current = true;
+                setIsOverPlayBtn(true);
+                if (hoverTimeout.current) clearTimeout(hoverTimeout.current);
+                if (closeTimeout.current) clearTimeout(closeTimeout.current);
+                setIsHovered(false);
+              }}
+              onMouseLeave={(e) => {
+                e.stopPropagation();
+                isOverPlayBtnRef.current = false;
+                setIsOverPlayBtn(false);
+              }}
+              className="w-12 h-12 rounded-full bg-[#E50914] text-white flex items-center justify-center hover:bg-[#F40612] hover:scale-110 active:scale-95 transition-all shadow-xl pointer-events-auto cursor-pointer z-30"
               title="Reproducir ahora"
               type="button"
             >

@@ -19,7 +19,7 @@ function fixEncoding(text) {
   return text
     .replace(/M├║sica/gi, 'Música')
     .replace(/M├ºsica/gi, 'Música')
-    .replace(/MÃºsica/gi, 'Música')
+    .replace(/Música/gi, 'Música')
     .replace(/├║/g, 'ú')
     .replace(/├│/g, 'ó')
     .replace(/├í/g, 'á')
@@ -27,12 +27,12 @@ function fixEncoding(text) {
     .replace(/├¡/g, 'í')
     .replace(/├▒/g, 'ñ')
     .replace(/├Ñ/g, 'Ñ')
-    .replace(/Ãº/g, 'ú')
-    .replace(/Ã³/g, 'ó')
-    .replace(/Ã¡/g, 'á')
-    .replace(/Ã©/g, 'é')
-    .replace(/Ã­/g, 'í')
-    .replace(/Ã±/g, 'ñ')
+    .replace(/ú/g, 'ú')
+    .replace(/ó/g, 'ó')
+    .replace(/á/g, 'á')
+    .replace(/é/g, 'é')
+    .replace(/í/g, 'í')
+    .replace(/ñ/g, 'ñ')
     .trim();
 }
 

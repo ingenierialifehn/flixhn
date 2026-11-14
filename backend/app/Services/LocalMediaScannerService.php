@@ -683,8 +683,8 @@ class LocalMediaScannerService
     }
 
     /**
-     * Consulta APIs públicas gratuitas (TVMaze e iTunes Search API) sin requerir API Key,
-     * para obtener carátula oficial en alta resolución y metadatos de series o películas.
+     * Consulta APIs públicas gratuitas (JustWatch GraphQL, TVMaze e iTunes Search API) sin requerir API Key,
+     * para obtener carátula oficial en alta resolución y metadatos de series o películas con validación estricta de título.
      */
     public function fetchPublicOnlineArtwork(string $name, bool $isSeries = false): ?array
     {
@@ -697,17 +697,68 @@ class LocalMediaScannerService
         $headers = [
             'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 FlixHN/2.0',
             'Accept' => 'application/json',
+            'Content-Type' => 'application/json',
         ];
 
-        // 1. TVMaze: Excelente para series de TV y anime (Hajime no Ippo, Dragon Ball Z, Jujutsu Kaisen, Death Note)
+        // 1. JustWatch GraphQL: Catálogo con carátulas oficiales en español de máxima fidelidad
+        try {
+            $jwQuery = 'query GetSearchTitles($country: Country!, $searchFilter: TitleFilter!) { popularTitles(country: $country, filter: $searchFilter, first: 3) { edges { node { content(country: $country, language: "es") { title originalTitle posterUrl backdrops { backdropUrl } } } } } }';
+            $jwPayload = [
+                'query' => $jwQuery,
+                'variables' => [
+                    'country' => 'MX',
+                    'searchFilter' => [
+                        'searchQuery' => $cleanName,
+                    ],
+                ],
+            ];
+            $jwResp = Http::timeout(5)->withHeaders($headers)->post('https://apis.justwatch.com/graphql', $jwPayload);
+            if ($jwResp->successful()) {
+                $edges = $jwResp->json('data.popularTitles.edges') ?: [];
+                foreach ($edges as $edge) {
+                    $content = $edge['node']['content'] ?? null;
+                    if (!$content || empty($content['posterUrl'])) continue;
+
+                    $candTitle = $content['title'] ?? '';
+                    $candOriginal = $content['originalTitle'] ?? '';
+
+                    similar_text(mb_strtolower($cleanName), mb_strtolower($candTitle), $sim1);
+                    similar_text(mb_strtolower($cleanName), mb_strtolower($candOriginal), $sim2);
+                    $maxSim = max($sim1, $sim2);
+
+                    $containsClean = str_contains(mb_strtolower($candTitle), mb_strtolower($cleanName)) ||
+                                     str_contains(mb_strtolower($cleanName), mb_strtolower($candTitle));
+
+                    if ($maxSim >= 55 || $containsClean) {
+                        $pUrl = 'https://images.justwatch.com' . str_replace(['{profile}', '{format}'], ['s592', 'jpg'], $content['posterUrl']);
+                        $bUrl = null;
+                        if (!empty($content['backdrops'][0]['backdropUrl'])) {
+                            $bUrl = 'https://images.justwatch.com' . str_replace(['{profile}', '{format}'], ['s1920', 'jpg'], $content['backdrops'][0]['backdropUrl']);
+                        }
+                        return [
+                            'poster_url' => $pUrl,
+                            'backdrop_url' => $bUrl ?: $pUrl,
+                            'imdb_id' => null,
+                            'source' => 'justwatch',
+                        ];
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::debug("fetchPublicOnlineArtwork JustWatch error para {$cleanName}: " . $e->getMessage());
+        }
+
+        // 2. TVMaze: Excelente para series de TV y anime con verificación de similitud
         if ($isSeries) {
             try {
                 $tvmazeUrl = 'https://api.tvmaze.com/singlesearch/shows?q=' . urlencode($cleanName);
-                $resp = Http::timeout(6)->withHeaders($headers)->get($tvmazeUrl);
+                $resp = Http::timeout(5)->withHeaders($headers)->get($tvmazeUrl);
                 if ($resp->successful()) {
                     $json = $resp->json();
                     $poster = $json['image']['original'] ?? $json['image']['medium'] ?? null;
-                    if ($poster) {
+                    $showName = $json['name'] ?? '';
+                    similar_text(mb_strtolower($cleanName), mb_strtolower($showName), $sim);
+                    if ($poster && ($sim >= 50 || str_contains(mb_strtolower($showName), mb_strtolower($cleanName)))) {
                         return [
                             'poster_url' => $poster,
                             'backdrop_url' => $poster,
@@ -721,50 +772,36 @@ class LocalMediaScannerService
             }
         }
 
-        // 2. iTunes Search API (100% gratuita, sin clave de API):
-        // Reemplaza artworkUrl100 (100x100bb) por 600x900bb para resolución óptima
+        // 3. iTunes Search API con VALIDACIÓN ESTRICTA de coincidencia de título
         $mediaTypes = $isSeries ? ['tvShow', 'movie'] : ['movie', 'tvShow'];
         foreach ($mediaTypes as $media) {
             try {
-                $itunesUrl = "https://itunes.apple.com/search?term=" . urlencode($cleanName) . "&media={$media}&limit=1";
-                $resp = Http::timeout(6)->withHeaders($headers)->get($itunesUrl);
+                $itunesUrl = "https://itunes.apple.com/search?term=" . urlencode($cleanName) . "&media={$media}&limit=3";
+                $resp = Http::timeout(5)->withHeaders($headers)->get($itunesUrl);
                 if ($resp->successful()) {
-                    $json = $resp->json();
-                    if (!empty($json['results'][0]['artworkUrl100'])) {
-                        $rawArtwork = $json['results'][0]['artworkUrl100'];
-                        $hqArtwork = str_replace('100x100bb', '600x900bb', $rawArtwork);
-                        return [
-                            'poster_url' => $hqArtwork,
-                            'backdrop_url' => $hqArtwork,
-                            'imdb_id' => null,
-                            'source' => 'itunes',
-                        ];
+                    $results = $resp->json('results') ?: [];
+                    foreach ($results as $resItem) {
+                        if (empty($resItem['artworkUrl100'])) continue;
+
+                        $track = $resItem['trackName'] ?? ($resItem['collectionName'] ?? '');
+                        similar_text(mb_strtolower($cleanName), mb_strtolower($track), $sim);
+                        $contains = str_contains(mb_strtolower($track), mb_strtolower($cleanName)) ||
+                                    str_contains(mb_strtolower($cleanName), mb_strtolower($track));
+
+                        if ($sim >= 55 || $contains) {
+                            $rawArtwork = $resItem['artworkUrl100'];
+                            $hqArtwork = str_replace('100x100bb', '600x900bb', $rawArtwork);
+                            return [
+                                'poster_url' => $hqArtwork,
+                                'backdrop_url' => $hqArtwork,
+                                'imdb_id' => null,
+                                'source' => 'itunes',
+                            ];
+                        }
                     }
                 }
             } catch (\Throwable $e) {
                 Log::debug("fetchPublicOnlineArtwork iTunes error para {$cleanName} ({$media}): " . $e->getMessage());
-            }
-        }
-
-        // 3. Fallback inverso de TVMaze si era película pero puede ser serie/anime
-        if (!$isSeries) {
-            try {
-                $tvmazeUrl = 'https://api.tvmaze.com/singlesearch/shows?q=' . urlencode($cleanName);
-                $resp = Http::timeout(6)->withHeaders($headers)->get($tvmazeUrl);
-                if ($resp->successful()) {
-                    $json = $resp->json();
-                    $poster = $json['image']['original'] ?? $json['image']['medium'] ?? null;
-                    if ($poster) {
-                        return [
-                            'poster_url' => $poster,
-                            'backdrop_url' => $poster,
-                            'imdb_id' => $json['externals']['imdb'] ?? null,
-                            'source' => 'tvmaze',
-                        ];
-                    }
-                }
-            } catch (\Throwable $e) {
-                // silenciar fallback
             }
         }
 
@@ -827,12 +864,23 @@ class LocalMediaScannerService
             $backdropUrl = $nfo['backdrop_url'];
         }
 
-        // 5. Si no tiene imdb_id ni imagen nombrada estándar, buscar CUALQUIER imagen válida (.jpg, .png, .webp) en carpeta o subcarpetas
+        // 5. Si no tiene imdb_id ni imagen nombrada estándar, buscar imagen válida en carpeta SOLO si es carpeta dedicada
         if (!$posterUrl && !empty($dirPath) && is_dir($dirPath)) {
-            $anyLocal = $this->findAnyLocalValidImage($dirPath);
-            if ($anyLocal) {
-                $posterUrl = $anyLocal;
-                $backdropUrl = $anyLocal;
+            $entries = @scandir($dirPath) ?: [];
+            $videoCount = 0;
+            $videoExts = ['mp4', 'mkv', 'avi', 'm4v', 'mov', 'webm', 'ts'];
+            foreach ($entries as $e) {
+                if ($e !== '.' && $e !== '..' && is_file("{$dirPath}/{$e}")) {
+                    $ext = strtolower(pathinfo($e, PATHINFO_EXTENSION));
+                    if (in_array($ext, $videoExts)) $videoCount++;
+                }
+            }
+            if ($videoCount <= 1) {
+                $anyLocal = $this->findAnyLocalValidImage($dirPath);
+                if ($anyLocal) {
+                    $posterUrl = $anyLocal;
+                    $backdropUrl = $anyLocal;
+                }
             }
         }
 
@@ -881,7 +929,8 @@ class LocalMediaScannerService
                   ->orWhere('poster_url', '/placeholder-poster.png')
                   ->orWhere('poster_url', 'LIKE', '%index.jpeg%')
                   ->orWhere('poster_url', 'LIKE', '%index2.jpeg%')
-                  ->orWhere('poster_url', 'LIKE', '%45.4.87.126%');
+                  ->orWhere('poster_url', 'LIKE', '%45.4.87.126%')
+                  ->orWhere('poster_url', 'LIKE', '%NNVG10009445%');
             });
         }
 

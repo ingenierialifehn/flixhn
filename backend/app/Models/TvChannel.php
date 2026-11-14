@@ -75,7 +75,7 @@ class TvChannel extends Model
         $replacements = [
             'M├║sica' => 'Música',
             'M├ºsica' => 'Música',
-            'MÃºsica' => 'Música',
+            'Música' => 'Música',
             '├║' => 'ú',
             '├│' => 'ó',
             '├í' => 'á',
@@ -83,12 +83,12 @@ class TvChannel extends Model
             '├¡' => 'í',
             '├▒' => 'ñ',
             '├Ñ' => 'Ñ',
-            'Ãº' => 'ú',
-            'Ã³' => 'ó',
-            'Ã¡' => 'á',
-            'Ã©' => 'é',
-            'Ã­' => 'í',
-            'Ã±' => 'ñ',
+            'ú' => 'ú',
+            'ó' => 'ó',
+            'á' => 'á',
+            'é' => 'é',
+            'í' => 'í',
+            'ñ' => 'ñ',
         ];
 
         return strtr($str, $replacements);

@@ -1,4 +1,4 @@
-﻿import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import api from '../../services/api';
 import {
   Search,
@@ -24,13 +24,13 @@ import FolderPickerModal from './FolderPickerModal';
 import OttPlayerModal from './OttPlayerModal';
 import { notifyCatalogUpdated } from '../../utils/catalogEvents';
 
-// FunciÃ³n para generar resultados dinÃ¡micos realistas segÃºn la consulta del usuario
+// Función para generar resultados dinámicos realistas según la consulta del usuario
 export const generateSimulatedResults = (query = '', provider = 'all') => {
   return [];
 };
 
 /**
- * Insignia vectorial o estilizada de la plataforma para las tarjetas de catÃ¡logo remoto.
+ * Insignia vectorial o estilizada de la plataforma para las tarjetas de catálogo remoto.
  */
 export const PlatformMiniBadge = ({ provider }) => {
   switch (provider) {
@@ -89,7 +89,7 @@ export const PlatformMiniBadge = ({ provider }) => {
   }
 };
 
-// Base local de respaldo vacÃ­a: Se nutre 100% del catÃ¡logo real conectado desde la API
+// Base local de respaldo vacía: Se nutre 100% del catálogo real conectado desde la API
 const CURATED_OTT_CATALOG = [];
 
 const SUGGESTION_CHIPS = [
@@ -106,7 +106,7 @@ const SUGGESTION_CHIPS = [
 ];
 
 /**
- * Explorador y Buscador de CatÃ¡logo Remoto On-Demand (FlixGrab Engine)
+ * Explorador y Buscador de Catálogo Remoto On-Demand (FlixGrab Engine)
  */
 export default function OttRemoteCatalogExplorer({
   onTaskCreated,
@@ -123,7 +123,7 @@ export default function OttRemoteCatalogExplorer({
   const [loading, setLoading] = useState(false);
   const [searchedOnce, setSearchedOnce] = useState(false);
 
-  // Sincronizar selecciÃ³n de plataforma desde el padre si cambia
+  // Sincronizar selección de plataforma desde el padre si cambia
   useEffect(() => {
     if (targetProviderFromParent) {
       setSelectedProvider(targetProviderFromParent);
@@ -152,7 +152,7 @@ export default function OttRemoteCatalogExplorer({
     return (providersList || []).filter((p) => p.status === 'connected');
   }, [providersList]);
 
-  // Resolver quÃ© proveedor conectado debe asumir la descarga
+  // Resolver qué proveedor conectado debe asumir la descarga
   const resolveTargetProvider = useCallback(
     (item) => {
       if (item?.provider) {
@@ -176,7 +176,7 @@ export default function OttRemoteCatalogExplorer({
     [activeConnectedProviders, selectedProvider]
   );
 
-  // Modal de confirmaciÃ³n de descarga
+  // Modal de confirmación de descarga
   const [confirmItem, setConfirmItem] = useState(null);
   const [downloadQuality, setDownloadQuality] = useState('1080p');
   const [targetFolder, setTargetFolder] = useState('/storage/media');
@@ -216,13 +216,13 @@ export default function OttRemoteCatalogExplorer({
     });
   }, [resolveTargetProvider]);
 
-  // Consulta de catÃ¡logo remoto al backend con fallback dinÃ¡mico
+  // Consulta de catálogo remoto al backend con fallback dinámico
   const fetchOttResults = useCallback(
     async (query = '') => {
       const cleanQuery = (query || '').trim();
       setLoading(true);
 
-      // Simular spinner de carga rÃ¡pida (500ms) requerido
+      // Simular spinner de carga rápida (500ms) requerido
       await new Promise((r) => setTimeout(r, 480));
 
       try {
@@ -273,7 +273,7 @@ export default function OttRemoteCatalogExplorer({
     [selectedProvider]
   );
 
-  // BÃºsqueda en tiempo real con debounce
+  // Búsqueda en tiempo real con debounce
   useEffect(() => {
     const clean = (searchQuery || '').trim();
     const timer = setTimeout(() => {
@@ -282,7 +282,7 @@ export default function OttRemoteCatalogExplorer({
     return () => clearTimeout(timer);
   }, [searchQuery, selectedProvider, fetchOttResults]);
 
-  // Manejador del submit de bÃºsqueda (Enter o Clic en Lupa)
+  // Manejador del submit de búsqueda (Enter o Clic en Lupa)
   const handleSearchSubmit = (e) => {
     if (e) e.preventDefault();
     fetchOttResults(searchQuery);
@@ -294,13 +294,13 @@ export default function OttRemoteCatalogExplorer({
     fetchOttResults(chipTitle);
   };
 
-  // Limpiar bÃºsqueda
+  // Limpiar búsqueda
   const handleClearSearch = () => {
     setSearchQuery('');
     fetchOttResults('');
   };
 
-  // Abrir modal de confirmaciÃ³n o lanzar descarga
+  // Abrir modal de confirmación o lanzar descarga
   const handleOpenDownloadModal = (item) => {
     const assignedProvider = resolveTargetProvider(item);
     const uniqueId = item.unique_id || item.id || `ott_${Date.now()}`;
@@ -460,7 +460,7 @@ export default function OttRemoteCatalogExplorer({
 
   return (
     <div className="bg-[#181818] border border-zinc-800 rounded-2xl p-6 shadow-2xl space-y-6">
-      {/* Cabecera de la secciÃ³n Buscador FlixGrab */}
+      {/* Cabecera de la sección Buscador FlixGrab */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-zinc-800/80">
         <div>
           <div className="flex items-center gap-2">
@@ -470,7 +470,7 @@ export default function OttRemoteCatalogExplorer({
             </span>
             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
               <Zap className="w-2.5 h-2.5" />
-              Ingesta Fibra Ã“ptica
+              Ingesta Fibra Óptica
             </span>
           </div>
           <h2 className="text-xl font-black text-white flex items-center gap-2 mt-1 tracking-tight">
@@ -478,7 +478,7 @@ export default function OttRemoteCatalogExplorer({
             Buscador Integrado FlixGrab
           </h2>
           <p className="text-xs text-zinc-400 max-w-2xl mt-0.5">
-            Busca cualquier pelÃ­cula o serie en Netflix, Disney+, Max o Prime Video y ordÃ©nala inmediatamente para almacenamiento e ingesta local On-Net.
+            Busca cualquier película o serie en Netflix, Disney+, Max o Prime Video y ordénala inmediatamente para almacenamiento e ingesta local On-Net.
           </p>
         </div>
 
@@ -486,15 +486,15 @@ export default function OttRemoteCatalogExplorer({
         <div className="flex items-center gap-2 self-start md:self-auto">
           <span className="text-xs text-zinc-400">Resultados encontrados:</span>
           <span className="px-3 py-1 rounded-lg text-xs font-mono font-bold bg-zinc-900 border border-zinc-800 text-white">
-            {filteredResults.length} tÃ­tulos
+            {filteredResults.length} títulos
           </span>
         </div>
       </div>
 
-      {/* Barra de BÃºsqueda Interactiva & Filtros */}
+      {/* Barra de Búsqueda Interactiva & Filtros */}
       <form onSubmit={handleSearchSubmit} className="space-y-3">
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-          {/* Campo de bÃºsqueda con spinner sutil */}
+          {/* Campo de búsqueda con spinner sutil */}
           <div className="relative flex-1">
             <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-zinc-400">
               {loading ? (
@@ -507,7 +507,7 @@ export default function OttRemoteCatalogExplorer({
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Escribe el nombre de la pelÃ­cula o serie (ej: The Witcher, Stranger Things)..."
+              placeholder="Escribe el nombre de la película o serie (ej: The Witcher, Stranger Things)..."
               className="w-full pl-10 pr-10 py-3 bg-[#111827]/80 border border-zinc-800 rounded-xl text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 transition-all shadow-inner"
             />
             {loading && (
@@ -520,7 +520,7 @@ export default function OttRemoteCatalogExplorer({
                 type="button"
                 onClick={handleClearSearch}
                 className="absolute inset-y-0 right-0 pr-3 flex items-center text-zinc-400 hover:text-white transition-colors cursor-pointer"
-                title="Limpiar bÃºsqueda"
+                title="Limpiar búsqueda"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -569,7 +569,7 @@ export default function OttRemoteCatalogExplorer({
           ))}
         </div>
 
-        {/* PÃ­ldoras de filtro por tipo de medio */}
+        {/* Píldoras de filtro por tipo de medio */}
         <div className="flex items-center gap-2 pt-1 border-t border-zinc-800/60">
           <span className="text-[11px] text-zinc-400 uppercase tracking-wider font-semibold mr-1">
             Tipo:
@@ -595,7 +595,7 @@ export default function OttRemoteCatalogExplorer({
             }`}
           >
             <Film className="w-3.5 h-3.5" />
-            <span>PelÃ­culas</span>
+            <span>Películas</span>
           </button>
           <button
             type="button"
@@ -612,7 +612,7 @@ export default function OttRemoteCatalogExplorer({
         </div>
       </form>
 
-      {/* CuadrÃ­cula de Resultados FlixGrab */}
+      {/* Cuadrícula de Resultados FlixGrab */}
       {loading && results.length === 0 ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
           {[...Array(6)].map((_, i) => (
@@ -679,7 +679,7 @@ export default function OttRemoteCatalogExplorer({
                 className="bg-[#141414] border border-zinc-800/90 hover:border-zinc-700 rounded-xl p-3 flex flex-col justify-between transition-all duration-200 group shadow-lg hover:shadow-black/70 relative overflow-hidden"
               >
                 <div>
-                  {/* CarÃ¡tula vertical con badges */}
+                  {/* Carátula vertical con badges */}
                   <div className="relative aspect-[2/3] w-full rounded-lg overflow-hidden bg-zinc-900 border border-zinc-800/80 shadow-inner group">
                     <img
                       src={item.poster_url || `/api/media/poster?title=${encodeURIComponent(item.title)}`}
@@ -701,11 +701,11 @@ export default function OttRemoteCatalogExplorer({
                       <PlatformMiniBadge provider={item.provider} />
                     </div>
 
-                    {/* Badge de Serie/PelÃ­cula */}
+                    {/* Badge de Serie/Película */}
                     <div className="absolute top-2 right-2 z-10">
                       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-black/70 text-zinc-300 border border-zinc-700/50 backdrop-blur-md">
                         {isSeries ? <Tv className="w-2.5 h-2.5" /> : <Film className="w-2.5 h-2.5" />}
-                        {isSeries ? 'Serie' : 'PelÃ­cula'}
+                        {isSeries ? 'Serie' : 'Película'}
                       </span>
                     </div>
 
@@ -718,7 +718,7 @@ export default function OttRemoteCatalogExplorer({
                       </div>
                     )}
 
-                    {/* AÃ±o */}
+                    {/* Año */}
                     {item.year && (
                       <div className="absolute bottom-2 right-2 z-10">
                         <span className="text-[10px] font-mono text-zinc-300 bg-black/80 px-1.5 py-0.5 rounded border border-zinc-800/50">
@@ -740,15 +740,15 @@ export default function OttRemoteCatalogExplorer({
                       {item.genre || (isSeries ? 'Serie Original' : 'Largometraje')}
                     </div>
                     <p className="text-[11px] text-zinc-500 line-clamp-2 leading-relaxed">
-                      {item.overview || 'Sin descripciÃ³n disponible para este medio.'}
+                      {item.overview || 'Sin descripción disponible para este medio.'}
                     </p>
                   </div>
                 </div>
 
-                {/* BotÃ³n de AcciÃ³n Principal SemÃ¡ntico segÃºn Estado */}
+                {/* Botón de Acción Principal Semántico según Estado */}
                 <div className="mt-3 pt-2 border-t border-zinc-800/80 space-y-1.5">
                   {isCompleted ? (
-                    // Estado 1: Verde brillante con check "âœ“ En CatÃ¡logo" + "â–¶ ReproducciÃ³n Local On-Net"
+                    // Estado 1: Verde brillante con check "✓ En Catálogo" + "▶ Reproducción Local On-Net"
                     <div className="space-y-1.5">
                       <button
                         type="button"
@@ -758,10 +758,10 @@ export default function OttRemoteCatalogExplorer({
                           handleOpenPlayer({ ...item, filePath: filePath, localFilePath: filePath, file_path: filePath });
                         }}
                         className="flex items-center justify-center gap-1.5 w-full py-1.5 px-2 rounded-lg text-xs font-bold bg-emerald-600/25 hover:bg-emerald-600/35 text-emerald-300 border border-emerald-500/40 transition-all shadow-sm active:scale-95 cursor-pointer"
-                        title="TÃ­tulo disponible en catÃ¡logo On-Net. Haz clic para reproducir."
+                        title="Título disponible en catálogo On-Net. Haz clic para reproducir."
                       >
                         <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                        <span className="truncate">âœ“ En CatÃ¡logo</span>
+                        <span className="truncate">✓ En Catálogo</span>
                       </button>
                       <button
                         type="button"
@@ -771,10 +771,10 @@ export default function OttRemoteCatalogExplorer({
                           handleOpenPlayer({ ...item, filePath: filePath, localFilePath: filePath, file_path: filePath });
                         }}
                         className="flex items-center justify-center gap-1.5 w-full py-1.5 px-2 rounded-lg text-[11px] font-bold bg-sky-950/80 hover:bg-sky-900/90 text-sky-300 border border-sky-500/40 transition-all shadow-sm active:scale-95 cursor-pointer"
-                        title="ReproducciÃ³n directa On-Net desde el nodo perimetral"
+                        title="Reproducción directa On-Net desde el nodo perimetral"
                       >
                         <Play className="w-3 h-3 fill-sky-400 text-sky-400 shrink-0" />
-                        <span className="truncate">â–¶ ReproducciÃ³n Local On-Net</span>
+                        <span className="truncate">▶ Reproducción Local On-Net</span>
                       </button>
                     </div>
                   ) : isDownloading ? (
@@ -810,7 +810,7 @@ export default function OttRemoteCatalogExplorer({
                       </button>
                     </div>
                   ) : isInQueue ? (
-                    // Estado 3: En Cola (Ãmbar)
+                    // Estado 3: En Cola (Ámbar)
                     <button
                       disabled
                       className="flex items-center justify-center gap-1.5 w-full py-2 px-2 rounded-lg text-xs font-semibold bg-amber-600/20 text-amber-300 border border-amber-500/40 cursor-not-allowed shadow-sm"
@@ -852,16 +852,16 @@ export default function OttRemoteCatalogExplorer({
           })}
         </div>
       ) : (
-        // Estado vacÃ­o
+        // Estado vacío
         <div className="text-center py-12 px-4 border border-dashed border-zinc-800 rounded-xl space-y-3 bg-[#141414]/50">
           <Search className="w-8 h-8 text-zinc-600 mx-auto" />
           <h3 className="text-sm font-semibold text-zinc-300">
-            {searchQuery ? `No se encontraron resultados para "${searchQuery}"` : 'BÃºsqueda On-Demand FlixGrab'}
+            {searchQuery ? `No se encontraron resultados para "${searchQuery}"` : 'Búsqueda On-Demand FlixGrab'}
           </h3>
           <p className="text-xs text-zinc-400 max-w-md mx-auto">
             {searchQuery
               ? 'Prueba buscando con otra palabra clave como "The Witcher" o "Stranger Things".'
-              : 'Escribe un tÃ­tulo en el buscador o pulsa una de las sugerencias para ver pelÃ­culas y series listas para descargar.'}
+              : 'Escribe un título en el buscador o pulsa una de las sugerencias para ver películas y series listas para descargar.'}
           </p>
           {searchQuery && (
             <button
@@ -870,13 +870,13 @@ export default function OttRemoteCatalogExplorer({
               className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium rounded-lg transition-colors cursor-pointer"
             >
               <X className="w-3.5 h-3.5 text-zinc-400" />
-              <span>Limpiar BÃºsqueda</span>
+              <span>Limpiar Búsqueda</span>
             </button>
           )}
         </div>
       )}
 
-      {/* Modal de ReproducciÃ³n On-Net Embebido */}
+      {/* Modal de Reproducción On-Net Embebido */}
       <OttPlayerModal
         isOpen={Boolean(activePlayerMedia)}
         onClose={() => setActivePlayerMedia(null)}
@@ -884,7 +884,7 @@ export default function OttRemoteCatalogExplorer({
       />
 
 
-      {/* Modal RÃ¡pido de ConfiguraciÃ³n de Ingesta Avanzada */}
+      {/* Modal Rápido de Configuración de Ingesta Avanzada */}
       {confirmItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
           <div className="bg-[#181818] border border-zinc-800 rounded-2xl p-6 max-w-lg w-full shadow-2xl space-y-5 animate-in zoom-in-95 duration-150">
@@ -899,7 +899,7 @@ export default function OttRemoteCatalogExplorer({
                     Confirmar Descarga hacia el Servidor
                   </h3>
                   <p className="text-xs text-zinc-400">
-                    Se encolarÃ¡ la ingesta On-Net con indexaciÃ³n automÃ¡tica en catÃ¡logo.
+                    Se encolará la ingesta On-Net con indexación automática en catálogo.
                   </p>
                 </div>
               </div>
@@ -912,7 +912,7 @@ export default function OttRemoteCatalogExplorer({
               </button>
             </div>
 
-            {/* Vista previa del tÃ­tulo */}
+            {/* Vista previa del título */}
             <div className="flex gap-4 p-3.5 rounded-xl bg-zinc-950/70 border border-zinc-800/80">
               <img
                 src={confirmItem.poster_url || `/api/media/poster?title=${encodeURIComponent(confirmItem.title)}`}
@@ -927,17 +927,17 @@ export default function OttRemoteCatalogExplorer({
                 <div className="flex items-center gap-2">
                   <PlatformMiniBadge provider={confirmItem.assignedProvider || confirmItem.provider} />
                   <span className="text-[10px] text-zinc-400 font-mono">
-                    {confirmItem.media_type === 'series' ? 'Serie' : 'PelÃ­cula'} â€¢ {confirmItem.year || '2024'}
+                    {confirmItem.media_type === 'series' ? 'Serie' : 'Película'} • {confirmItem.year || '2024'}
                   </span>
                 </div>
                 <h4 className="font-bold text-sm text-white truncate">{confirmItem.title}</h4>
                 <p className="text-xs text-zinc-400 line-clamp-2 leading-relaxed">
-                  {confirmItem.overview || 'Sin descripciÃ³n disponible.'}
+                  {confirmItem.overview || 'Sin descripción disponible.'}
                 </p>
               </div>
             </div>
 
-            {/* SelecciÃ³n de Calidad de Ingesta */}
+            {/* Selección de Calidad de Ingesta */}
             <div className="space-y-1.5">
               <label className="block text-xs font-semibold text-zinc-300">
                 Perfil de Calidad de Descarga:
@@ -991,7 +991,7 @@ export default function OttRemoteCatalogExplorer({
               </p>
             </div>
 
-            {/* Botones de acciÃ³n */}
+            {/* Botones de acción */}
             <div className="flex items-center justify-end gap-3 pt-3 border-t border-zinc-800">
               <button
                 type="button"

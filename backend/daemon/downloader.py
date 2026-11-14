@@ -105,6 +105,59 @@ def format_eta(remaining_seconds: float) -> str:
     return f"{minutes:02d}:{seconds:02d} min"
 
 
+def get_emptiest_disk_flixhn_dir(provider: str = "media", media_type: str = "movies") -> Path:
+    """
+    Busca el disco con mayor espacio disponible en el servidor
+    y crea/asegura la carpeta 'FlixHN' para almacenar la descarga.
+    """
+    import glob
+    import shutil
+
+    candidate_patterns = [
+        "/mnt/media_library/Disk*",
+        "/home/server01/Disk*",
+    ]
+    candidate_dirs = []
+    for pat in candidate_patterns:
+        candidate_dirs.extend(glob.glob(pat))
+
+    candidate_dirs.extend([
+        "/mnt/media_library/Disk5",
+        "/mnt/media_library/Disk2",
+        "/mnt/media_library/Disk3",
+        "/mnt/media_library/Disk7",
+        "/mnt/media_library/Disk6",
+        "/mnt/media_library/Disk4",
+    ])
+
+    best_disk = None
+    max_free = -1
+    for d in set(candidate_dirs):
+        p = Path(d)
+        if p.is_dir():
+            try:
+                free = shutil.disk_usage(p).free
+                if free > max_free:
+                    max_free = free
+                    best_disk = p
+            except Exception:
+                pass
+
+    if best_disk and max_free > 1024 * 1024 * 1024:
+        target_dir = best_disk / "FlixHN" / provider
+    else:
+        target_dir = MEDIA_DIR / "FlixHN" / provider
+
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        logger.warning(f"No se pudo crear {target_dir}: {e}, usando fallback local")
+        target_dir = MEDIA_DIR / "FlixHN" / provider
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+    return target_dir
+
+
 class FlixGrabDownloader:
     """
     Motor ejecutor de descarga con flujo en segundo plano,
@@ -122,12 +175,10 @@ class FlixGrabDownloader:
         self.cancelled = False
 
     def resolve_output_file(self) -> Path:
-        """Determina la ruta física de almacenamiento en el servidor."""
+        """Determina la ruta física de almacenamiento en el disco más vacío bajo la carpeta 'FlixHN'."""
         slug_title = slugify(self.title)
         folder_category = "series" if self.media_type == "series" else "movies"
-        provider_dir = MEDIA_DIR / self.provider / folder_category
-
-        provider_dir.mkdir(parents=True, exist_ok=True)
+        provider_dir = get_emptiest_disk_flixhn_dir(self.provider, folder_category)
         return provider_dir / f"{slug_title}.mp4"
 
     def execute(self) -> bool:
