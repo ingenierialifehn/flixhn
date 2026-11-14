@@ -92,7 +92,7 @@ services:
     container_name: flixhn_nginx
     restart: unless-stopped
     ports:
-      - "80:80"       # Web Portal & API
+      - "${WEB_PORT:-58005}:80"       # Web Portal & API (58005 externo -> 80 interno)
       - "7000:7000"   # High-Performance HLS / Media Streaming
     volumes:
       - ./backend:/var/www/html
