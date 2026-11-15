@@ -304,19 +304,23 @@ const AdminLayout = ({ onBackToBrowse }) => {
     }
   }, [activeTab, loadTitlesData, loadUsersData]);
 
-  const handleRefresh = () => {
-    setRefreshing(true);
+  const loadData = useCallback(() => {
     loadDashboardData();
     if (activeTab === 'library' || activeTab === 'catalog') {
       loadTitlesData();
     } else if (activeTab === 'users') {
       loadUsersData();
     }
+  }, [activeTab, loadDashboardData, loadTitlesData, loadUsersData]);
+
+  const handleRefresh = () => {
+    setRefreshing(true);
+    loadData();
   };
 
   const handleSessionStopped = (stoppedId) => {
     setNowPlaying((prev) => prev.filter((s) => s.id !== stoppedId));
-    loadData();
+    loadDashboardData();
   };
 
   const currentTabInfo = TAB_CONFIG[activeTab] || { title: 'Módulo' };
@@ -441,14 +445,14 @@ const AdminLayout = ({ onBackToBrowse }) => {
               {(activeTab === 'library' || activeTab === 'catalog') && (
                 <CatalogManagement
                   titles={titles || []}
-                  onRefresh={loadData}
+                  onRefresh={loadTitlesData}
                 />
               )}
 
               {activeTab === 'users' && (
                 <UsersManagement
                   subscribers={subscribers || []}
-                  onRefresh={loadData}
+                  onRefresh={loadUsersData}
                 />
               )}
 
