@@ -144,6 +144,12 @@ class FixOttPipelineCommand extends Command
                 'download_speed' => '0.0 MB/s',
                 'eta' => 'Purgado',
             ]);
-        $this->info("Tareas de descarga falsas marcadas como failed/purgadas.");
+
+        OttContent::where('local_file_path', 'LIKE', '%FlixHN%')
+            ->update([
+                'download_status' => 'pending',
+                'local_file_path' => null,
+            ]);
+        $this->info("Tareas y contenidos OTT falsos reseteados.");
     }
 }
