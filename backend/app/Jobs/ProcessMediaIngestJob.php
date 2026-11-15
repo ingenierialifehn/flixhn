@@ -748,8 +748,10 @@ class ProcessMediaIngestJob implements ShouldQueue
             ];
 
             $lowTitle = mb_strtolower($title);
+            // Ordenar por longitud descendente para que 'lokillo' se evalúe con prioridad sobre 'loki'
+            uksort($translations, fn($a, $b) => mb_strlen($b) <=> mb_strlen($a));
             foreach ($translations as $k => $transList) {
-                if (str_contains($lowTitle, $k)) {
+                if (preg_match('/(?:\b|^)' . preg_quote($k, '/') . '(?:\b|$)/iu', $lowTitle) || ($k === $lowTitle)) {
                     foreach ($transList as $tl) $searchVariants[] = $tl;
                 }
             }

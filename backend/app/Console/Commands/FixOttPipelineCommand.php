@@ -14,7 +14,7 @@ use Illuminate\Support\Facades\File;
 
 class FixOttPipelineCommand extends Command
 {
-    protected $signature = 'flixhn:ott-pipeline {action=status} {--query=}';
+    protected $signature = 'flixhn:ott-pipeline {action=status} {--query=} {--provider=}';
     protected $description = 'Diagnosticar y reparar pipeline de descargas OTT y buscar contenido real';
 
     public function handle(): int
@@ -40,9 +40,14 @@ class FixOttPipelineCommand extends Command
     protected function testResolve(string $title): void
     {
         $this->info("Probando resolución para: {$title}");
+        $provider = $this->option('provider');
+        if (empty($provider)) {
+            $ottTask = \App\Models\OttDownloadTask::where('title', 'LIKE', "%{$title}%")->latest()->first();
+            $provider = $ottTask?->provider ?: 'disney';
+        }
         $task = new \App\Models\MediaIngestTask([
             'title' => $title,
-            'provider' => 'disney',
+            'provider' => $provider,
             'output_file' => "/mnt/media_library/Disk5/FlixHN/test/{$title}.mp4",
         ]);
         $job = new \App\Jobs\ProcessMediaIngestJob(0);
