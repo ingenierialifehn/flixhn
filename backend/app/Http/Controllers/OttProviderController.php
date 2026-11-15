@@ -626,43 +626,17 @@ class OttProviderController extends Controller
             ]);
         }
 
-        // Auto-recuperación transparente: si la tarea falló o fue marcada completada pero el archivo
-        // no existe físicamente en disco, generar video MP4 1080p auténtico y reproducible de inmediato
-        if ($task?->status === 'failed' || ($isCompleted && !$fileExists)) {
-            if ($diskPath) {
-                $targetDir = dirname($diskPath);
-                if (!file_exists($targetDir)) {
-                    @mkdir($targetDir, 0777, true);
-                }
-                $escaped = escapeshellarg($diskPath);
-                $fullDur = ($title && $title->type === 'series') ? 3000 : 5400;
-                @shell_exec("ffmpeg -y -f lavfi -i testsrc=duration={$fullDur}:size=1920x1080:rate=30 -f lavfi -i sine=frequency=440:duration={$fullDur} -c:v libx264 -preset ultrafast -b:v 2500k -pix_fmt yuv420p -c:a aac -b:a 192k -movflags +faststart {$escaped} 2>&1");
-                clearstatcache(true, $diskPath);
-                if (file_exists($diskPath) && filesize($diskPath) > 50000) {
-                    @chmod($diskPath, 0666);
-                    $task?->update(['status' => 'completed', 'progress' => 100, 'error_message' => null]);
-                    if ($title) {
-                        $title->update(['file_path' => $outputFile]);
-                    }
-                    return response()->json([
-                        'success' => true,
-                        'ready' => true,
-                        'status' => 'ready',
-                        'progress' => 100,
-                        'title_id' => $title?->id,
-                        'title' => $title,
-                        'stream_url' => $title ? "/api/media/{$title->id}/stream" : null,
-                    ]);
-                }
-            }
-            if ($task?->status === 'failed') {
-                return response()->json([
-                    'success' => false,
-                    'ready' => false,
-                    'status' => 'failed',
-                    'error' => $task->error_message ?: 'Error durante la descarga.',
-                ]);
-            }
+        // Si la tarea falló, reportar honestamente el error sin sintetizar video falso
+        if ($task?->status === 'failed') {
+            return response()->json([
+                'success' => false,
+                'ready' => false,
+                'status' => 'failed',
+                'progress' => 0,
+                'title_id' => $title?->id,
+                'title' => $title,
+                'error_message' => $task->error_message ?: 'Error durante la descarga del contenido OTT oficial.',
+            ]);
         }
 
         return response()->json([

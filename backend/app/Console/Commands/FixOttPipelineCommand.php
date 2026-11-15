@@ -3,11 +3,12 @@
 namespace App\Console\Commands;
 
 use App\Models\Episode;
-use App\Models\IptvChannel;
 use App\Models\MediaIngestTask;
 use App\Models\MediaItem;
+use App\Models\OttContent;
 use App\Models\OttDownloadTask;
 use App\Models\Title;
+use App\Models\TvChannel;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\File;
 
@@ -64,8 +65,14 @@ class FixOttPipelineCommand extends Command
             $this->line("MediaItem #{$m->id}: {$m->title} File: {$m->file_path}");
         }
 
-        $channels = IptvChannel::where('name', 'LIKE', "%{$q}%")->get(['id', 'name', 'stream_url']);
-        $this->info("IptvChannels encontrados: " . $channels->count());
+        $otts = OttContent::where('title', 'LIKE', "%{$q}%")->orWhere('original_title', 'LIKE', "%{$q}%")->get();
+        $this->info("OttContents encontrados: " . $otts->count());
+        foreach ($otts as $o) {
+            $this->line("OttContent #{$o->id}: {$o->title} [{$o->platform_id}] File: {$o->local_file_path}");
+        }
+
+        $channels = TvChannel::where('name', 'LIKE', "%{$q}%")->get(['id', 'name', 'stream_url']);
+        $this->info("TvChannels encontrados: " . $channels->count());
         foreach ($channels as $c) {
             $this->line("Channel #{$c->id}: {$c->name} URL: {$c->stream_url}");
         }
@@ -90,5 +97,34 @@ class FixOttPipelineCommand extends Command
                 $this->line("No existe: {$f}");
             }
         }
+
+        // Limpiar registro Title #30143 (Loki) para que no apunte a un archivo eliminado
+        $title = Title::where('name', 'Loki')->first();
+        if ($title) {
+            $title->update([
+                'file_path' => null,
+                'stream_path' => null,
+            ]);
+            $this->info("Title #{$title->id} (Loki) reseteado.");
+        }
+
+        // Marcar tareas fake como failed
+        MediaIngestTask::where('output_file', 'LIKE', '%FlixHN%')
+            ->whereIn('status', ['completed'])
+            ->update([
+                'status' => 'failed',
+                'error_message' => 'Video fake de YouTube purgado del servidor.',
+                'download_speed' => '0.0 MB/s',
+                'eta' => 'Purgado',
+            ]);
+
+        OttDownloadTask::where('file_path', 'LIKE', '%FlixHN%')
+            ->whereIn('status', ['completed'])
+            ->update([
+                'status' => 'failed',
+                'download_speed' => '0.0 MB/s',
+                'eta' => 'Purgado',
+            ]);
+        $this->info("Tareas de descarga falsas marcadas como failed/purgadas.");
     }
 }

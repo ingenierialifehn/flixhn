@@ -264,10 +264,7 @@ class FlixGrabDownloader:
         elif "rebel ridge" in title_lower:
             candidates.append("https://archive.org/download/rebel-ridge-2024/Rebel.Ridge.2024.1080p.mkv")
 
-        for general_url in HIGH_SPEED_MEDIA_CANDIDATES:
-            if general_url not in candidates:
-                candidates.append(general_url)
-
+        # REGLA DE ORO: No añadir candidatos genéricos de otras películas si no coinciden con el título
         return candidates
 
     def _stream_download(self, target_path: Path) -> bool:

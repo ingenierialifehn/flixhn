@@ -305,27 +305,8 @@ class MediaIngestService
             }
         } catch (\Throwable $e) {}
 
-        // Prioridad 3: CDN / Fuentes completas de largometrajes en alta definición
-        $candidates = [
-            'https://archive.org/download/night_of_the_living_dead/night_of_the_living_dead_512kb.mp4',
-            'https://archive.org/download/the-fast-and-the-furious-1954/the-fast-and-the-furious-1954.mp4',
-            'https://archive.org/download/Charade_1963/Charade.mp4',
-        ];
-        foreach ($candidates as $cand) {
-            $headers = @get_headers($cand, 1);
-            if ($headers && (str_contains($headers[0], '200') || str_contains($headers[0], '302'))) {
-                $len = $headers['Content-Length'] ?? 250000000;
-                if (is_array($len)) $len = end($len);
-                return [
-                    'stream_url' => $cand,
-                    'total_bytes' => (int) $len,
-                    'title' => $title,
-                    'type' => 'movie',
-                    'source' => 'cdn'
-                ];
-            }
-        }
-
+        // Si no se encuentra en Emby ni en almacenamiento local verificado, retornar null
+        // REGLA DE ORO: No sustituir jamás por películas genéricas o de terceros de Archive.org
         return null;
     }
 

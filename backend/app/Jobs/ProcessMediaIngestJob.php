@@ -497,8 +497,32 @@ class ProcessMediaIngestJob implements ShouldQueue
         ]);
         $this->syncOttDownloadTask($task);
 
-        // 2. Ejecutar descarga física real con fuentes CDN, yt-dlp o FFmpeg
-        $this->ensurePhysicalFileCreated($outputFile, $task);
+        // 2. Ejecutar resolución y vinculación de archivo físico real
+        $created = $this->ensurePhysicalFileCreated($outputFile, $task);
+
+        // 3. Validar estrictamente que el archivo en disco exista y sea un video auténtico y reproducible (> 20 MB)
+        $fullPath = self::resolveDiskPath($outputFile);
+        if ($fullPath) {
+            clearstatcache(true, $fullPath);
+        }
+
+        $isPlayable = $fullPath && self::isVideoFilePlayable($fullPath);
+        $fileSize = ($fullPath && file_exists($fullPath)) ? @filesize($fullPath) : 0;
+
+        if (!$created || !$isPlayable || $fileSize < 20000000) {
+            if ($fullPath && file_exists($fullPath) && $fileSize < 20000000) {
+                @unlink($fullPath);
+            }
+            $task->update([
+                'status' => 'failed',
+                'error_message' => "El contenido auténtico de '{$task->title}' para la plataforma {$task->provider} no está disponible actualmente en el almacenamiento del servidor. Se rechazan fuentes no oficiales o de YouTube para garantizar contenido 100% real.",
+                'download_speed' => '0.0 MB/s',
+                'eta' => 'Cancelado',
+            ]);
+            $this->syncOttDownloadTask($task);
+            Log::warning("ProcessMediaIngestJob: Tarea #{$task->id} cancelada: contenido real no disponible para '{$task->title}' en {$task->provider}.");
+            return;
+        }
 
         $task->update([
             'progress' => 85,
@@ -506,30 +530,6 @@ class ProcessMediaIngestJob implements ShouldQueue
             'eta' => '00:01 min',
         ]);
         $this->syncOttDownloadTask($task);
-
-        // 3. Validar estrictamente que el archivo en disco exista y sea un video reproducible
-        $fullPath = self::resolveDiskPath($outputFile);
-        if ($fullPath) {
-            clearstatcache(true, $fullPath);
-        }
-
-        // Verificación estricta de reproducción
-
-
-        $isPlayable = $fullPath && self::isVideoFilePlayable($fullPath);
-        $fileSize = ($fullPath && file_exists($fullPath)) ? @filesize($fullPath) : 0;
-
-        if (!$isPlayable) {
-            $task->update([
-                'status' => 'failed',
-                'error_message' => "Validación fallida: El archivo en disco '{$outputFile}' no se pudo crear en almacenamiento local.",
-                'download_speed' => '0.0 MB/s',
-                'eta' => 'Error de archivo',
-            ]);
-            $this->syncOttDownloadTask($task);
-            Log::error("ProcessMediaIngestJob: Fallo en creación de archivo para tarea #{$task->id}.");
-            return;
-        }
 
         // 4. Indexar automáticamente en catálogo oficial On-Net (media_items y titles)
         try {
@@ -595,13 +595,18 @@ class ProcessMediaIngestJob implements ShouldQueue
     /**
      * Asegurar que el archivo de destino exista físicamente en disco y sea un video MP4 completo y reproducible.
      */
-    protected function ensurePhysicalFileCreated(?string $filePath, ?MediaIngestTask $task = null): void
+    /**
+     * Asegurar que el archivo de destino corresponda ESTRICTAMENTE al contenido auténtico del proveedor.
+     * Busca en biblioteca local (/mnt/media_library/Disk2..Disk7), Titles y MediaItems con traducciones.
+     * REGLA DE ORO ESTRICTA: Queda TERMINANTEMENTE PROHIBIDO descargar reseñas de YouTube o películas falsas de Archive.org.
+     */
+    public function ensurePhysicalFileCreated(?string $filePath, ?MediaIngestTask $task = null): bool
     {
-        if (empty($filePath)) return;
+        if (empty($filePath)) return false;
 
         try {
             $diskPath = self::resolveDiskPath($filePath);
-            if (!$diskPath) return;
+            if (!$diskPath) return false;
 
             $dir = dirname($diskPath);
             if (!File::isDirectory($dir)) {
@@ -610,125 +615,148 @@ class ProcessMediaIngestJob implements ShouldQueue
             @chmod($dir, 0777);
 
             clearstatcache(true, $diskPath);
-            if (self::isVideoFilePlayable($diskPath)) {
-                return;
+            if (self::isVideoFilePlayable($diskPath) && @filesize($diskPath) > 20000000) {
+                return true;
             }
 
             if (File::exists($diskPath)) {
                 @unlink($diskPath);
             }
 
-            $downloaded = false;
             $title = trim($task?->title ?? '');
             $provider = strtolower(trim($task?->provider ?? 'netflix'));
-            $escapedOut = escapeshellarg($diskPath);
+            if (empty($title)) return false;
 
-            // Tier 1: Buscar si ya existe una copia de la película/serie en los discos del servidor (/mnt/media_library/Disk2..Disk7)
-            if (!$downloaded && !empty($title)) {
-                try {
-                    $localItem = \App\Models\MediaItem::where('title', 'LIKE', "%{$title}%")
-                        ->orWhere('title', $title)
-                        ->first();
-                    if ($localItem && !empty($localItem->file_path)) {
-                        $sourceDisk = self::resolveDiskPath($localItem->file_path);
-                        if ($sourceDisk && File::exists($sourceDisk) && File::size($sourceDisk) > 20000000) {
-                            @copy($sourceDisk, $diskPath);
-                            clearstatcache(true, $diskPath);
-                            if (self::isVideoFilePlayable($diskPath)) {
-                                $downloaded = true;
-                                Log::info("ProcessMediaIngestJob: Copiado archivo local existente para '{$title}' ({$diskPath})");
+            // 1. Buscar en Titles de la base de datos
+            $matchedTitle = \App\Models\Title::where('name', $title)
+                ->orWhere('name', 'LIKE', "%{$title}%")
+                ->orWhere('original_name', 'LIKE', "%{$title}%")
+                ->first();
+            if ($matchedTitle && !empty($matchedTitle->file_path)) {
+                $source = self::resolveDiskPath($matchedTitle->file_path);
+                if ($source && File::exists($source) && File::size($source) > 20000000 && self::isVideoFilePlayable($source)) {
+                    if (@link($source, $diskPath) || @copy($source, $diskPath)) {
+                        clearstatcache(true, $diskPath);
+                        if (self::isVideoFilePlayable($diskPath)) {
+                            Log::info("ProcessMediaIngestJob: Vinculado archivo local desde Title #{$matchedTitle->id} para '{$title}' ({$diskPath})");
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            // 2. Buscar en MediaItems de la base de datos
+            $localItem = \App\Models\MediaItem::where('title', $title)
+                ->orWhere('title', 'LIKE', "%{$title}%")
+                ->orWhere('original_title', 'LIKE', "%{$title}%")
+                ->first();
+            if ($localItem && !empty($localItem->file_path)) {
+                $source = self::resolveDiskPath($localItem->file_path);
+                if ($source && File::exists($source) && File::size($source) > 20000000 && self::isVideoFilePlayable($source)) {
+                    if (@link($source, $diskPath) || @copy($source, $diskPath)) {
+                        clearstatcache(true, $diskPath);
+                        if (self::isVideoFilePlayable($diskPath)) {
+                            Log::info("ProcessMediaIngestJob: Vinculado archivo local desde MediaItem #{$localItem->id} para '{$title}' ({$diskPath})");
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            // 3. Mapeo de traducciones y variantes para búsqueda en almacenamiento local (/mnt/media_library/Disk2..Disk7)
+            $searchVariants = [$title];
+            $clean = trim(preg_replace('/[0-9]{4}|\(.*?\)|\[.*?\]/', '', $title));
+            if (!empty($clean) && $clean !== $title) $searchVariants[] = $clean;
+
+            $translations = [
+                'hawkeye' => ['Hawkeye Marvel', 'Hawkeye'],
+                'loki' => ['Loki'],
+                'moon knight' => ['Caballero Luna', 'Moon Knight'],
+                'caballero luna' => ['Caballero Luna', 'Moon Knight'],
+                'secret invasion' => ['Invasión Secreta', 'Invasion Secreta', 'Secret Invasion'],
+                'invasion secreta' => ['Invasión Secreta', 'Invasion Secreta', 'Secret Invasion'],
+                'invasión secreta' => ['Invasión Secreta', 'Invasion Secreta', 'Secret Invasion'],
+                'boba fett' => ['EL LIBRO DE BODA FETT', 'El Libro de Boba Fett', 'The Book of Boba Fett'],
+                'ms. marvel' => ['Ms. Marvel', 'Ms Marvel'],
+                'the mentalist' => ['El Mentalista', 'The Mentalist'],
+                'el mentalista' => ['El Mentalista', 'The Mentalist'],
+                'squid game' => ['El juego del calamar', 'Squid Game'],
+                'el juego del calamar' => ['El juego del calamar', 'Squid Game'],
+                'stranger things' => ['Stranger Things'],
+                'rebelde' => ['REBELDE NETFLIX', 'Rebelde'],
+                'dahmer' => ['Monstruo: La Historia De Jeffrey Dahmer', 'Dahmer'],
+                'the last of us' => ['The Last of Us'],
+                'house of the dragon' => ['La Casa del Dragon', 'House of the Dragon'],
+                'la casa del dragón' => ['La Casa del Dragon', 'House of the Dragon'],
+                'rings of power' => ['El Señor de los Anillos: Los Anillos de Poder', 'The Rings of Power'],
+                'anillos de poder' => ['El Señor de los Anillos: Los Anillos de Poder', 'The Rings of Power'],
+                'invencible' => ['INVENCIBLE', 'Invincible'],
+                'invincible' => ['INVENCIBLE', 'Invincible'],
+                'peacemaker' => ['EL PACIFICADOR', 'Peacemaker'],
+                'el pacificador' => ['EL PACIFICADOR', 'Peacemaker'],
+                'lupin' => ['Lupin'],
+                'into the night' => ['Into the Night'],
+            ];
+
+            $lowTitle = mb_strtolower($title);
+            foreach ($translations as $k => $transList) {
+                if (str_contains($lowTitle, $k)) {
+                    foreach ($transList as $tl) $searchVariants[] = $tl;
+                }
+            }
+            $searchVariants = array_unique(array_filter($searchVariants));
+
+            $disks = [
+                '/mnt/media_library/Disk4',
+                '/mnt/media_library/Disk2',
+                '/mnt/media_library/Disk5',
+                '/mnt/media_library/Disk3',
+                '/mnt/media_library/Disk6',
+                '/mnt/media_library/Disk7',
+            ];
+
+            foreach ($disks as $d) {
+                if (!File::isDirectory($d)) continue;
+                foreach ($searchVariants as $sv) {
+                    $escapedDisk = escapeshellarg($d);
+                    $escapedSv = escapeshellarg("*{$sv}*");
+                    $findOut = @shell_exec("find {$escapedDisk} -maxdepth 4 -iname {$escapedSv} 2>/dev/null");
+                    if (empty($findOut)) continue;
+
+                    $lines = array_filter(array_map('trim', explode("\n", $findOut)));
+                    foreach ($lines as $match) {
+                        if (File::isDirectory($match)) {
+                            $videoFile = @shell_exec("find " . escapeshellarg($match) . " -type f \\( -name '*.mp4' -o -name '*.mkv' -o -name '*.avi' -o -name '*.ts' \\) ! -name '.*' | sort | head -n 1");
+                            $videoFile = trim((string) $videoFile);
+                            if ($videoFile && File::exists($videoFile) && File::size($videoFile) > 20000000 && self::isVideoFilePlayable($videoFile)) {
+                                if (@link($videoFile, $diskPath) || @copy($videoFile, $diskPath)) {
+                                    clearstatcache(true, $diskPath);
+                                    if (self::isVideoFilePlayable($diskPath)) {
+                                        Log::info("ProcessMediaIngestJob: Encontrado contenido real en disco {$match} -> {$videoFile}");
+                                        return true;
+                                    }
+                                }
+                            }
+                        } elseif (File::isFile($match) && File::size($match) > 20000000 && self::isVideoFilePlayable($match)) {
+                            if (@link($match, $diskPath) || @copy($match, $diskPath)) {
+                                clearstatcache(true, $diskPath);
+                                if (self::isVideoFilePlayable($diskPath)) {
+                                    Log::info("ProcessMediaIngestJob: Encontrado archivo de video real en disco {$match}");
+                                    return true;
+                                }
                             }
                         }
                     }
-                } catch (\Throwable $e) {}
-            }
-
-            // Tier 2: Descarga con yt-dlp buscando video COMPLETO en HD (evitando trailers, intros o clips cortos)
-            if (!$downloaded && !empty($title)) {
-                $isSeries = ($task?->provider === 'series')
-                    || ($provider === 'series')
-                    || str_contains(strtolower($filePath), '/series/')
-                    || str_contains(strtolower($task?->target_folder ?? ''), '/series/');
-
-                $minDuration = $isSeries ? 1200 : 2700; // Al menos 20 min para serie, 45 min para película
-
-                if ($isSeries) {
-                    $queries = [
-                        "ytsearch5:{$title} capitulo 1 completo espanol latino",
-                        "ytsearch5:{$title} temporada 1 capitulo 1 completo",
-                        "ytsearch5:{$title} capitulo 1 completo",
-                        "ytsearch5:{$title} episode 1 full",
-                        "ytsearch5:{$title} full episode",
-                    ];
-                } else {
-                    $queries = [
-                        "ytsearch5:{$title} pelicula completa en espanol latino",
-                        "ytsearch5:{$title} pelicula completa espanol",
-                        "ytsearch5:{$title} pelicula completa",
-                        "ytsearch5:{$title} full movie english",
-                        "ytsearch5:{$title} full movie",
-                    ];
-                }
-
-                foreach ($queries as $q) {
-                    $sq = escapeshellarg($q);
-                    Log::info("ProcessMediaIngestJob: Buscando contenido COMPLETO con yt-dlp [{$sq}] (duración mínima {$minDuration}s)");
-                    // Filtro estricto: rechaza videos cortos (trailers, clips, intros) y directos
-                    @shell_exec("yt-dlp --newline --no-colors --socket-timeout 30 --max-filesize 3500M --match-filter \"duration >= {$minDuration} & !is_live\" -f 'best[ext=mp4]/best' --no-playlist -o {$escapedOut} {$sq} 2>&1");
-                    clearstatcache(true, $diskPath);
-
-                    if (self::isVideoFilePlayable($diskPath)) {
-                        $actualDur = self::getVideoDuration($diskPath);
-                        if ($actualDur >= $minDuration || @filesize($diskPath) > 100000000) {
-                            $downloaded = true;
-                            Log::info("ProcessMediaIngestJob: Video COMPLETO auténtico descargado con yt-dlp para '{$diskPath}' (Duración: {$actualDur}s, Tamaño: " . filesize($diskPath) . " bytes)");
-                            break;
-                        } else {
-                            Log::warning("ProcessMediaIngestJob: Video descargado descartado por ser intro/trailer ({$actualDur}s < {$minDuration}s)");
-                            @unlink($diskPath);
-                        }
-                    }
                 }
             }
 
-            // Tier 3: Descarga de respaldo de película completa pública de alta calidad (largometrajes > 70 min)
-            if (!$downloaded) {
-                $cdnCandidates = [
-                    'https://archive.org/download/night_of_the_living_dead/night_of_the_living_dead_512kb.mp4',
-                    'https://archive.org/download/the-fast-and-the-furious-1954/the-fast-and-the-furious-1954.mp4',
-                    'https://archive.org/download/Charade_1963/Charade.mp4',
-                ];
-                foreach ($cdnCandidates as $cdnUrl) {
-                    $escapedCdn = escapeshellarg($cdnUrl);
-                    @shell_exec("curl -L --fail --connect-timeout 20 -o {$escapedOut} {$escapedCdn} 2>&1");
-                    clearstatcache(true, $diskPath);
-                    if (self::isVideoFilePlayable($diskPath) && @filesize($diskPath) > 50000000) {
-                        $downloaded = true;
-                        Log::info("ProcessMediaIngestJob: Película completa CDN descargada para '{$diskPath}' (" . filesize($diskPath) . " bytes)");
-                        break;
-                    }
-                }
-            }
-
-            // Tier 4: Generación garantizada de MP4 1080p con duración cinematográfica completa
-            if (!$downloaded) {
-                $isSeries = ($task?->provider === 'series') || ($provider === 'series') || str_contains(strtolower($filePath), '/series/');
-                $fullDur = $task?->duration_seconds ?: ($isSeries ? 3000 : 5400);
-                Log::info("ProcessMediaIngestJob: Sintetizando contenedor MP4 1080p completo ({$fullDur}s) con FFmpeg para {$diskPath}");
-                @shell_exec("ffmpeg -y -f lavfi -i testsrc=duration={$fullDur}:size=1920x1080:rate=30 -f lavfi -i sine=frequency=440:duration={$fullDur} -c:v libx264 -preset ultrafast -b:v 2500k -pix_fmt yuv420p -c:a aac -b:a 192k -movflags +faststart {$escapedOut} 2>&1");
-                clearstatcache(true, $diskPath);
-                if (self::isVideoFilePlayable($diskPath)) {
-                    $downloaded = true;
-                    Log::info("ProcessMediaIngestJob: Video completo sintetizado generado para {$diskPath}");
-                }
-            }
-
-
-            if (File::exists($diskPath)) {
-                @chmod($diskPath, 0666);
-            }
+            // 4. Si el contenido no se encuentra en el almacenamiento real:
+            // REGLA DE ORO ESTRICTA: NO descargar jamás reseñas/videos de YouTube ni sustituir películas falsas.
+            Log::warning("ProcessMediaIngestJob: No se encontró contenido real para '{$title}' en la plataforma {$provider}. No se descargará contenido falso.");
+            return false;
         } catch (\Throwable $e) {
-            Log::warning("No se pudo crear archivo físico para {$filePath}: " . $e->getMessage());
+            Log::warning("ProcessMediaIngestJob error al buscar contenido para {$filePath}: " . $e->getMessage());
+            return false;
         }
     }
 
@@ -772,13 +800,7 @@ class ProcessMediaIngestJob implements ShouldQueue
 
         }
 
-        // Películas completas auténticas de alta definición (dominio público / licencias abiertas)
-
-        $candidates[] = 'https://archive.org/download/Sita_Sings_the_Blues_1080p/Sita_Sings_the_Blues_1080p.mp4';
-
-        $candidates[] = 'https://archive.org/download/CosmosLaundromatFirstCycle/Cosmos_Laundromat_First_Cycle_1080p.mp4';
-
-        return $candidates;
+        return array_unique(array_filter($candidates));
 
     }
 
