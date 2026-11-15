@@ -50,14 +50,20 @@ class TitleController extends Controller
             ->take(60)
             ->get()
             ->map(function ($item) {
+                $hasFile = false;
+                if (!empty($item->file_path)) {
+                    $resolved = \App\Jobs\ProcessMediaIngestJob::resolveDiskPath($item->file_path);
+                    $hasFile = $resolved && file_exists($resolved) && filesize($resolved) > 102400;
+                }
                 $item->title = $item->name;
                 $item->year = $item->release_year;
                 $item->overview = $item->description;
                 $item->media_type = $item->type;
-                $item->is_already_downloaded = true;
-                $item->is_available_locally = true;
-                $item->is_ott = false;
-                $item->status = 'En Catálogo';
+                $item->is_already_downloaded = $hasFile;
+                $item->is_available_locally = $hasFile;
+                $item->is_ott = !$hasFile;
+                $item->is_downloaded = $hasFile;
+                $item->status = $hasFile ? 'En Catálogo' : 'Disponible OTT';
                 return $item;
             });
 
@@ -78,22 +84,28 @@ class TitleController extends Controller
                         } catch (\Throwable $e) {}
                     }
 
-                    // Nombres locales existentes en minúsculas para evitar duplicados
-                    $localNames = $matched->map(fn($t) => mb_strtolower(trim($t->name ?? '')))->toArray();
-
                     foreach ($ottRaw as $item) {
                         $itemTitle = trim($item['title'] ?? '');
                         if (empty($itemTitle)) continue;
 
                         $itemTitleLower = mb_strtolower($itemTitle);
-                        if (in_array($itemTitleLower, $localNames)) {
+
+                        // Si ya está en los resultados coincidentes y ya está descargado físicamente, omitir
+                        $existingLocal = $matched->first(function ($t) use ($itemTitleLower) {
+                            return mb_strtolower(trim($t->name ?? '')) === $itemTitleLower;
+                        });
+
+                        if ($existingLocal && $existingLocal->is_already_downloaded) {
                             continue;
                         }
 
-                        // Verificar si existe en la base de datos completa de títulos
-                        $existsInDb = Title::where('name', $itemTitle)->exists();
-                        if ($existsInDb) {
-                            continue;
+                        // Verificar si existe en la base de datos completa de títulos con archivo físico válido
+                        $dbTitle = Title::where('name', $itemTitle)->first();
+                        if ($dbTitle && !empty($dbTitle->file_path)) {
+                            $resolved = \App\Jobs\ProcessMediaIngestJob::resolveDiskPath($dbTitle->file_path);
+                            if ($resolved && file_exists($resolved) && filesize($resolved) > 102400) {
+                                continue;
+                            }
                         }
 
                         $providerKey = strtolower($item['provider'] ?? 'netflix');

@@ -624,11 +624,14 @@ class MediaStreamController extends Controller
 
             foreach ($standardDisks as $disk) {
                 $candidates[] = "{$disk}/{$fileName}";
+                $candidates[] = "{$disk}/FlixHN/{$fileName}";
                 if (!empty($subPath) && $subPath !== $fileName) {
                     $candidates[] = "{$disk}/{$subPath}";
+                    $candidates[] = "{$disk}/FlixHN/{$subPath}";
                 }
                 if (!empty($parentDir) && $parentDir !== '.' && $parentDir !== '/' && !str_starts_with($parentDir, 'Disk')) {
                     $candidates[] = "{$disk}/{$parentDir}/{$fileName}";
+                    $candidates[] = "{$disk}/FlixHN/{$parentDir}/{$fileName}";
                 }
             }
 

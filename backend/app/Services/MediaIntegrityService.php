@@ -79,6 +79,8 @@ class MediaIntegrityService
         if (!empty($parentDir) && $parentDir !== '.' && $parentDir !== '/') {
             foreach ($this->standardDisks as $disk) {
                 $candidates[] = "{$disk}/{$parentDir}/{$fileName}";
+                $candidates[] = "{$disk}/FlixHN/{$parentDir}/{$fileName}";
+                $candidates[] = "{$disk}/FlixHN/{$fileName}";
             }
             $candidates[] = storage_path("media/{$parentDir}/{$fileName}");
             $candidates[] = "/var/www/html/storage/media/{$parentDir}/{$fileName}";

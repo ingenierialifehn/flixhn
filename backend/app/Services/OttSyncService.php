@@ -187,34 +187,134 @@ class OttSyncService
 
         $normalized = self::normalizePlatformKey($platform);
 
-        // Si se especifico una plataforma particular pero no es valida en la configuracion
-        if ($normalized !== null && !isset(self::$platforms_config[$normalized])) {
+        // Si se especificó una plataforma particular pero no es válida en la configuración
+        if ($platform !== null && $platform !== 'all' && $normalized === null && !isset(self::$platforms_config[$normalized])) {
             return [];
         }
 
-        // Si se especifico una plataforma particular valida, ejecutar la busqueda directamente
-        if ($normalized !== null) {
+        // Si se especificó una plataforma particular válida, ejecutar la búsqueda directamente
+        if ($normalized !== null && $platform !== 'all') {
             return self::executePlatformSearch($cleanQuery, $normalized);
         }
 
-        // Si no se especifico plataforma (es null o 'all'), buscar en todas las plataformas soportadas/conectadas
-        $connectedPlatforms = self::getActiveConnectedPlatforms();
-        $targetPlatforms = !empty($connectedPlatforms)
-            ? $connectedPlatforms
-            : ['netflix', 'amazon_prime', 'disney_plus', 'hbo_max', 'apple_tv', 'paramount'];
+        // Si no se especificó plataforma (es null o 'all'), buscar en TODAS las plataformas soportadas
+        // garantizando cobertura completa de Disney+, Netflix, Amazon Prime, HBO Max, Paramount y Apple TV
+        $targetPlatforms = ['netflix', 'disney_plus', 'amazon_prime', 'hbo_max', 'apple_tv', 'paramount'];
+
+        return self::searchRemoteOttCatalogMulti($cleanQuery, $targetPlatforms);
+    }
+
+    /**
+     * Búsqueda paralela ultra-rápida vía GraphQL Http::pool en todas las plataformas principales
+     */
+    public static function searchRemoteOttCatalogMulti(string $query, array $platforms): array
+    {
+        $cleanQ = trim($query);
+        if ($cleanQ === '') {
+            return [];
+        }
+
+        $gql = 'query GetSearchTitles($country: Country!, $searchFilter: TitleFilter!) { popularTitles(country: $country, filter: $searchFilter, first: 15) { edges { node { id objectId objectType content(country: $country, language: "es") { title originalTitle originalReleaseYear shortDescription posterUrl } } } } }';
+
+        $responses = [];
+        try {
+            $responses = Http::pool(function ($pool) use ($platforms, $cleanQ, $gql) {
+                $reqs = [];
+                foreach ($platforms as $platform) {
+                    $normPlatform = self::normalizePlatformKey($platform) ?: $platform;
+                    $pkg = self::resolvePlatformPackageKey($normPlatform);
+                    $country = self::resolveCountryForPlatform($normPlatform);
+
+                    $reqs[$normPlatform] = $pool->as($normPlatform)
+                        ->timeout(8)
+                        ->withHeaders([
+                            'Content-Type' => 'application/json',
+                            'User-Agent'   => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        ])
+                        ->post('https://apis.justwatch.com/graphql', [
+                            'query'     => $gql,
+                            'variables' => [
+                                'country'      => $country,
+                                'searchFilter' => [
+                                    'searchQuery' => $cleanQ,
+                                    'packages'    => [$pkg],
+                                ],
+                            ],
+                        ]);
+                }
+                return $reqs;
+            });
+        } catch (\Throwable $e) {
+            Log::warning("searchRemoteOttCatalogMulti Http::pool exception: " . $e->getMessage());
+        }
 
         $aggregatedResults = [];
         $seen = [];
-        foreach ($targetPlatforms as $connProv) {
-            $provResults = self::executePlatformSearch($cleanQuery, $connProv);
-            if (!empty($provResults)) {
-                foreach ($provResults as $item) {
-                    $key = ($item['title'] ?? '') . '_' . ($item['year'] ?? '');
-                    if (!isset($seen[$key])) {
-                        $seen[$key] = true;
-                        $aggregatedResults[] = $item;
-                    }
+
+        foreach ($responses as $normPlatform => $resp) {
+            if (!$resp || !method_exists($resp, 'successful') || !$resp->successful()) {
+                continue;
+            }
+
+            $edges = data_get($resp->json(), 'data.popularTitles.edges', []);
+            if (!is_array($edges)) {
+                continue;
+            }
+
+            foreach ($edges as $edge) {
+                $node = $edge['node'] ?? null;
+                if (!$node) continue;
+
+                $content = $node['content'] ?? [];
+                $title = trim((string)($content['title'] ?? ''));
+                if ($title === '') continue;
+
+                $key = mb_strtolower($title) . '_' . ($content['originalReleaseYear'] ?? '');
+                if (isset($seen[$key])) continue;
+                $seen[$key] = true;
+
+                $origTitle = (string)($content['originalTitle'] ?? $title);
+                $objectId = (string)($node['objectId'] ?? $node['id'] ?? uniqid());
+                $objType = strtolower((string)($node['objectType'] ?? 'movie'));
+                $mediaType = str_contains($objType, 'show') || str_contains($objType, 'series') || $objType === 'tv' ? 'series' : 'movie';
+                $year = (int)($content['originalReleaseYear'] ?? date('Y'));
+                $desc = (string)($content['shortDescription'] ?? '');
+
+                $posterUrl = (string)($content['posterUrl'] ?? '');
+                $poster = '';
+                if ($posterUrl !== '') {
+                    $poster = 'https://images.justwatch.com' . str_replace(['{profile}', '.{format}'], ['s592', '.jpg'], $posterUrl);
                 }
+
+                $item = [
+                    'id'             => 'ott_' . $normPlatform . '_' . $objectId,
+                    'unique_id'      => 'ott_' . $normPlatform . '_' . $objectId,
+                    'title'          => $title,
+                    'name'           => $title,
+                    'original_title' => $origTitle,
+                    'type'           => $mediaType,
+                    'media_type'     => $mediaType,
+                    'year'           => $year,
+                    'release_year'   => $year,
+                    'poster'         => $poster,
+                    'poster_url'     => $poster,
+                    'backdrop_url'   => $poster,
+                    'platform'       => $normPlatform,
+                    'provider'       => $normPlatform,
+                    'overview'       => $desc,
+                    'synopsis'       => $desc,
+                    'description'    => $desc,
+                    'status'         => 'remote_catalog',
+                    'available'      => false,
+                    'is_ott'         => true,
+                    'is_downloaded'  => false,
+                    'is_already_downloaded' => false,
+                    'is_available_locally' => false,
+                    'localFilePath'  => null,
+                ];
+
+                self::crossReferenceAvailability($item);
+                $aggregatedResults[] = $item;
             }
         }
 
@@ -1543,8 +1643,14 @@ class OttSyncService
             }
         })->first();
 
+        $checkDiskFile = function (?string $path): bool {
+            if (empty($path)) return false;
+            $res = \App\Jobs\ProcessMediaIngestJob::resolveDiskPath($path);
+            return $res && file_exists($res) && !is_dir($res) && @filesize($res) > 102400;
+        };
+
         if ($mediaItem) {
-            $isDownloaded = true;
+            $isDownloaded = $checkDiskFile($mediaItem->file_path);
             $titleId = $mediaItem->title_id;
         }
 
@@ -1555,8 +1661,9 @@ class OttSyncService
 
             if ($catalogTitle) {
                 $titleId = $catalogTitle->id;
-                if (!empty($catalogTitle->stream_path) || !empty($catalogTitle->source_path)) {
-                    $isDownloaded = true;
+                $candidatePath = $catalogTitle->file_path ?: ($catalogTitle->source_path ?: $catalogTitle->stream_path);
+                if (!empty($candidatePath) && !str_starts_with($candidatePath, '/api/')) {
+                    $isDownloaded = $checkDiskFile($candidatePath);
                 }
             }
         }
@@ -1565,7 +1672,7 @@ class OttSyncService
             $ingestTask = MediaIngestTask::where('title', 'LIKE', $title)->orderBy('id', 'desc')->first();
             if ($ingestTask) {
                 if ($ingestTask->status === 'completed' || $ingestTask->progress >= 100) {
-                    $isDownloaded = true;
+                    $isDownloaded = $checkDiskFile($ingestTask->output_file);
                     if (!$titleId) $titleId = $ingestTask->title_id;
                     $item['localFilePath'] = $ingestTask->output_file;
                     $item['filePath'] = $ingestTask->output_file;
@@ -1583,7 +1690,7 @@ class OttSyncService
             $ottTask = OttDownloadTask::where('title', 'LIKE', $title)->orderBy('id', 'desc')->first();
             if ($ottTask) {
                 if ($ottTask->status === 'completed' || $ottTask->progress >= 100) {
-                    $isDownloaded = true;
+                    $isDownloaded = $checkDiskFile($ottTask->file_path);
                     $item['localFilePath'] = $ottTask->file_path;
                     $item['filePath'] = $ottTask->file_path;
                     $item['file_path'] = $ottTask->file_path;
