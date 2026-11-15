@@ -55,12 +55,26 @@ class FlixGrabDaemonService
                         $pid = $candidatePid;
                         $isRunning = true;
                         break;
-                    } else {
-                        // Limpiar PID huérfano si el proceso ya no existe
-                        @unlink($candidate);
                     }
                 }
             }
+        }
+
+        // Auto-detección del daemon si está corriendo pero el archivo PID no fue encontrado
+        if (!$isRunning && PHP_OS_FAMILY !== 'Windows') {
+            try {
+                $pgrepOut = @shell_exec("pgrep -f 'flixgrab:daemon run' 2>/dev/null");
+                $pgrepLines = array_filter(array_map('trim', explode("\n", (string) $pgrepOut)));
+                foreach ($pgrepLines as $p) {
+                    if (is_numeric($p) && (int)$p > 0 && (int)$p !== getmypid()) {
+                        $pid = (int)$p;
+                        $isRunning = true;
+                        @File::put($this->pidFile, (string) $pid);
+                        @chmod($this->pidFile, 0666);
+                        break;
+                    }
+                }
+            } catch (\Throwable $e) {}
         }
 
         $activeTasks = OttDownloadTask::whereIn('status', ['pending', 'downloading'])->count();
@@ -173,24 +187,32 @@ class FlixGrabDaemonService
 
         try {
             while (true) {
+                // Asegurar persistencia del PID file
+                if (!File::exists($this->pidFile)) {
+                    @File::put($this->pidFile, (string) $pid);
+                    @chmod($this->pidFile, 0666);
+                }
+
                 $now = time();
 
                 // 1. Escaneo de cuentas OTT conectadas cada 30 segundos
                 if (($now - $lastAccountCheck) >= 30) {
-                    $this->syncConnectedAccountsAutoDownload();
+                    try {
+                        $this->syncConnectedAccountsAutoDownload();
+                    } catch (\Throwable $e) {
+                        Log::warning("FlixGrab Daemon error en syncConnectedAccounts: " . $e->getMessage());
+                    }
                     $lastAccountCheck = $now;
                 }
 
                 // 2. Procesar tareas de descarga pendientes
-                $this->processPendingTasks();
-
-                if ($runOnce) {
-                    break;
+                try {
+                    $this->processPendingTasks();
+                } catch (\Throwable $e) {
+                    Log::error("FlixGrab Daemon error en processPendingTasks: " . $e->getMessage());
                 }
 
-                // Verificar si se eliminó el archivo PID para salir limpiamente
-                if (!File::exists($this->pidFile)) {
-                    Log::info("PID file removido. Deteniendo loop del FlixGrab Daemon.");
+                if ($runOnce) {
                     break;
                 }
 
@@ -366,11 +388,25 @@ class FlixGrabDaemonService
         }
 
         if (function_exists('posix_kill')) {
-            return @posix_kill($pid, 0);
+            if (@posix_kill($pid, 0)) {
+                return true;
+            }
+            if (function_exists('posix_get_last_error') && posix_get_last_error() === 1) { // 1 = EPERM (proceso activo de otro usuario)
+                return true;
+            }
         }
 
-        // Linux / Docker
-        return file_exists("/proc/{$pid}");
+        // Verificación directa en /proc de Linux
+        if (file_exists("/proc/{$pid}")) {
+            return true;
+        }
+
+        try {
+            $psCheck = @shell_exec("ps -p {$pid} -o pid= 2>/dev/null");
+            return !empty(trim((string) $psCheck));
+        } catch (\Throwable $e) {
+            return false;
+        }
     }
 
     /**

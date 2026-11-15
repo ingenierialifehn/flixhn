@@ -213,6 +213,22 @@ class MediaIngestService
                     $itemId = $item['Id'] ?? null;
                     if (!$itemId) continue;
 
+                    // Si el archivo físico de Emby existe en almacenamiento local (/mnt/media_library/):
+                    $rawItemPath = $item['Path'] ?? ($item['MediaSources'][0]['Path'] ?? '');
+                    if (!empty($rawItemPath)) {
+                        $mappedDisk = str_replace('/home/server01/', '/mnt/media_library/', $rawItemPath);
+                        if (file_exists($mappedDisk) && filesize($mappedDisk) > 20000000) {
+                            return [
+                                'stream_url' => $mappedDisk,
+                                'total_bytes' => filesize($mappedDisk),
+                                'title' => $item['Name'] ?? $title,
+                                'type' => strtolower($type),
+                                'item_id' => $itemId,
+                                'source' => 'emby_local_disk'
+                            ];
+                        }
+                    }
+
                     if ($type === 'Series') {
                         $epUrl = "{$serverUrl}/emby/Shows/{$itemId}/Episodes?api_key={$apiKey}";
                         $epRes = @file_get_contents($epUrl, false, $ctx);
@@ -274,6 +290,9 @@ class MediaIngestService
                     ->first();
                 if ($localMedia && !empty($localMedia->file_path)) {
                     $res = ProcessMediaIngestJob::resolveDiskPath($localMedia->file_path);
+                    if ($res && is_dir($res)) {
+                        $res = ProcessMediaIngestJob::findFirstPlayableVideoInDirectory($res);
+                    }
                     if ($res && file_exists($res) && filesize($res) > 20000000) {
                         return [
                             'stream_url' => $res,
@@ -286,9 +305,23 @@ class MediaIngestService
                 }
 
                 $localTitle = Title::where('name', 'LIKE', "%{$st}%")
-                    ->orWhere('original_name', 'LIKE', "%{$st}%")
-                    ->whereNotNull('stream_path')
+                    ->orWhere('slug', 'LIKE', "%" . Str::slug($st) . "%")
                     ->first();
+                if ($localTitle && !empty($localTitle->file_path)) {
+                    $res = ProcessMediaIngestJob::resolveDiskPath($localTitle->file_path);
+                    if ($res && is_dir($res)) {
+                        $res = ProcessMediaIngestJob::findFirstPlayableVideoInDirectory($res);
+                    }
+                    if ($res && file_exists($res) && filesize($res) > 20000000) {
+                        return [
+                            'stream_url' => $res,
+                            'total_bytes' => filesize($res),
+                            'title' => $localTitle->name,
+                            'type' => $localTitle->type ?: 'movie',
+                            'source' => 'local_disk'
+                        ];
+                    }
+                }
                 if ($localTitle && !empty($localTitle->stream_path)) {
                     $path = $localTitle->stream_path;
                     $resolved = ProcessMediaIngestJob::resolveDiskPath($path);
