@@ -2,8 +2,8 @@
 
 namespace App\Console\Commands;
 
-use App\Models\Channel;
 use App\Models\Episode;
+use App\Models\IptvChannel;
 use App\Models\MediaIngestTask;
 use App\Models\MediaItem;
 use App\Models\OttDownloadTask;
@@ -64,8 +64,8 @@ class FixOttPipelineCommand extends Command
             $this->line("MediaItem #{$m->id}: {$m->title} File: {$m->file_path}");
         }
 
-        $channels = Channel::where('name', 'LIKE', "%{$q}%")->get(['id', 'name', 'stream_url']);
-        $this->info("Channels encontrados: " . $channels->count());
+        $channels = IptvChannel::where('name', 'LIKE', "%{$q}%")->get(['id', 'name', 'stream_url']);
+        $this->info("IptvChannels encontrados: " . $channels->count());
         foreach ($channels as $c) {
             $this->line("Channel #{$c->id}: {$c->name} URL: {$c->stream_url}");
         }
