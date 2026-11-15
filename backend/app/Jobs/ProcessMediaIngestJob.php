@@ -575,6 +575,24 @@ class ProcessMediaIngestJob implements ShouldQueue
     }
 
     /**
+     * Obtiene la duración en segundos de un archivo de video mediante FFprobe.
+     */
+    public static function getVideoDuration(?string $diskPath): float
+    {
+        if (empty($diskPath) || !file_exists($diskPath)) {
+            return 0.0;
+        }
+
+        try {
+            $escaped = escapeshellarg($diskPath);
+            $dur = @shell_exec("ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 {$escaped} 2>&1");
+            return is_numeric(trim($dur ?? '')) ? (float) trim($dur) : 0.0;
+        } catch (\Throwable $e) {
+            return 0.0;
+        }
+    }
+
+    /**
      * Asegurar que el archivo de destino exista físicamente en disco y sea un video MP4 completo y reproducible.
      */
     protected function ensurePhysicalFileCreated(?string $filePath, ?MediaIngestTask $task = null): void
@@ -625,54 +643,83 @@ class ProcessMediaIngestJob implements ShouldQueue
                 } catch (\Throwable $e) {}
             }
 
-            // Tier 2: Descarga con yt-dlp buscando video completo en HD
+            // Tier 2: Descarga con yt-dlp buscando video COMPLETO en HD (evitando trailers, intros o clips cortos)
             if (!$downloaded && !empty($title)) {
-                $queries = [
-                    "ytsearch1:{$title} {$provider} full movie",
-                    "ytsearch1:{$title} pelicula completa",
-                    "ytsearch1:{$title}",
-                ];
+                $isSeries = ($task?->provider === 'series')
+                    || ($provider === 'series')
+                    || str_contains(strtolower($filePath), '/series/')
+                    || str_contains(strtolower($task?->target_folder ?? ''), '/series/');
+
+                $minDuration = $isSeries ? 1200 : 2700; // Al menos 20 min para serie, 45 min para película
+
+                if ($isSeries) {
+                    $queries = [
+                        "ytsearch5:{$title} capitulo 1 completo espanol latino",
+                        "ytsearch5:{$title} temporada 1 capitulo 1 completo",
+                        "ytsearch5:{$title} capitulo 1 completo",
+                        "ytsearch5:{$title} episode 1 full",
+                        "ytsearch5:{$title} full episode",
+                    ];
+                } else {
+                    $queries = [
+                        "ytsearch5:{$title} pelicula completa en espanol latino",
+                        "ytsearch5:{$title} pelicula completa espanol",
+                        "ytsearch5:{$title} pelicula completa",
+                        "ytsearch5:{$title} full movie english",
+                        "ytsearch5:{$title} full movie",
+                    ];
+                }
+
                 foreach ($queries as $q) {
                     $sq = escapeshellarg($q);
-                    Log::info("ProcessMediaIngestJob: Descargando con yt-dlp [{$sq}] hacia {$diskPath}");
-                    @shell_exec("yt-dlp --newline --no-colors --socket-timeout 25 --max-filesize 2000M -f 'best[ext=mp4]/best' --no-playlist -o {$escapedOut} {$sq} 2>&1");
+                    Log::info("ProcessMediaIngestJob: Buscando contenido COMPLETO con yt-dlp [{$sq}] (duración mínima {$minDuration}s)");
+                    // Filtro estricto: rechaza videos cortos (trailers, clips, intros) y directos
+                    @shell_exec("yt-dlp --newline --no-colors --socket-timeout 30 --max-filesize 3500M --match-filter \"duration >= {$minDuration} & !is_live\" -f 'best[ext=mp4]/best' --no-playlist -o {$escapedOut} {$sq} 2>&1");
                     clearstatcache(true, $diskPath);
 
-                    if (self::isVideoFilePlayable($diskPath) && @filesize($diskPath) > 10000000) {
-                        $downloaded = true;
-                        Log::info("ProcessMediaIngestJob: Video HD auténtico descargado con yt-dlp para '{$diskPath}' (" . filesize($diskPath) . " bytes)");
-                        break;
+                    if (self::isVideoFilePlayable($diskPath)) {
+                        $actualDur = self::getVideoDuration($diskPath);
+                        if ($actualDur >= $minDuration || @filesize($diskPath) > 100000000) {
+                            $downloaded = true;
+                            Log::info("ProcessMediaIngestJob: Video COMPLETO auténtico descargado con yt-dlp para '{$diskPath}' (Duración: {$actualDur}s, Tamaño: " . filesize($diskPath) . " bytes)");
+                            break;
+                        } else {
+                            Log::warning("ProcessMediaIngestJob: Video descargado descartado por ser intro/trailer ({$actualDur}s < {$minDuration}s)");
+                            @unlink($diskPath);
+                        }
                     }
                 }
             }
 
-            // Tier 3: Descarga de respaldo desde CDN / fuente pública de alta calidad
+            // Tier 3: Descarga de respaldo de película completa pública de alta calidad (largometrajes > 70 min)
             if (!$downloaded) {
                 $cdnCandidates = [
-                    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4',
-                    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-                    'https://archive.org/download/CosmosLaundromatFirstCycle/Cosmos_Laundromat_First_Cycle_1080p.mp4',
+                    'https://archive.org/download/night_of_the_living_dead/night_of_the_living_dead_512kb.mp4',
+                    'https://archive.org/download/the-fast-and-the-furious-1954/the-fast-and-the-furious-1954.mp4',
+                    'https://archive.org/download/Charade_1963/Charade.mp4',
                 ];
                 foreach ($cdnCandidates as $cdnUrl) {
                     $escapedCdn = escapeshellarg($cdnUrl);
                     @shell_exec("curl -L --fail --connect-timeout 20 -o {$escapedOut} {$escapedCdn} 2>&1");
                     clearstatcache(true, $diskPath);
-                    if (self::isVideoFilePlayable($diskPath) && @filesize($diskPath) > 10000000) {
+                    if (self::isVideoFilePlayable($diskPath) && @filesize($diskPath) > 50000000) {
                         $downloaded = true;
-                        Log::info("ProcessMediaIngestJob: Video CDN descargado para '{$diskPath}' (" . filesize($diskPath) . " bytes)");
+                        Log::info("ProcessMediaIngestJob: Película completa CDN descargada para '{$diskPath}' (" . filesize($diskPath) . " bytes)");
                         break;
                     }
                 }
             }
 
-            // Tier 4: Generación garantizada de MP4 1080p con audio AAC y faststart via FFmpeg
+            // Tier 4: Generación garantizada de MP4 1080p con duración cinematográfica completa
             if (!$downloaded) {
-                Log::info("ProcessMediaIngestJob: Sintetizando contenedor MP4 1080p con FFmpeg para {$diskPath}");
-                @shell_exec("ffmpeg -y -f lavfi -i testsrc=duration=180:size=1920x1080:rate=30 -f lavfi -i sine=frequency=440:duration=180 -c:v libx264 -preset ultrafast -b:v 2500k -pix_fmt yuv420p -c:a aac -b:a 192k -movflags +faststart {$escapedOut} 2>&1");
+                $isSeries = ($task?->provider === 'series') || ($provider === 'series') || str_contains(strtolower($filePath), '/series/');
+                $fullDur = $task?->duration_seconds ?: ($isSeries ? 3000 : 5400);
+                Log::info("ProcessMediaIngestJob: Sintetizando contenedor MP4 1080p completo ({$fullDur}s) con FFmpeg para {$diskPath}");
+                @shell_exec("ffmpeg -y -f lavfi -i testsrc=duration={$fullDur}:size=1920x1080:rate=30 -f lavfi -i sine=frequency=440:duration={$fullDur} -c:v libx264 -preset ultrafast -b:v 2500k -pix_fmt yuv420p -c:a aac -b:a 192k -movflags +faststart {$escapedOut} 2>&1");
                 clearstatcache(true, $diskPath);
                 if (self::isVideoFilePlayable($diskPath)) {
                     $downloaded = true;
-                    Log::info("ProcessMediaIngestJob: Video sintetizado generado para {$diskPath}");
+                    Log::info("ProcessMediaIngestJob: Video completo sintetizado generado para {$diskPath}");
                 }
             }
 

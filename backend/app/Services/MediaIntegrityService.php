@@ -166,6 +166,15 @@ class MediaIntegrityService
 
         // Si es una serie: verificar episodios
         if ($title->type === 'series') {
+            // Si el título mismo tiene un archivo físico válido en disco, protegerlo y no purgar
+            $titleFile = $title->source_path ?: $title->file_path;
+            if (empty($titleFile) || str_starts_with($titleFile, '/api/')) {
+                $titleFile = $title->getRawOriginal('stream_path');
+            }
+            if (!empty($titleFile) && $this->doesPhysicalFileExist($titleFile)) {
+                return true;
+            }
+
             if ($this->isLocalTitle($title)) {
                 $episodes = Episode::where('title_id', $title->id)->get();
                 $validEpisodesCount = 0;

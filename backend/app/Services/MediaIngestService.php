@@ -129,8 +129,15 @@ class MediaIngestService
      */
     public function resolveUniversalStreamUrl(string $title, ?string $provider = null, ?string $originalTitle = null, ?string $mediaType = null): ?array
     {
-        $serverUrl = "http://45.4.87.126:6789";
-        $apiKey = "0fe0eb20e78f431d9fa474e05ab2d82f";
+        $serverUrl = \App\Models\ServerSetting::get('media_server_url')
+            ?: \App\Models\ServerSetting::get('emby_server_url')
+            ?: 'http://65.187.110.22:6789';
+        if (str_contains($serverUrl, '45.4.87.126')) {
+            $serverUrl = str_replace('45.4.87.126', '65.187.110.22', $serverUrl);
+        }
+        $apiKey = \App\Models\ServerSetting::get('media_server_api_key')
+            ?: \App\Models\ServerSetting::get('emby_api_key')
+            ?: '0fe0eb20e78f431d9fa474e05ab2d82f';
 
         // 1. Trminos de bsqueda candidatos
         $searchTerms = [];
@@ -220,14 +227,18 @@ class MediaIngestService
                                 $infoRes = @file_get_contents($infoUrl, false, $ctx);
                                 $infoData = $infoRes ? json_decode($infoRes, true) : [];
                                 $size = $infoData['MediaSources'][0]['Size'] ?? 650000000;
-                                return [
-                                    'stream_url' => $streamUrl,
-                                    'total_bytes' => (int) $size,
-                                    'title' => ($item['Name'] ?? $title) . ' - ' . ($targetEp['Name'] ?? 'Episodio 1'),
-                                    'type' => 'episode',
-                                    'item_id' => $epId,
-                                    'source' => 'emby'
-                                ];
+                                // Verificar que el stream responda exitosamente (no 404)
+                                $headers = @get_headers($streamUrl, 1);
+                                if ($headers && (str_contains($headers[0], '200') || str_contains($headers[0], '206'))) {
+                                    return [
+                                        'stream_url' => $streamUrl,
+                                        'total_bytes' => (int) $size,
+                                        'title' => ($item['Name'] ?? $title) . ' - ' . ($targetEp['Name'] ?? 'Episodio 1'),
+                                        'type' => 'episode',
+                                        'item_id' => $epId,
+                                        'source' => 'emby'
+                                    ];
+                                }
                             }
                         }
                     } elseif ($type === 'Movie' || $type === 'Episode') {
@@ -236,14 +247,18 @@ class MediaIngestService
                         $infoRes = @file_get_contents($infoUrl, false, $ctx);
                         $infoData = $infoRes ? json_decode($infoRes, true) : [];
                         $size = $infoData['MediaSources'][0]['Size'] ?? 2100000000;
-                        return [
-                            'stream_url' => $streamUrl,
-                            'total_bytes' => (int) $size,
-                            'title' => $item['Name'] ?? $title,
-                            'type' => strtolower($type),
-                            'item_id' => $itemId,
-                            'source' => 'emby'
-                        ];
+                        // Verificar que el stream responda exitosamente (no 404)
+                        $headers = @get_headers($streamUrl, 1);
+                        if ($headers && (str_contains($headers[0], '200') || str_contains($headers[0], '206'))) {
+                            return [
+                                'stream_url' => $streamUrl,
+                                'total_bytes' => (int) $size,
+                                'title' => $item['Name'] ?? $title,
+                                'type' => strtolower($type),
+                                'item_id' => $itemId,
+                                'source' => 'emby'
+                            ];
+                        }
                     }
                 }
             } catch (\Throwable $e) {
@@ -251,33 +266,50 @@ class MediaIngestService
             }
         }
 
-        // Prioridad 2: Base de datos local
+        // Prioridad 2: Base de datos local (Titles y MediaItems)
         try {
-            $localTitle = Title::where('name', 'LIKE', "%{$title}%")
-                ->orWhere('original_name', 'LIKE', "%{$title}%")
-                ->whereNotNull('stream_path')
-                ->first();
-            if ($localTitle && !empty($localTitle->stream_path)) {
-                $path = $localTitle->stream_path;
-                $resolved = ProcessMediaIngestJob::resolveDiskPath($path);
-                if ($resolved && file_exists($resolved) && filesize($resolved) > 5000000) {
-                    return [
-                        'stream_url' => $resolved,
-                        'total_bytes' => filesize($resolved),
-                        'title' => $localTitle->name,
-                        'type' => $localTitle->type ?: 'movie',
-                        'source' => 'local_disk'
-                    ];
+            foreach ($searchTerms as $st) {
+                $localMedia = \App\Models\MediaItem::where('title', 'LIKE', "%{$st}%")
+                    ->orWhere('original_title', 'LIKE', "%{$st}%")
+                    ->first();
+                if ($localMedia && !empty($localMedia->file_path)) {
+                    $res = ProcessMediaIngestJob::resolveDiskPath($localMedia->file_path);
+                    if ($res && file_exists($res) && filesize($res) > 20000000) {
+                        return [
+                            'stream_url' => $res,
+                            'total_bytes' => filesize($res),
+                            'title' => $localMedia->title,
+                            'type' => $localMedia->type ?: ($mediaType ?: 'movie'),
+                            'source' => 'local_disk'
+                        ];
+                    }
+                }
+
+                $localTitle = Title::where('name', 'LIKE', "%{$st}%")
+                    ->orWhere('original_name', 'LIKE', "%{$st}%")
+                    ->whereNotNull('stream_path')
+                    ->first();
+                if ($localTitle && !empty($localTitle->stream_path)) {
+                    $path = $localTitle->stream_path;
+                    $resolved = ProcessMediaIngestJob::resolveDiskPath($path);
+                    if ($resolved && file_exists($resolved) && filesize($resolved) > 20000000) {
+                        return [
+                            'stream_url' => $resolved,
+                            'total_bytes' => filesize($resolved),
+                            'title' => $localTitle->name,
+                            'type' => $localTitle->type ?: 'movie',
+                            'source' => 'local_disk'
+                        ];
+                    }
                 }
             }
         } catch (\Throwable $e) {}
 
-        // Prioridad 3: CDN / Fuentes de alta definicin
+        // Prioridad 3: CDN / Fuentes completas de largometrajes en alta definición
         $candidates = [
-            'https://archive.org/download/CosmosLaundromatFirstCycle/Cosmos_Laundromat_First_Cycle_1080p.mp4',
-            'https://archive.org/download/Sita_Sings_the_Blues_1080p/Sita_Sings_the_Blues_1080p.mp4',
-            'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4',
-            'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+            'https://archive.org/download/night_of_the_living_dead/night_of_the_living_dead_512kb.mp4',
+            'https://archive.org/download/the-fast-and-the-furious-1954/the-fast-and-the-furious-1954.mp4',
+            'https://archive.org/download/Charade_1963/Charade.mp4',
         ];
         foreach ($candidates as $cand) {
             $headers = @get_headers($cand, 1);
@@ -752,6 +784,26 @@ class MediaIngestService
         $titleModel->is_featured = true;
         $titleModel->provider = $task->provider ?: 'external';
         $titleModel->save();
+
+        if ($titleModel->type === 'series') {
+            try {
+                $season = \App\Models\Season::firstOrCreate(
+                    ['title_id' => $titleModel->id, 'season_number' => 1],
+                    ['name' => 'Temporada 1']
+                );
+                \App\Models\Episode::firstOrCreate(
+                    ['title_id' => $titleModel->id, 'season_id' => $season->id, 'episode_number' => 1],
+                    [
+                        'title' => 'Capítulo 1',
+                        'file_path' => $task->output_file ?: $physicalDestination,
+                        'stream_path' => "/api/episodes/stream?title_id={$titleModel->id}",
+                        'duration_seconds' => $finalDuration,
+                    ]
+                );
+            } catch (\Throwable $e) {
+                Log::warning("indexMediaContent: no se pudo crear episodio inicial para serie: " . $e->getMessage());
+            }
+        }
 
         // 2. Registrar en media_items con ruta canónica exacta storage/media/{provider}/{slug}/{slug}.mp4
         $mediaItem = MediaItem::where('title_id', $titleModel->id)->first();

@@ -41,7 +41,10 @@ class RemoteMediaConnectorService
     {
         $serverUrl = ServerSetting::get('media_server_url')
             ?: ServerSetting::get('emby_server_url')
-            ?: 'http://45.4.87.126:6789';
+            ?: 'http://65.187.110.22:6789';
+        if (str_contains($serverUrl, '45.4.87.126')) {
+            $serverUrl = str_replace('45.4.87.126', '65.187.110.22', $serverUrl);
+        }
 
         $apiKey = ServerSetting::get('media_server_api_key')
             ?: ServerSetting::get('emby_api_key')

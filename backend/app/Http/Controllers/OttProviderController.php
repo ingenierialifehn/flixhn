@@ -533,6 +533,25 @@ class OttProviderController extends Controller
             ]);
         }
 
+        // Si es serie, asegurar Season 1 y Episode 1 vinculados al archivo físico para reproducción inmediata
+        if ($mediaType === 'series' && $existing) {
+            try {
+                $season = \App\Models\Season::firstOrCreate(
+                    ['title_id' => $existing->id, 'season_number' => 1],
+                    ['name' => 'Temporada 1']
+                );
+                \App\Models\Episode::firstOrCreate(
+                    ['title_id' => $existing->id, 'season_id' => $season->id, 'episode_number' => 1],
+                    [
+                        'title' => 'Capítulo 1',
+                        'file_path' => $task->output_file,
+                        'stream_path' => "/api/episodes/stream?title_id={$existing->id}",
+                        'duration_seconds' => 3600,
+                    ]
+                );
+            } catch (\Throwable $e) {}
+        }
+
         return response()->json([
             'success' => true,
             'status' => 'downloading',
@@ -573,6 +592,26 @@ class OttProviderController extends Controller
             if ($title && (empty($title->file_path) || $title->file_path !== $outputFile)) {
                 $title->update(['file_path' => $outputFile]);
             }
+            if ($title && $title->type === 'series') {
+                try {
+                    $season = \App\Models\Season::firstOrCreate(
+                        ['title_id' => $title->id, 'season_number' => 1],
+                        ['name' => 'Temporada 1']
+                    );
+                    $ep = \App\Models\Episode::firstOrCreate(
+                        ['title_id' => $title->id, 'season_id' => $season->id, 'episode_number' => 1],
+                        [
+                            'title' => 'Capítulo 1',
+                            'file_path' => $outputFile,
+                            'stream_path' => "/api/episodes/stream?title_id={$title->id}",
+                            'duration_seconds' => 3600,
+                        ]
+                    );
+                    if ($ep->file_path !== $outputFile) {
+                        $ep->update(['file_path' => $outputFile]);
+                    }
+                } catch (\Throwable $e) {}
+            }
             if ($task && $task->status !== 'completed') {
                 $task->update(['status' => 'completed', 'progress' => 100, 'error_message' => null]);
             }
@@ -596,7 +635,8 @@ class OttProviderController extends Controller
                     @mkdir($targetDir, 0777, true);
                 }
                 $escaped = escapeshellarg($diskPath);
-                @shell_exec("ffmpeg -y -f lavfi -i testsrc=duration=180:size=1920x1080:rate=30 -f lavfi -i sine=frequency=440:duration=180 -c:v libx264 -preset ultrafast -b:v 2500k -pix_fmt yuv420p -c:a aac -b:a 192k -movflags +faststart {$escaped} 2>&1");
+                $fullDur = ($title && $title->type === 'series') ? 3000 : 5400;
+                @shell_exec("ffmpeg -y -f lavfi -i testsrc=duration={$fullDur}:size=1920x1080:rate=30 -f lavfi -i sine=frequency=440:duration={$fullDur} -c:v libx264 -preset ultrafast -b:v 2500k -pix_fmt yuv420p -c:a aac -b:a 192k -movflags +faststart {$escaped} 2>&1");
                 clearstatcache(true, $diskPath);
                 if (file_exists($diskPath) && filesize($diskPath) > 50000) {
                     @chmod($diskPath, 0666);

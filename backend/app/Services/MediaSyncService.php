@@ -631,7 +631,10 @@ SVG;
      */
     public function syncEmby(?string $serverUrl = null, ?string $apiKey = null): array
     {
-        $serverUrl = $serverUrl ? rtrim(trim($serverUrl), '/') : (ServerSetting::get('emby_server_url') ?: 'http://45.4.87.126:6789');
+        $serverUrl = $serverUrl ? rtrim(trim($serverUrl), '/') : (ServerSetting::get('emby_server_url') ?: 'http://65.187.110.22:6789');
+        if (str_contains($serverUrl, '45.4.87.126')) {
+            $serverUrl = str_replace('45.4.87.126', '65.187.110.22', $serverUrl);
+        }
         if (!str_starts_with($serverUrl, 'http://') && !str_starts_with($serverUrl, 'https://')) {
             $serverUrl = 'http://' . $serverUrl;
         }

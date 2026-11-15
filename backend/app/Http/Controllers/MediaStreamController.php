@@ -255,6 +255,42 @@ class MediaStreamController extends Controller
                 return $this->streamEpisode($request, $firstEpisode->id);
             }
 
+            // Si no tiene episodios registrados pero el título tiene archivo físico en disco, crear episodio 1 y reproducir
+            $rawCandidate = $title->source_path ?: $title->file_path;
+            if (empty($rawCandidate) || str_starts_with($rawCandidate, '/api/')) {
+                $rawCandidate = $title->getRawOriginal('stream_path');
+            }
+            $resolvedPath = $rawCandidate ? $this->resolvePhysicalFilePath($rawCandidate) : null;
+
+            if ($resolvedPath && file_exists($resolvedPath) && !is_dir($resolvedPath) && @filesize($resolvedPath) > 1024) {
+                try {
+                    $season = \App\Models\Season::firstOrCreate(
+                        ['title_id' => $title->id, 'season_number' => 1],
+                        ['name' => 'Temporada 1']
+                    );
+                    $firstEpisode = \App\Models\Episode::firstOrCreate(
+                        ['title_id' => $title->id, 'season_id' => $season->id, 'episode_number' => 1],
+                        [
+                            'title' => 'Capítulo 1',
+                            'file_path' => $rawCandidate,
+                            'stream_path' => "/api/episodes/stream?title_id={$title->id}",
+                            'duration_seconds' => $title->duration_seconds ?: 3600,
+                        ]
+                    );
+                    return $this->streamEpisode($request, $firstEpisode->id);
+                } catch (\Throwable $e) {
+                    return $this->serveStreamWithByteRange($request, $resolvedPath);
+                }
+            }
+
+            // Si está pendiente de descarga o ingesta activa, no purgar
+            $hasActiveTask = \App\Models\MediaIngestTask::where('title', $title->name)
+                ->whereIn('status', ['pending', 'downloading'])
+                ->exists();
+            if ($hasActiveTask) {
+                return response()->json(['error' => 'Descarga en proceso. Por favor espere a que finalice.'], 202);
+            }
+
             Log::warning("MediaStreamController@streamTitle: Serie sin episodios disponibles en disco [ID {$title->id}: {$title->name}]. Purgando registro y devolviendo 404.");
             $integrityService->purgeTitle($title);
             return response()->json(['error' => 'Serie sin episodios disponibles en disco.'], 404);
