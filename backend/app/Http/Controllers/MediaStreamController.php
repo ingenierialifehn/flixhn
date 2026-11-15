@@ -291,8 +291,7 @@ class MediaStreamController extends Controller
                 return response()->json(['error' => 'Descarga en proceso. Por favor espere a que finalice.'], 202);
             }
 
-            Log::warning("MediaStreamController@streamTitle: Serie sin episodios disponibles en disco [ID {$title->id}: {$title->name}]. Purgando registro y devolviendo 404.");
-            $integrityService->purgeTitle($title);
+            Log::warning("MediaStreamController@streamTitle: Serie sin episodios disponibles en disco [ID {$title->id}: {$title->name}]. Devolviendo 404.");
             return response()->json(['error' => 'Serie sin episodios disponibles en disco.'], 404);
         }
 
@@ -321,10 +320,35 @@ class MediaStreamController extends Controller
             }
         }
 
-        // Si NO existe en disco, purga el registro y devuelve 404
+        // Búsqueda en tareas de ingesta u OTT si aún no se resolvió
+        if (!$resolved) {
+            $task = MediaIngestTask::where('title_id', $title->id)->orWhere('title', $title->name)->latest()->first();
+            if ($task && !empty($task->output_file)) {
+                $cand = $this->resolvePhysicalFilePath($task->output_file);
+                if ($cand && file_exists($cand) && !is_dir($cand) && @filesize($cand) > 1024) {
+                    $resolved = $cand;
+                    $title->update(['file_path' => $task->output_file]);
+                }
+            }
+        }
+        if (!$resolved) {
+            $ott = OttDownloadTask::where('title_id', $title->id)->orWhere('title', $title->name)->latest()->first();
+            if ($ott && !empty($ott->file_path)) {
+                $cand = $this->resolvePhysicalFilePath($ott->file_path);
+                if ($cand && file_exists($cand) && !is_dir($cand) && @filesize($cand) > 1024) {
+                    $resolved = $cand;
+                    $title->update(['file_path' => $ott->file_path]);
+                }
+            }
+        }
+
+        $hasActiveTask = MediaIngestTask::where('title', $title->name)->whereIn('status', ['pending', 'downloading'])->exists();
+        if ($hasActiveTask) {
+            return response()->json(['error' => 'Descarga en proceso. Por favor espere a que finalice.'], 202);
+        }
+
         if (!$resolved || !file_exists($resolved) || is_dir($resolved) || @filesize($resolved) <= 1024) {
-            Log::warning("MediaStreamController@streamTitle: Archivo físico no existe para [ID {$title->id}: {$title->name}]. Purgando registro y devolviendo 404.");
-            $integrityService->purgeTitle($title);
+            Log::warning("MediaStreamController@streamTitle: Archivo físico no existe para [ID {$title->id}: {$title->name}]. Devolviendo 404.");
             return response()->json(['error' => 'Archivo físico no encontrado en el servidor.'], 404);
         }
 
@@ -375,10 +399,19 @@ class MediaStreamController extends Controller
             }
         }
 
-        // Si NO existe en disco, purga el episodio y devuelve 404
+        if (!$resolved) {
+            $parentTitle = Title::find($episode->title_id);
+            if ($parentTitle && !empty($parentTitle->file_path)) {
+                $cand = $this->resolvePhysicalFilePath($parentTitle->file_path);
+                if ($cand && file_exists($cand) && !is_dir($cand) && @filesize($cand) > 1024) {
+                    $resolved = $cand;
+                    $episode->update(['file_path' => $parentTitle->file_path]);
+                }
+            }
+        }
+
         if (!$resolved || !file_exists($resolved) || is_dir($resolved) || @filesize($resolved) <= 1024) {
-            Log::warning("MediaStreamController@streamEpisode: Archivo físico no existe para episodio [ID {$episode->id}: {$episode->title}]. Purgando episodio y devolviendo 404.");
-            $integrityService->purgeEpisode($episode);
+            Log::warning("MediaStreamController@streamEpisode: Archivo físico no existe para episodio [ID {$episode->id}: {$episode->title}]. Devolviendo 404.");
             return response()->json(['error' => 'Archivo de episodio no encontrado en el servidor.'], 404);
         }
 

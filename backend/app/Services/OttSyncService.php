@@ -131,6 +131,46 @@ class OttSyncService
     }
 
     /**
+     * Normaliza y detecta robustamente si el contenido es una Serie o Película
+     */
+    public static function normalizeMediaType(?string $type, ?string $title = null): string
+    {
+        if (!empty($type)) {
+            $t = strtolower(trim($type));
+            if (in_array($t, ['series', 'serie', 'show', 'shows', 'tv', 'anime', 'season', 'episode'])) {
+                return 'series';
+            }
+            if (in_array($t, ['movie', 'movies', 'pelicula', 'película', 'film', 'films'])) {
+                return 'movie';
+            }
+        }
+        if (!empty($title)) {
+            $clean = mb_strtolower(trim($title));
+            $knownSeries = [
+                'pokemon', 'pokémon', 'loki', 'stranger things', 'hawkeye', 'daredevil',
+                'squid game', 'el juego del calamar', 'rebelde', 'invencible', 'invincible',
+                'jack ryan', 'the last of us', 'house of the dragon', 'la casa del drag',
+                'peacemaker', 'el pacificador', 'lupin', 'into the night', 'dahmer',
+                'arcane', 'mandalorian', 'the boys', 'fallout', 'ted lasso', 'halo',
+                'rings of power', 'anillos de poder', 'helluva boss', 'hermanos de sangre',
+                'el mentalista', 'the mentalist', 'boba fett', 'ms. marvel', 'caballero luna',
+                'moon knight', 'secret invasion', 'invasion secreta', 'invasión secreta',
+                'serie pokémon', 'serie pokemon', 'naruto', 'one piece', 'dragon ball',
+                'attack on titan', 'shingeki', 'demon slayer', 'kimetsu'
+            ];
+            foreach ($knownSeries as $ks) {
+                if (str_contains($clean, $ks)) {
+                    return 'series';
+                }
+            }
+            if (preg_match('/(temporada|season|episodio|capitulo|capítulo|serie|ep|s\d+e\d+)/i', $title)) {
+                return 'series';
+            }
+        }
+        return 'movie';
+    }
+
+    /**
      * Obtiene el listado de plataformas REALMENTE conectadas en la base de datos
      */
     public static function getActiveConnectedPlatforms(): array
@@ -646,7 +686,7 @@ class OttSyncService
                 'original_title'    => $item['original_title'] ?? $title,
                 'year'              => $year,
                 'type'              => $type,
-                'media_type'        => $type === 'Serie' ? 'series' : 'movie',
+                'media_type'        => self::normalizeMediaType($type, $name),
                 'poster'            => $posterUrl,
                 'poster_url'        => $posterUrl,
                 'poster_path'       => $posterUrl,
@@ -715,7 +755,7 @@ class OttSyncService
                     'title'             => $t->name,
                     'original_title'    => $t->sort_title ?: $t->name,
                     'type'              => $type,
-                    'media_type'        => strtolower($type) === 'serie' ? 'series' : 'movie',
+                    'media_type'        => self::normalizeMediaType($type, $t->name),
                     'year'              => (int) ($t->release_year ?? date('Y')),
                     'poster'            => $posterUrl,
                     'poster_url'        => $posterUrl,
@@ -793,7 +833,7 @@ class OttSyncService
                     'title'             => $name,
                     'original_title'    => $name,
                     'type'              => $type,
-                    'media_type'        => $type === 'Serie' ? 'series' : 'movie',
+                    'media_type'        => self::normalizeMediaType($type, $name),
                     'year'              => $year,
                     'poster'            => $posterUrl,
                     'poster_url'        => $posterUrl,
@@ -1797,7 +1837,7 @@ class OttSyncService
         }
 
         $provider = $requestedProvider ?: ($activeAccount?->provider ?? 'netflix');
-        $mediaType = ($payload['media_type'] ?? 'movie') === 'series' ? 'series' : 'movie';
+        $mediaType = self::normalizeMediaType($payload['media_type'] ?? $payload['type'] ?? null, $title);
         $quality = $payload['quality'] ?? '1080p';
         $posterUrl = $payload['poster_url'] ?? ($payload['poster'] ?? null);
         $year = $payload['year'] ?? date('Y');
@@ -1810,15 +1850,25 @@ class OttSyncService
         $rawId = $payload['id'] ?? $payload['unique_id'] ?? null;
         $uniqueId = !empty($rawId) ? preg_replace('/[^a-zA-Z0-9_\-]/', '_', (string) $rawId) : ($provider . '_' . substr(md5($title . microtime()), 0, 8));
 
-        $targetFolderInput = !empty($payload['target_folder']) ? $payload['target_folder'] : "/storage/media/{$provider}/{$uniqueId}";
+                $targetFolderInput = !empty($payload['target_folder']) ? $payload['target_folder'] : "/storage/media/{$provider}/{$uniqueId}";
         $targetFolder = self::resolveAndEnsureTargetFolder($targetFolderInput, $provider);
+
+        $seasonNum = (int) ($payload['season_number'] ?? 1);
+        $episodeNum = (int) ($payload['episode_number'] ?? 1);
+
+        if ($mediaType === 'series') {
+            $tag = sprintf("S%02dE%02d", $seasonNum, $episodeNum);
+            $targetFolder = rtrim($targetFolder, '/') . "/series/{$slugTitle}/Temporada {$seasonNum}";
+            $fileName = "{$slugTitle}_{$tag}.mp4";
+        } else {
+            $fileName = "{$slugTitle}.mp4";
+        }
 
         if (!File::isDirectory($targetFolder)) {
             File::makeDirectory($targetFolder, 0777, true, true);
         }
         @chmod($targetFolder, 0777);
 
-        $fileName = "{$slugTitle}.mp4";
         $outputFile = rtrim(str_replace('\\', '/', $targetFolder), '/') . '/' . $fileName;
         $fullPath = $outputFile;
 
@@ -1864,6 +1914,8 @@ class OttSyncService
                 'title' => $title,
                 'media_type' => $mediaType,
                 'external_id' => $uniqueId,
+                'season_number' => $mediaType === 'series' ? $seasonNum : null,
+                'episode_number' => $mediaType === 'series' ? $episodeNum : null,
                 'quality' => $quality,
                 'status' => 'pending',
                 'progress' => 0,
@@ -1875,6 +1927,8 @@ class OttSyncService
                     'overview' => $overview,
                     'year' => $year,
                     'media_type' => $mediaType,
+                    'season_number' => $mediaType === 'series' ? $seasonNum : null,
+                    'episode_number' => $mediaType === 'series' ? $episodeNum : null,
                     'unique_id' => $uniqueId,
                 ],
             ]);

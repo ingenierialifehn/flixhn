@@ -449,7 +449,7 @@ class OttProviderController extends Controller
         }
 
         $provider = strtolower($request->input('provider') ?? $request->input('platform') ?? 'netflix');
-        $mediaType = ($request->input('media_type') ?? $request->input('type') ?? 'movie') === 'series' ? 'series' : 'movie';
+        $mediaType = \App\Services\OttSyncService::normalizeMediaType($request->input('media_type') ?? $request->input('type'), $titleName);
         $posterUrl = $request->input('poster_url') ?? $request->input('poster');
         $backdropUrl = $request->input('backdrop_url') ?? $posterUrl;
         $overview = $request->input('description') ?? $request->input('overview') ?? "Contenido On-Net transmitido desde {$provider}.";
@@ -460,14 +460,17 @@ class OttProviderController extends Controller
         $existing = Title::where('name', $titleName)->first();
 
         $existingDisk = $existing?->file_path ? \App\Jobs\ProcessMediaIngestJob::resolveDiskPath($existing->file_path) : null;
-        if ($existing && $existingDisk && file_exists($existingDisk) && filesize($existingDisk) > 1048576 && \App\Jobs\ProcessMediaIngestJob::isVideoFilePlayable($existingDisk)) {
+        $firstEp = $existing && $existing->type === 'series' ? \App\Models\Episode::where('title_id', $existing->id)->orderBy('episode_number')->first() : null;
+        $activeStreamDisk = $firstEp?->file_path ? \App\Jobs\ProcessMediaIngestJob::resolveDiskPath($firstEp->file_path) : $existingDisk;
+        if ($existing && $activeStreamDisk && file_exists($activeStreamDisk) && filesize($activeStreamDisk) > 1048576 && \App\Jobs\ProcessMediaIngestJob::isVideoFilePlayable($activeStreamDisk)) {
+            $streamUrl = $firstEp ? "/api/stream/episode/{$firstEp->id}" : "/api/stream/title/{$existing->id}";
             return response()->json([
                 'success' => true,
                 'status' => 'ready',
                 'ready' => true,
                 'title_id' => $existing->id,
                 'title' => $existing,
-                'stream_url' => "/api/media/{$existing->id}/stream",
+                'stream_url' => $streamUrl,
             ]);
         }
 
@@ -538,17 +541,26 @@ class OttProviderController extends Controller
             try {
                 $season = \App\Models\Season::firstOrCreate(
                     ['title_id' => $existing->id, 'season_number' => 1],
-                    ['name' => 'Temporada 1']
+                    ['title' => 'Temporada 1']
                 );
-                \App\Models\Episode::firstOrCreate(
+                $ep = \App\Models\Episode::firstOrCreate(
                     ['title_id' => $existing->id, 'season_id' => $season->id, 'episode_number' => 1],
                     [
                         'title' => 'Capítulo 1',
                         'file_path' => $task->output_file,
-                        'stream_path' => "/api/episodes/stream?title_id={$existing->id}",
-                        'duration_seconds' => 3600,
+                        'stream_path' => "/api/stream/title/{$existing->id}",
+                        'duration_seconds' => 1380,
                     ]
                 );
+                $ep->update([
+                    'file_path' => $task->output_file,
+                    'stream_path' => "/api/stream/episode/{$ep->id}",
+                ]);
+                $existing->update([
+                    'type' => 'series',
+                    'stream_path' => "/api/stream/title/{$existing->id}",
+                    'file_path' => $task->output_file,
+                ]);
             } catch (\Throwable $e) {}
         }
 

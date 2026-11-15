@@ -701,15 +701,20 @@ class MediaIngestService
         $cleanTitle = trim($task->title ?: 'Video Ingestado');
         $meta = $this->fetchMetadataForTitle($cleanTitle);
 
-        $categorySlug = $task->provider === 'series' || str_contains(strtolower($task->target_folder), 'series')
-            ? 'series'
-            : 'peliculas';
+        $ottTask = \App\Models\OttDownloadTask::where('title', $task->title)->latest()->first();
+        $isSeries = (($task->media_type ?? null) === 'series')
+            || ($ottTask?->media_type === 'series')
+            || \App\Services\OttSyncService::normalizeMediaType(null, $cleanTitle) === 'series'
+            || $task->provider === 'series'
+            || str_contains(strtolower($task->target_folder), 'series');
+
+        $categorySlug = $isSeries ? 'series' : 'peliculas';
 
         $category = Category::where('slug', $categorySlug)->first();
         if (!$category) {
             $category = Category::firstOrCreate(
-                ['slug' => 'peliculas'],
-                ['name' => 'Películas', 'type' => 'movie', 'folder_path' => 'movies', 'sort_order' => 1]
+                ['slug' => $categorySlug],
+                ['name' => $isSeries ? 'Series' : 'Películas', 'type' => $isSeries ? 'series' : 'movie', 'folder_path' => $isSeries ? 'series' : 'movies', 'sort_order' => $isSeries ? 2 : 1]
             );
         }
 
@@ -744,7 +749,7 @@ class MediaIngestService
 
         $backdropUrl = !empty($meta['backdrop_url']) && $meta['backdrop_url'] !== '/img/placeholder-poster.png'
             ? $meta['backdrop_url']
-            : 'https://image.tmdb.org/t/p/original/56v2KjBlU4XaOv9rVYEQypROD7P.jpg';
+            : $localPosterUrl;
 
         $providerKey = Str::slug($task->provider ?: 'movies', '_');
         $itemSlug = Str::slug($finalTitle);
@@ -785,7 +790,7 @@ class MediaIngestService
         }
 
         $titleModel->name = $finalTitle;
-        $titleModel->type = $category->type === 'series' ? 'series' : 'movie';
+        $titleModel->type = $isSeries ? 'series' : 'movie';
         $titleModel->category_id = $category->id;
         $titleModel->description = $finalOverview;
         $titleModel->poster_url = $localPosterUrl;
@@ -794,7 +799,8 @@ class MediaIngestService
         $titleModel->genre = $finalGenre;
         $titleModel->community_rating = $meta['rating'] ?? 8.5;
         $titleModel->duration_seconds = $finalDuration;
-        $titleModel->stream_path = $canonicalPath;
+        $titleModel->file_path = $task->output_file ?: $physicalDestination;
+        $titleModel->stream_path = $isSeries ? "/api/stream/title/{$titleModel->id}" : $canonicalPath;
         $titleModel->is_featured = true;
         $titleModel->provider = $task->provider ?: 'external';
         $titleModel->save();
@@ -803,17 +809,21 @@ class MediaIngestService
             try {
                 $season = \App\Models\Season::firstOrCreate(
                     ['title_id' => $titleModel->id, 'season_number' => 1],
-                    ['name' => 'Temporada 1']
+                    ['title' => 'Temporada 1']
                 );
-                \App\Models\Episode::firstOrCreate(
+                $ep = \App\Models\Episode::firstOrCreate(
                     ['title_id' => $titleModel->id, 'season_id' => $season->id, 'episode_number' => 1],
                     [
                         'title' => 'Capítulo 1',
                         'file_path' => $task->output_file ?: $physicalDestination,
-                        'stream_path' => "/api/episodes/stream?title_id={$titleModel->id}",
-                        'duration_seconds' => $finalDuration,
+                        'stream_path' => "/api/stream/title/{$titleModel->id}",
+                        'duration_seconds' => $finalDuration ?: 1380,
                     ]
                 );
+                $ep->update([
+                    'file_path' => $task->output_file ?: $physicalDestination,
+                    'stream_path' => "/api/stream/episode/{$ep->id}",
+                ]);
             } catch (\Throwable $e) {
                 Log::warning("indexMediaContent: no se pudo crear episodio inicial para serie: " . $e->getMessage());
             }
@@ -966,6 +976,24 @@ class MediaIngestService
         // 3. Diccionario extendido con carátulas oficiales de TMDb garantizadas al 100%
         $slugClean = Str::slug($cleanTitle);
         $verifiedDict = [
+            'pokemon' => [
+                'poster_url' => 'https://image.tmdb.org/t/p/w500/2LhZ1w26bS148bZsmZqEaQYd0A5.jpg',
+                'backdrop_url' => 'https://image.tmdb.org/t/p/original/bVOaR0qK4iIeQ9i5L7u7Fh0hV9M.jpg',
+                'overview' => 'La serie narra las aventuras del joven entrenador Pokemon de diez años Ash Ketchum, que decide comenzar su aventura para llegar a convertirse un día en un gran Maestro de Pokemon.',
+                'genre' => 'Animación / Aventura',
+                'genres' => ['Animación', 'Aventura'],
+                'rating' => 8.8,
+                'release_year' => 1997,
+            ],
+            'loki' => [
+                'poster_url' => 'https://image.tmdb.org/t/p/w500/voHUmlvjysvPH2EMZQIy1J4vG9e.jpg',
+                'backdrop_url' => 'https://image.tmdb.org/t/p/original/k47JEUTQsSMN532HRg6erdZ9JxD.jpg',
+                'overview' => 'El voluble villano Loki retoma su papel como el Dios del Engaño en una serie de Marvel Studios que se desarrolla tras los acontecimientos de "Vengadores: Endgame".',
+                'genre' => 'Acción & Aventura / Ciencia Ficción',
+                'genres' => ['Acción & Aventura', 'Ciencia Ficción'],
+                'rating' => 8.2,
+                'release_year' => 2021,
+            ],
             'stranger' => [
                 'poster_url' => 'https://image.tmdb.org/t/p/w500/49WJfeN0moxb9IPfGn8AIqMGskD.jpg',
                 'backdrop_url' => 'https://image.tmdb.org/t/p/original/56v2KjBlU4XaOv9rVYEQypROD7P.jpg',
@@ -1104,7 +1132,7 @@ class MediaIngestService
             'original_title' => $readableTitle,
             'overview' => "Contenido multimedia '{$readableTitle}' disponible en alta definición y sonido envolvente a través de FlixHN On-Net.",
             'poster_url' => 'https://image.tmdb.org/t/p/w500/49WJfeN0moxb9IPfGn8AIqMGskD.jpg',
-            'backdrop_url' => 'https://image.tmdb.org/t/p/original/56v2KjBlU4XaOv9rVYEQypROD7P.jpg',
+            'backdrop_url' => 'https://image.tmdb.org/t/p/w500/49WJfeN0moxb9IPfGn8AIqMGskD.jpg',
             'release_year' => (int) date('Y'),
             'genre' => 'Acción / Streaming',
             'genres' => ['Acción', 'Streaming'],

@@ -93,10 +93,16 @@ const OnDemandLoadingModal = ({ target, onReady, onCancel }) => {
 
     const startDownload = async () => {
       try {
+        const rawType = String(target?.type || target?.media_type || '').toLowerCase();
+        const titleLower = String(titleName || '').toLowerCase();
+        const isSeries = ['series', 'serie', 'show', 'shows', 'tv', 'anime'].includes(rawType) ||
+          /pokemon|pokémon|loki|stranger|hawkeye|daredevil|squid|invencible|invincible|jack ryan|serie|temporada|season/i.test(titleLower);
+        const mediaType = isSeries ? 'series' : 'movie';
+
         const payload = {
           title: titleName,
           provider: platform.key,
-          media_type: target?.type === 'series' ? 'series' : 'movie',
+          media_type: mediaType,
           poster_url: target?.poster_url || bannerUrl,
           backdrop_url: target?.backdrop_url || bannerUrl,
           overview: target?.description || target?.overview || '',
