@@ -630,7 +630,6 @@ class ProcessMediaIngestJob implements ShouldQueue
             // 1. Buscar en Titles de la base de datos
             $matchedTitle = \App\Models\Title::where('name', $title)
                 ->orWhere('name', 'LIKE', "%{$title}%")
-                ->orWhere('original_name', 'LIKE', "%{$title}%")
                 ->first();
             if ($matchedTitle && !empty($matchedTitle->file_path)) {
                 $source = self::resolveDiskPath($matchedTitle->file_path);
