@@ -30,9 +30,28 @@ class FixOttPipelineCommand extends Command
             $this->searchAll($query);
         } elseif ($action === 'purge-fakes') {
             $this->purgeFakeFiles();
+        } elseif ($action === 'test-resolve') {
+            $this->testResolve($query);
         }
 
         return 0;
+    }
+
+    protected function testResolve(string $title): void
+    {
+        $this->info("Probando resolución para: {$title}");
+        $task = new \App\Models\MediaIngestTask([
+            'title' => $title,
+            'provider' => 'disney',
+            'output_file' => "/mnt/media_library/Disk5/FlixHN/test/{$title}.mp4",
+        ]);
+        $job = new \App\Jobs\ProcessMediaIngestJob(0);
+        $res = $job->ensurePhysicalFileCreated($task->output_file, $task);
+        $this->info("Resultado de ensurePhysicalFileCreated: " . ($res ? 'EXITO (Contenido real encontrado y vinculado)' : 'RECHAZADO (No existe contenido real, se rechaza fake)'));
+        if (File::exists($task->output_file)) {
+            $this->line("Archivo generado: {$task->output_file} (" . number_format(File::size($task->output_file) / 1024 / 1024, 1) . " MB)");
+            File::delete($task->output_file);
+        }
     }
 
     protected function showStatus(): void
