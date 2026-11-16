@@ -218,6 +218,18 @@ class OttSyncService
      * @param string $query Texto que escribió el usuario (ej: "The Witcher")
      * @param string|null $platform Plataforma objetivo ('netflix', 'disney_plus', etc.) o null para buscar en todas las conectadas.
      */
+    public static function removeDiacritics(string $str): string
+    {
+        $str = mb_strtolower($str);
+        $map = [
+            'á' => 'a', 'é' => 'e', 'í' => 'i', 'ó' => 'o', 'ú' => 'u',
+            'à' => 'a', 'è' => 'e', 'ì' => 'i', 'ò' => 'o', 'ù' => 'u',
+            'ä' => 'a', 'ë' => 'e', 'ï' => 'i', 'ö' => 'o', 'ü' => 'u',
+            'ñ' => 'n', 'ç' => 'c'
+        ];
+        return strtr($str, $map);
+    }
+
     public static function searchReal($query, ?string $platform = null): array
     {
         $cleanQuery = trim((string) $query);
@@ -313,13 +325,14 @@ class OttSyncService
                 $origTitle = (string)($content['originalTitle'] ?? $title);
 
                 // Filtrar resultados no relacionados que JustWatch a veces incluye como populares
-                $qTokens = array_filter(preg_split('/\s+/u', mb_strtolower($cleanQ)), fn($t) => mb_strlen($t) >= 2);
+                $cleanQNorm = self::removeDiacritics($cleanQ);
+                $qTokens = array_filter(preg_split('/\s+/u', $cleanQNorm), fn($t) => mb_strlen($t) >= 2);
                 if (!empty($qTokens)) {
-                    $tLower = mb_strtolower($title);
-                    $origLower = mb_strtolower($origTitle);
+                    $tNorm = self::removeDiacritics($title);
+                    $origNorm = self::removeDiacritics($origTitle);
                     $matchesQuery = false;
                     foreach ($qTokens as $token) {
-                        if (str_contains($tLower, $token) || str_contains($origLower, $token)) {
+                        if (str_contains($tNorm, $token) || str_contains($origNorm, $token)) {
                             $matchesQuery = true;
                             break;
                         }

@@ -74,15 +74,21 @@ class TitleController extends Controller
                         $itemTitle = trim($item['title'] ?? '');
                         if (empty($itemTitle)) continue;
 
-                        $itemTitleLower = mb_strtolower($itemTitle);
+                        $normHelper = function(string $s): string {
+                            $s = mb_strtolower($s);
+                            $map = ['á'=>'a', 'é'=>'e', 'í'=>'i', 'ó'=>'o', 'ú'=>'u', 'ñ'=>'n', 'ü'=>'u'];
+                            return strtr($s, $map);
+                        };
+
+                        $itemTitleNorm = $normHelper($itemTitle);
                         $providerKey = strtolower($item['provider'] ?? 'netflix');
                         $mediaType = ($item['type'] ?? 'movie') === 'series' ? 'series' : 'movie';
                         $uniqueOttId = 'ott_' . md5($providerKey . '_' . $itemTitle);
 
-                        // Buscar si existe un título local auténtico correspondiente
-                        $matchedLocal = $localCandidates->first(function ($t) use ($itemTitleLower) {
-                            $tName = mb_strtolower(trim($t->name ?? ''));
-                            return $tName === $itemTitleLower || str_contains($tName, $itemTitleLower) || str_contains($itemTitleLower, $tName);
+                        // Buscar si existe un título local auténtico correspondiente sin importar tildes
+                        $matchedLocal = $localCandidates->first(function ($t) use ($itemTitleNorm, $normHelper) {
+                            $tNorm = $normHelper(trim($t->name ?? ''));
+                            return $tNorm === $itemTitleNorm || str_contains($tNorm, $itemTitleNorm) || str_contains($itemTitleNorm, $tNorm);
                         });
 
                         $hasAuthenticMedia = false;
