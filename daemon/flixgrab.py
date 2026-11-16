@@ -28,6 +28,48 @@ import http.server
 import urllib.parse
 import urllib.request
 import threading
+import socketserver
+
+# Servidor multihilo compatible con Python 3.6 y 3.7+
+if hasattr(http.server, "ThreadingHTTPServer"):
+    ThreadingServerClass = getattr(http.server, "ThreadingHTTPServer")
+else:
+    class ThreadingServerClass(socketserver.ThreadingMixIn, http.server.HTTPServer):
+        daemon_threads = True
+
+def get_loop():
+    try:
+        return get_loop()
+    except (AttributeError, RuntimeError):
+        try:
+            return asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            return loop
+
+def safe_create_task(coro, loop=None):
+    if loop is None:
+        loop = get_loop()
+    if hasattr(loop, "create_task"):
+        return loop.create_task(coro)
+    if hasattr(asyncio, "create_task"):
+        return safe_create_task(coro)
+    return asyncio.ensure_future(coro, loop=loop)
+
+def safe_asyncio_run(coro):
+    if hasattr(asyncio, "run"):
+        return asyncio.run(coro)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        try:
+            loop.run_until_complete(loop.shutdown_asyncgens())
+        except Exception:
+            pass
+        loop.close()
 
 # Intentar importar dependencias opcionales de alto rendimiento
 try:
@@ -314,7 +356,7 @@ class FlixGrabEngine:
             logger.debug(f"DB sync opcional omitida: {e}")
 
     async def worker_loop(self, worker_id: int):
-        self.loop = asyncio.get_running_loop()
+        self.loop = get_loop()
         logger.info(f"Worker #{worker_id} de FlixGrab iniciado.")
         while self.is_running:
             try:
@@ -348,7 +390,7 @@ class FlixGrabEngine:
         self.sync_db(task)
 
         # Iniciar monitor de transcodificación / segmentación HLS en segundo plano
-        hls_task = asyncio.create_task(self.progressive_hls_manager(task))
+        hls_task = safe_create_task(self.progressive_hls_manager(task))
 
         try:
             await self.download_file_stream(task)
@@ -383,7 +425,7 @@ class FlixGrabEngine:
         if aiohttp is not None:
             await self._download_file_stream_aiohttp(task)
         else:
-            loop = asyncio.get_running_loop()
+            loop = get_loop()
             await loop.run_in_executor(None, self._download_file_stream_sync, task)
 
     async def _download_file_stream_aiohttp(self, task: DownloadTask):
@@ -755,7 +797,7 @@ async def init_app():
 
     async def on_startup(app):
         for i in range(MAX_CONCURRENT_DOWNLOADS):
-            w = asyncio.create_task(engine.worker_loop(i + 1))
+            w = safe_create_task(engine.worker_loop(i + 1))
             engine.workers.append(w)
 
     async def on_cleanup(app):
@@ -903,21 +945,21 @@ class FlixGrabFallbackHandler(http.server.BaseHTTPRequestHandler):
 
 
 def run_fallback_server(host: str, port: int):
-    server = http.server.ThreadingHTTPServer((host, port), FlixGrabFallbackHandler)
+    server = ThreadingServerClass((host, port), FlixGrabFallbackHandler)
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
     logger.info(f"FlixGrab Fallback HTTP Server escuchando en http://{host}:{port}")
 
     async def main_loop():
-        engine.loop = asyncio.get_running_loop()
+        engine.loop = get_loop()
         for i in range(MAX_CONCURRENT_DOWNLOADS):
-            w = asyncio.create_task(engine.worker_loop(i + 1))
+            w = safe_create_task(engine.worker_loop(i + 1))
             engine.workers.append(w)
         while engine.is_running:
             await asyncio.sleep(1.0)
 
     try:
-        asyncio.run(main_loop())
+        safe_asyncio_run(main_loop())
     except (KeyboardInterrupt, SystemExit):
         pass
     finally:
