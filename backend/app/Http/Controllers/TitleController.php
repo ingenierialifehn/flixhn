@@ -85,10 +85,17 @@ class TitleController extends Controller
                         $mediaType = ($item['type'] ?? 'movie') === 'series' ? 'series' : 'movie';
                         $uniqueOttId = 'ott_' . md5($providerKey . '_' . $itemTitle);
 
-                        // Buscar si existe un título local auténtico correspondiente sin importar tildes
-                        $matchedLocal = $localCandidates->first(function ($t) use ($itemTitleNorm, $normHelper) {
+                        // Buscar si existe un título local auténtico correspondiente con coincidencia exacta (no substring general)
+                        $cleanAlpha = function(string $s): string {
+                            return preg_replace('/[^a-z0-9]/', '', $s);
+                        };
+                        $itemAlpha = $cleanAlpha($itemTitleNorm);
+
+                        $matchedLocal = $localCandidates->first(function ($t) use ($itemTitleNorm, $normHelper, $cleanAlpha, $itemAlpha) {
                             $tNorm = $normHelper(trim($t->name ?? ''));
-                            return $tNorm === $itemTitleNorm || str_contains($tNorm, $itemTitleNorm) || str_contains($itemTitleNorm, $tNorm);
+                            if ($tNorm === $itemTitleNorm) return true;
+                            $tAlpha = $cleanAlpha($tNorm);
+                            return !empty($tAlpha) && !empty($itemAlpha) && $tAlpha === $itemAlpha;
                         });
 
                         $hasAuthenticMedia = false;
@@ -96,7 +103,7 @@ class TitleController extends Controller
 
                         if (!$targetLocalTitle) {
                             $targetLocalTitle = Title::where('name', $itemTitle)
-                                ->orWhere('name', 'LIKE', "%{$itemTitle}%")
+                                ->orWhere('name', 'LIKE', $itemTitle)
                                 ->first();
                         }
 
@@ -122,8 +129,8 @@ class TitleController extends Controller
                             $mergedLocalIds[] = $targetLocalTitle->id;
                             $formattedOtt = [
                                 'id' => $targetLocalTitle->id,
-                                'name' => $targetLocalTitle->name ?: $itemTitle,
-                                'title' => $targetLocalTitle->name ?: $itemTitle,
+                                'name' => $itemTitle,
+                                'title' => $itemTitle,
                                 'slug' => $targetLocalTitle->slug ?: Str::slug($itemTitle),
                                 'type' => $targetLocalTitle->type ?: $mediaType,
                                 'media_type' => $targetLocalTitle->type ?: $mediaType,
