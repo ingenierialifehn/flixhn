@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/bin/bash
 # ==============================================================================
 # Lanzador de FlixGrab Engine (FlixHN Daemon) para Servidor Linux
 # ==============================================================================
@@ -39,6 +39,14 @@ case "$1" in
             exit 0
         fi
 
+        # Intentar instalar dependencias en segundo plano si no están presentes
+        if ! "$PYTHON_BIN" -c "import aiohttp, dotenv" >/dev/null 2>&1; then
+            echo "Verificando e instalando dependencias de FlixGrab..."
+            "$PYTHON_BIN" -m pip install -r "$DIR/requirements.txt" >/dev/null 2>&1 || \
+            "$PYTHON_BIN" -m pip install --user -r "$DIR/requirements.txt" >/dev/null 2>&1 || \
+            "$PYTHON_BIN" -m pip install --break-system-packages -r "$DIR/requirements.txt" >/dev/null 2>&1 || true
+        fi
+
         rm -f "$PID_FILE"
         echo "Iniciando FlixGrab Engine en segundo plano (puerto 8001)..."
         nohup "$PYTHON_BIN" flixgrab.py > "$LOG_FILE" 2>&1 &
@@ -51,9 +59,9 @@ case "$1" in
             echo "Logs en: $LOG_FILE"
         else
             echo "ERROR: FlixGrab terminó inmediatamente tras iniciar. Últimas líneas de $LOG_FILE:"
-            echo "----------------------------------------"
+            echo "--------------------------------------------------"
             tail -n 25 "$LOG_FILE" 2>/dev/null || true
-            echo "----------------------------------------"
+            echo "--------------------------------------------------"
             rm -f "$PID_FILE"
             exit 1
         fi
@@ -76,12 +84,13 @@ case "$1" in
         else
             echo "No se encontró PID_FILE de FlixGrab."
         fi
+        pkill -f "flixgrab.py" 2>/dev/null || true
         ;;
 
     restart)
-        $0 stop
+        "$0" stop
         sleep 1
-        $0 start
+        "$0" start
         ;;
 
     status)
@@ -89,7 +98,6 @@ case "$1" in
             echo "FlixGrab está activo y funcionando (PID: $(cat "$PID_FILE"))."
         else
             echo "FlixGrab NO está en ejecución."
-            exit 1
         fi
         ;;
 

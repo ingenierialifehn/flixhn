@@ -1,4 +1,4 @@
-﻿$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Stop"
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host "  Iniciando FlixGrab Engine (FlixHN Daemon) " -ForegroundColor Yellow
 Write-Host "==========================================" -ForegroundColor Cyan

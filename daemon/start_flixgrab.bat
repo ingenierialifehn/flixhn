@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 echo ==========================================
 echo   Iniciando FlixGrab Engine (FlixHN Daemon)
 echo ==========================================

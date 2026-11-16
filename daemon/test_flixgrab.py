@@ -1,4 +1,4 @@
-﻿"""
+"""
 FlixGrab Test Suite - Intelligent Download & Progressive Streaming Engine
 Pruebas unitarias y de integración para el motor FlixGrab.
 """

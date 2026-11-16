@@ -1,4 +1,4 @@
-﻿"""
+"""
 FlixGrab Background Daemon - Intelligent Download & Progressive Streaming Engine
 Servicio asíncrono en segundo plano para la plataforma FlixHN.
 
@@ -24,12 +24,46 @@ import subprocess
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from datetime import datetime
-from dotenv import load_dotenv
+import http.server
+import urllib.parse
+import urllib.request
+import threading
 
-# Cargar variables de entorno si existen en el directorio raíz o backend
+# Intentar importar dependencias opcionales de alto rendimiento
+try:
+    import aiohttp
+    from aiohttp import web
+except ImportError:
+    aiohttp = None
+    web = None
+
+def load_env_file(path):
+    try:
+        p = Path(path)
+        if not p.is_file():
+            return
+        with open(p, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, val = line.split("=", 1)
+                key = key.strip()
+                val = val.strip().strip("'\"")
+                if key not in os.environ:
+                    os.environ[key] = val
+    except Exception:
+        pass
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(PROJECT_ROOT / ".env")
-load_dotenv(PROJECT_ROOT / "backend" / ".env")
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv(PROJECT_ROOT / ".env")
+    load_dotenv(PROJECT_ROOT / "backend" / ".env")
+except ImportError:
+    load_env_file(PROJECT_ROOT / ".env")
+    load_env_file(PROJECT_ROOT / "backend" / ".env")
 
 # Configuración básica de directorios
 DAEMON_DIR = Path(__file__).resolve().parent
@@ -177,6 +211,7 @@ class FlixGrabEngine:
         self.semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
         self.is_running = True
         self.workers: List[asyncio.Task] = []
+        self.loop: Optional[asyncio.AbstractEventLoop] = None
 
     def get_disk_info(self) -> Dict[str, Any]:
         try:
@@ -229,7 +264,11 @@ class FlixGrabEngine:
 
         self.jobs[task.job_id] = task
         # Tupla para PriorityQueue: (prioridad ascendente, timestamp, job_id)
-        self.queue.put_nowait((task.priority, time.time(), task.job_id))
+        item = (task.priority, time.time(), task.job_id)
+        if self.loop and self.loop.is_running():
+            self.loop.call_soon_threadsafe(self.queue.put_nowait, item)
+        else:
+            self.queue.put_nowait(item)
         self.sync_db(task)
         logger.info(f"Trabajo registrado en cola: [{task.title}] (ID: {task.job_id}, Prioridad: {task.priority})")
         return task
@@ -275,6 +314,7 @@ class FlixGrabEngine:
             logger.debug(f"DB sync opcional omitida: {e}")
 
     async def worker_loop(self, worker_id: int):
+        self.loop = asyncio.get_running_loop()
         logger.info(f"Worker #{worker_id} de FlixGrab iniciado.")
         while self.is_running:
             try:
@@ -340,7 +380,13 @@ class FlixGrabEngine:
                 hls_task.cancel()
 
     async def download_file_stream(self, task: DownloadTask):
-        import aiohttp
+        if aiohttp is not None:
+            await self._download_file_stream_aiohttp(task)
+        else:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, self._download_file_stream_sync, task)
+
+    async def _download_file_stream_aiohttp(self, task: DownloadTask):
         dest_file = task.storage_path
         dest_file.parent.mkdir(parents=True, exist_ok=True)
         part_file = dest_file.with_suffix(dest_file.suffix + ".part")
@@ -365,7 +411,7 @@ class FlixGrabEngine:
                     total_expected = int(content_len) + (existing_bytes if resp.status == 206 else 0)
                     task.total_bytes = total_expected
                 elif task.total_bytes <= 0:
-                    task.total_bytes = 100 * 1024 * 1024  # Fallback 100 MB estimación
+                    task.total_bytes = 100 * 1024 * 1024
 
                 mode = "ab" if (existing_bytes > 0 and resp.status == 206) else "wb"
                 if mode == "wb":
@@ -402,7 +448,77 @@ class FlixGrabEngine:
 
                             self.sync_db(task)
 
-        # Si llegó aquí sin error, promover archivo final
+        if part_file.exists():
+            if dest_file.exists():
+                dest_file.unlink()
+            part_file.rename(dest_file)
+            task.downloaded_bytes = dest_file.stat().st_size
+            task.total_bytes = task.downloaded_bytes
+
+    def _download_file_stream_sync(self, task: DownloadTask):
+        dest_file = task.storage_path
+        dest_file.parent.mkdir(parents=True, exist_ok=True)
+        part_file = dest_file.with_suffix(dest_file.suffix + ".part")
+
+        existing_bytes = part_file.stat().st_size if part_file.exists() else 0
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) FlixGrab/2.0",
+        }
+        if existing_bytes > 0:
+            headers["Range"] = f"bytes={existing_bytes}-"
+            logger.info(f"Reanudando descarga de '{task.title}' desde byte {existing_bytes}...")
+
+        req = urllib.request.Request(task.source_url, headers=headers)
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            status_code = resp.getcode()
+            if status_code not in (200, 206):
+                raise RuntimeError(f"Servidor remoto respondió con estado HTTP {status_code}")
+
+            content_len = resp.headers.get("Content-Length")
+            if content_len:
+                total_expected = int(content_len) + (existing_bytes if status_code == 206 else 0)
+                task.total_bytes = total_expected
+            elif task.total_bytes <= 0:
+                task.total_bytes = 100 * 1024 * 1024
+
+            mode = "ab" if (existing_bytes > 0 and status_code == 206) else "wb"
+            if mode == "wb":
+                existing_bytes = 0
+
+            task.downloaded_bytes = existing_bytes
+            last_time = time.time()
+            bytes_window = 0
+
+            with open(part_file, mode) as f:
+                while not task.cancel_event.is_set():
+                    chunk = resp.read(CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    f.flush()
+                    task.downloaded_bytes += len(chunk)
+                    bytes_window += len(chunk)
+
+                    now = time.time()
+                    delta = now - last_time
+                    if delta >= 1.0:
+                        speed = bytes_window / delta
+                        task.speed_bytes = speed
+                        task.download_speed = f"{round(speed / (1024 * 1024), 2)} MB/s"
+                        bytes_window = 0
+                        last_time = now
+
+                        if task.total_bytes > 0:
+                            task.progress = min(99.0, (task.downloaded_bytes / task.total_bytes) * 100)
+                            remaining_bytes = max(0, task.total_bytes - task.downloaded_bytes)
+                            eta_secs = (remaining_bytes / speed) if speed > 0 else 0
+                            task.eta = self.format_eta(eta_secs)
+
+                        self.sync_db(task)
+
+                if task.cancel_event.is_set():
+                    raise asyncio.CancelledError()
+
         if part_file.exists():
             if dest_file.exists():
                 dest_file.unlink()
@@ -522,7 +638,8 @@ engine = FlixGrabEngine()
 
 # Servidor Web REST API (aiohttp)
 async def init_app():
-    from aiohttp import web
+    if web is None:
+        return None
 
     app = web.Application()
 
@@ -530,6 +647,7 @@ async def init_app():
         return web.json_response({
             "status": "healthy",
             "service": "FlixGrab Daemon",
+            "engine": "aiohttp",
             "ffmpeg_available": bool(FFMPEG_BINARY),
             "timestamp": datetime.now().isoformat()
         })
@@ -635,36 +753,208 @@ async def init_app():
     app.router.add_post("/jobs/{id}/cancel", handle_cancel_job)
     app.router.add_post("/jobs/{id}/priority", handle_update_priority)
 
-    # Iniciar Workers en Segundo Plano
-    for i in range(MAX_CONCURRENT_DOWNLOADS):
-        w = asyncio.create_task(engine.worker_loop(i + 1))
-        engine.workers.append(w)
+    async def on_startup(app):
+        for i in range(MAX_CONCURRENT_DOWNLOADS):
+            w = asyncio.create_task(engine.worker_loop(i + 1))
+            engine.workers.append(w)
+
+    async def on_cleanup(app):
+        engine.is_running = False
+        for w in engine.workers:
+            w.cancel()
+
+    app.on_startup.append(on_startup)
+    app.on_cleanup.append(on_cleanup)
 
     return app
+
+
+# Servidor HTTP Alternativo Ligero (Biblioteca Estándar de Python)
+class FlixGrabFallbackHandler(http.server.BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        logger.info(f"{self.address_string()} - {format % args}")
+
+    def _send_json(self, status_code: int, data: Dict[str, Any]):
+        self.send_response(status_code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.end_headers()
+        payload = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        self.wfile.write(payload)
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.end_headers()
+
+    def do_GET(self):
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path.rstrip("/")
+        if not path:
+            path = "/"
+
+        if path == "/health":
+            self._send_json(200, {
+                "status": "healthy",
+                "service": "FlixGrab Daemon",
+                "engine": "python-stdlib-http",
+                "ffmpeg_available": bool(FFMPEG_BINARY),
+                "timestamp": datetime.now().isoformat()
+            })
+        elif path == "/metrics":
+            disk = engine.get_disk_info()
+            active = sum(1 for j in engine.jobs.values() if j.status in ("QUEUED", "DOWNLOADING", "PROCESSING"))
+            ready = sum(1 for j in engine.jobs.values() if j.status == "READY")
+            failed = sum(1 for j in engine.jobs.values() if j.status == "ERROR")
+            total_speed = sum(j.speed_bytes for j in engine.jobs.values() if j.status == "DOWNLOADING")
+            self._send_json(200, {
+                "success": True,
+                "metrics": {
+                    "active_tasks": active,
+                    "completed_tasks": ready,
+                    "failed_tasks": failed,
+                    "total_speed": f"{round(total_speed / (1024 * 1024), 2)} MB/s",
+                    "disk_free_formatted": disk["free_formatted"],
+                    "disk_total_formatted": disk["total_formatted"],
+                    "disk_free_mb": disk["free_mb"],
+                    "max_concurrent": MAX_CONCURRENT_DOWNLOADS,
+                    "storage_path": str(MEDIA_DIR)
+                }
+            })
+        elif path == "/jobs":
+            jobs_list = [j.to_dict() for j in sorted(engine.jobs.values(), key=lambda x: x.started_at, reverse=True)]
+            self._send_json(200, {"success": True, "total": len(jobs_list), "jobs": jobs_list})
+        elif path.startswith("/jobs/"):
+            job_id = path.split("/jobs/")[1].split("/")[0]
+            job = engine.jobs.get(job_id)
+            if not job:
+                self._send_json(404, {"success": False, "message": "Trabajo no encontrado"})
+            else:
+                self._send_json(200, {"success": True, "job": job.to_dict()})
+        else:
+            self._send_json(404, {"success": False, "message": "Ruta no encontrada"})
+
+    def do_POST(self):
+        content_length = int(self.headers.get("Content-Length", 0))
+        raw_body = self.rfile.read(content_length).decode("utf-8", errors="replace")
+        try:
+            data = json.loads(raw_body) if raw_body else {}
+        except Exception:
+            self._send_json(400, {"success": False, "message": "JSON inválido"})
+            return
+
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path.rstrip("/")
+
+        if path == "/jobs":
+            source_url = data.get("source_url") or data.get("url")
+            if not source_url:
+                self._send_json(422, {"success": False, "message": "source_url es requerido"})
+                return
+            task = DownloadTask(data)
+            registered = engine.register_job(task)
+            self._send_json(201, {
+                "success": True,
+                "message": f"Tarea '{registered.title}' recibida e ingresada a la cola.",
+                "job": registered.to_dict()
+            })
+        elif path.endswith("/cancel") and path.startswith("/jobs/"):
+            parts = path.split("/")
+            job_id = parts[2]
+            job = engine.jobs.get(job_id)
+            if not job:
+                self._send_json(404, {"success": False, "message": "Trabajo no encontrado"})
+                return
+            job.cancel_event.set()
+            job.status = "CANCELLED"
+            job.error_message = "Cancelado a petición del usuario"
+            if job.ffmpeg_proc:
+                try:
+                    job.ffmpeg_proc.terminate()
+                except Exception:
+                    pass
+            engine.sync_db(job)
+            self._send_json(200, {
+                "success": True,
+                "message": f"Trabajo '{job.title}' cancelado correctamente",
+                "job": job.to_dict()
+            })
+        elif path.endswith("/priority") and path.startswith("/jobs/"):
+            parts = path.split("/")
+            job_id = parts[2]
+            job = engine.jobs.get(job_id)
+            if not job:
+                self._send_json(404, {"success": False, "message": "Trabajo no encontrado"})
+                return
+            priority = int(data.get("priority", 5))
+            job.priority = priority
+            engine.sync_db(job)
+            self._send_json(200, {
+                "success": True,
+                "message": f"Prioridad actualizada a {priority}",
+                "job": job.to_dict()
+            })
+        else:
+            self._send_json(404, {"success": False, "message": "Ruta no encontrada"})
+
+
+def run_fallback_server(host: str, port: int):
+    server = http.server.ThreadingHTTPServer((host, port), FlixGrabFallbackHandler)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    logger.info(f"FlixGrab Fallback HTTP Server escuchando en http://{host}:{port}")
+
+    async def main_loop():
+        engine.loop = asyncio.get_running_loop()
+        for i in range(MAX_CONCURRENT_DOWNLOADS):
+            w = asyncio.create_task(engine.worker_loop(i + 1))
+            engine.workers.append(w)
+        while engine.is_running:
+            await asyncio.sleep(1.0)
+
+    try:
+        asyncio.run(main_loop())
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 def main():
     PID_FILE.write_text(str(os.getpid()))
     logger.info(f"Iniciando FlixGrab Daemon en {HOST}:{PORT} (PID: {os.getpid()})...")
 
-    from aiohttp import web
-    app = init_app()
-
     def shutdown_signal(signum, frame):
         logger.info("Recibida señal de detención. Cerrando FlixGrab Daemon...")
         engine.is_running = False
         if PID_FILE.exists():
-            PID_FILE.unlink()
+            try:
+                PID_FILE.unlink()
+            except Exception:
+                pass
         sys.exit(0)
 
     signal.signal(signal.SIGINT, shutdown_signal)
     signal.signal(signal.SIGTERM, shutdown_signal)
 
     try:
-        web.run_app(app, host=HOST, port=PORT)
+        if aiohttp is not None and web is not None:
+            logger.info("Modo de servidor: aiohttp asíncrono de alto rendimiento")
+            web.run_app(init_app(), host=HOST, port=PORT)
+        else:
+            logger.info("Modo de servidor: HTTP estándar (threading.Thread + asyncio workers)")
+            run_fallback_server(HOST, PORT)
     finally:
         if PID_FILE.exists():
-            PID_FILE.unlink()
+            try:
+                PID_FILE.unlink()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-﻿import unittest
+import unittest
 from stream_fetcher import is_safe_url, HlsManifestParser
 
 class TestStreamFetcher(unittest.TestCase):
