@@ -237,9 +237,10 @@ class OttSyncService
             return self::executePlatformSearch($cleanQuery, $normalized);
         }
 
-        // Si no se especificó plataforma (es null o 'all'), buscar en TODAS las plataformas soportadas
-        // garantizando cobertura completa de Disney+, Netflix, Amazon Prime, HBO Max, Paramount y Apple TV
-        $targetPlatforms = ['netflix', 'disney_plus', 'amazon_prime', 'hbo_max', 'apple_tv', 'paramount'];
+        // Si no se especificó plataforma (es null o 'all'), buscar EXCLUSIVAMENTE en las plataformas
+        // conectadas en admin/ott-sync (por defecto: netflix, amazon_prime, disney_plus)
+        $connected = self::getActiveConnectedPlatforms();
+        $targetPlatforms = !empty($connected) ? $connected : ['netflix', 'amazon_prime', 'disney_plus'];
 
         return self::searchRemoteOttCatalogMulti($cleanQuery, $targetPlatforms);
     }
@@ -309,11 +310,26 @@ class OttSyncService
                 $title = trim((string)($content['title'] ?? ''));
                 if ($title === '') continue;
 
+                $origTitle = (string)($content['originalTitle'] ?? $title);
+
+                // Filtrar resultados no relacionados que JustWatch a veces incluye como populares
+                $qTokens = array_filter(preg_split('/\s+/u', mb_strtolower($cleanQ)), fn($t) => mb_strlen($t) >= 2);
+                if (!empty($qTokens)) {
+                    $tLower = mb_strtolower($title);
+                    $origLower = mb_strtolower($origTitle);
+                    $matchesQuery = false;
+                    foreach ($qTokens as $token) {
+                        if (str_contains($tLower, $token) || str_contains($origLower, $token)) {
+                            $matchesQuery = true;
+                            break;
+                        }
+                    }
+                    if (!$matchesQuery) continue;
+                }
+
                 $key = mb_strtolower($title) . '_' . ($content['originalReleaseYear'] ?? '');
                 if (isset($seen[$key])) continue;
                 $seen[$key] = true;
-
-                $origTitle = (string)($content['originalTitle'] ?? $title);
                 $objectId = (string)($node['objectId'] ?? $node['id'] ?? uniqid());
                 $objType = strtolower((string)($node['objectType'] ?? 'movie'));
                 $mediaType = str_contains($objType, 'show') || str_contains($objType, 'series') || $objType === 'tv' ? 'series' : 'movie';

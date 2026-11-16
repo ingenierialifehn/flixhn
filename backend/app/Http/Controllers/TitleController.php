@@ -36,7 +36,8 @@ class TitleController extends Controller
 
         // Búsqueda reactiva en tiempo real por término (rápida, ligera e integrada con OTT)
         if ($searchQuery !== '') {
-            $matched = Title::select([
+            // 1. Obtener títulos coincidentes de la base de datos local con verificación estricta de reproducción física y no pirata
+            $localCandidates = Title::select([
                 'id', 'name', 'slug', 'type', 'provider', 'description',
                 'poster_url', 'backdrop_url', 'release_year', 'genre',
                 'duration_seconds', 'stream_path', 'file_path', 'source_type', 'category_id', 'created_at'
@@ -48,27 +49,12 @@ class TitleController extends Controller
             })
             ->orderBy('created_at', 'desc')
             ->take(60)
-            ->get()
-            ->map(function ($item) {
-                $hasFile = false;
-                if (!empty($item->file_path)) {
-                    $resolved = \App\Jobs\ProcessMediaIngestJob::resolveDiskPath($item->file_path);
-                    $hasFile = $resolved && file_exists($resolved) && filesize($resolved) > 102400;
-                }
-                $item->title = $item->name;
-                $item->year = $item->release_year;
-                $item->overview = $item->description;
-                $item->media_type = $item->type;
-                $item->is_already_downloaded = $hasFile;
-                $item->is_available_locally = $hasFile;
-                $item->is_ott = !$hasFile;
-                $item->is_downloaded = $hasFile;
-                $item->status = $hasFile ? 'En Catálogo' : 'Disponible OTT';
-                return $item;
-            });
+            ->get();
 
-            // Si la búsqueda tiene 2 o más caracteres, buscar automáticamente en todas las plataformas OTT conectadas
+            // 2. Si la búsqueda tiene 2 o más caracteres, buscar en las plataformas OTT conectadas
             $ottResults = [];
+            $mergedLocalIds = [];
+
             if (mb_strlen($searchQuery) >= 2) {
                 try {
                     $cacheKey = 'ott_search_agg_' . md5(mb_strtolower($searchQuery));
@@ -89,59 +75,103 @@ class TitleController extends Controller
                         if (empty($itemTitle)) continue;
 
                         $itemTitleLower = mb_strtolower($itemTitle);
-
-                        // Si ya está en los resultados coincidentes y ya está descargado físicamente, omitir
-                        $existingLocal = $matched->first(function ($t) use ($itemTitleLower) {
-                            return mb_strtolower(trim($t->name ?? '')) === $itemTitleLower;
-                        });
-
-                        if ($existingLocal && $existingLocal->is_already_downloaded) {
-                            continue;
-                        }
-
-                        // Verificar si existe en la base de datos completa de títulos con archivo físico válido
-                        $dbTitle = Title::where('name', $itemTitle)->first();
-                        if ($dbTitle && !empty($dbTitle->file_path)) {
-                            $resolved = \App\Jobs\ProcessMediaIngestJob::resolveDiskPath($dbTitle->file_path);
-                            if ($resolved && file_exists($resolved) && filesize($resolved) > 102400) {
-                                continue;
-                            }
-                        }
-
                         $providerKey = strtolower($item['provider'] ?? 'netflix');
                         $mediaType = ($item['type'] ?? 'movie') === 'series' ? 'series' : 'movie';
                         $uniqueOttId = 'ott_' . md5($providerKey . '_' . $itemTitle);
 
-                        $formattedOtt = [
-                            'id' => $uniqueOttId,
-                            'name' => $itemTitle,
-                            'title' => $itemTitle,
-                            'slug' => Str::slug($itemTitle) ?: $uniqueOttId,
-                            'type' => $mediaType,
-                            'media_type' => $mediaType,
-                            'provider' => $providerKey,
-                            'source_platform' => $providerKey,
-                            'description' => $item['overview'] ?? ($item['description'] ?? "Disponible para transmisión On-Net desde " . ucfirst($providerKey)),
-                            'overview' => $item['overview'] ?? ($item['description'] ?? "Disponible para transmisión On-Net desde " . ucfirst($providerKey)),
-                            'poster_url' => $item['poster_url'] ?? null,
-                            'backdrop_url' => $item['backdrop_url'] ?? ($item['poster_url'] ?? null),
-                            'release_year' => $item['year'] ?? ($item['release_year'] ?? date('Y')),
-                            'year' => $item['year'] ?? ($item['release_year'] ?? date('Y')),
-                            'genre' => is_array($item['genres'] ?? null) ? implode(', ', $item['genres']) : ($item['genres'] ?? ($item['genre'] ?? ($mediaType === 'series' ? 'Serie Original' : 'Largometraje'))),
-                            'duration_seconds' => $item['duration_seconds'] ?? 7200,
-                            'is_ott' => true,
-                            'is_downloaded' => false,
-                            'is_already_downloaded' => false,
-                            'is_available_locally' => false,
-                            'status' => 'Disponible OTT',
-                            'created_at' => now()->toIso8601String(),
-                            'metadata' => $item,
-                        ];
+                        // Buscar si existe un título local auténtico correspondiente
+                        $matchedLocal = $localCandidates->first(function ($t) use ($itemTitleLower) {
+                            $tName = mb_strtolower(trim($t->name ?? ''));
+                            return $tName === $itemTitleLower || str_contains($tName, $itemTitleLower) || str_contains($itemTitleLower, $tName);
+                        });
 
-                        // Guardar en caché individual para consultas rápidas por id (show/modal)
-                        try {
-                            Cache::put('ott_item_' . $uniqueOttId, $formattedOtt, 3600);
-                        } catch (\Throwable $e) {}
+                        $hasAuthenticMedia = false;
+                        $targetLocalTitle = $matchedLocal;
+
+                        if (!$targetLocalTitle) {
+                            $targetLocalTitle = Title::where('name', $itemTitle)
+                                ->orWhere('name', 'LIKE', "%{$itemTitle}%")
+                                ->first();
+                        }
+
+                        if ($targetLocalTitle) {
+                            if ($targetLocalTitle->type === 'series') {
+                                $ep = $targetLocalTitle->episodes()->first();
+                                if ($ep && !empty($ep->file_path)) {
+                                    $resEp = \App\Jobs\ProcessMediaIngestJob::resolveDiskPath($ep->file_path);
+                                    if ($resEp && file_exists($resEp) && !\App\Jobs\ProcessMediaIngestJob::isBannedOrPiratedSource($resEp) && \App\Jobs\ProcessMediaIngestJob::isVideoFilePlayable($resEp)) {
+                                        $hasAuthenticMedia = true;
+                                    }
+                                }
+                            }
+                            if (!$hasAuthenticMedia && !empty($targetLocalTitle->file_path)) {
+                                $resFile = \App\Jobs\ProcessMediaIngestJob::resolveDiskPath($targetLocalTitle->file_path);
+                                if ($resFile && file_exists($resFile) && !\App\Jobs\ProcessMediaIngestJob::isBannedOrPiratedSource($resFile) && \App\Jobs\ProcessMediaIngestJob::isVideoFilePlayable($resFile)) {
+                                    $hasAuthenticMedia = true;
+                                }
+                            }
+                        }
+
+                        if ($hasAuthenticMedia && $targetLocalTitle) {
+                            $mergedLocalIds[] = $targetLocalTitle->id;
+                            $formattedOtt = [
+                                'id' => $targetLocalTitle->id,
+                                'name' => $targetLocalTitle->name ?: $itemTitle,
+                                'title' => $targetLocalTitle->name ?: $itemTitle,
+                                'slug' => $targetLocalTitle->slug ?: Str::slug($itemTitle),
+                                'type' => $targetLocalTitle->type ?: $mediaType,
+                                'media_type' => $targetLocalTitle->type ?: $mediaType,
+                                'provider' => $providerKey,
+                                'source_platform' => $providerKey,
+                                'description' => $targetLocalTitle->description ?: ($item['overview'] ?? "Disponible para transmisión On-Net desde " . ucfirst($providerKey)),
+                                'overview' => $targetLocalTitle->description ?: ($item['overview'] ?? "Disponible para transmisión On-Net desde " . ucfirst($providerKey)),
+                                'poster_url' => $item['poster_url'] ?: $targetLocalTitle->poster_url,
+                                'backdrop_url' => $item['backdrop_url'] ?: ($item['poster_url'] ?: $targetLocalTitle->backdrop_url),
+                                'release_year' => $targetLocalTitle->release_year ?: ($item['year'] ?? date('Y')),
+                                'year' => $targetLocalTitle->release_year ?: ($item['year'] ?? date('Y')),
+                                'genre' => $targetLocalTitle->genre ?: ($item['genres'] ?? ($mediaType === 'series' ? 'Serie Original' : 'Largometraje')),
+                                'duration_seconds' => $targetLocalTitle->duration_seconds ?: ($item['duration_seconds'] ?? 7200),
+                                'stream_path' => "/api/stream/title/{$targetLocalTitle->id}",
+                                'file_path' => $targetLocalTitle->file_path,
+                                'is_ott' => false,
+                                'is_downloaded' => true,
+                                'is_already_downloaded' => true,
+                                'is_available_locally' => true,
+                                'status' => 'En Catálogo',
+                                'created_at' => $targetLocalTitle->created_at?->toIso8601String() ?: now()->toIso8601String(),
+                                'metadata' => $item,
+                            ];
+                        } else {
+                            $formattedOtt = [
+                                'id' => $uniqueOttId,
+                                'name' => $itemTitle,
+                                'title' => $itemTitle,
+                                'slug' => Str::slug($itemTitle) ?: $uniqueOttId,
+                                'type' => $mediaType,
+                                'media_type' => $mediaType,
+                                'provider' => $providerKey,
+                                'source_platform' => $providerKey,
+                                'description' => $item['overview'] ?? ($item['description'] ?? "Disponible para transmisión On-Net desde " . ucfirst($providerKey)),
+                                'overview' => $item['overview'] ?? ($item['description'] ?? "Disponible para transmisión On-Net desde " . ucfirst($providerKey)),
+                                'poster_url' => $item['poster_url'] ?? null,
+                                'backdrop_url' => $item['backdrop_url'] ?? ($item['poster_url'] ?? null),
+                                'release_year' => $item['year'] ?? ($item['release_year'] ?? date('Y')),
+                                'year' => $item['year'] ?? ($item['release_year'] ?? date('Y')),
+                                'genre' => is_array($item['genres'] ?? null) ? implode(', ', $item['genres']) : ($item['genres'] ?? ($item['genre'] ?? ($mediaType === 'series' ? 'Serie Original' : 'Largometraje'))),
+                                'duration_seconds' => $item['duration_seconds'] ?? 7200,
+                                'is_ott' => true,
+                                'is_downloaded' => false,
+                                'is_already_downloaded' => false,
+                                'is_available_locally' => false,
+                                'status' => 'Disponible OTT',
+                                'created_at' => now()->toIso8601String(),
+                                'metadata' => $item,
+                            ];
+
+                            try {
+                                Cache::put('ott_item_' . $uniqueOttId, $formattedOtt, 3600);
+                            } catch (\Throwable $e) {}
+                        }
 
                         $ottResults[] = $formattedOtt;
                     }
@@ -150,15 +180,50 @@ class TitleController extends Controller
                 }
             }
 
-            // Combinar: Catálogo local On-Net primero, seguido por resultados remotos OTT listos para descarga
-            $allResults = collect($matched)->concat($ottResults)->values();
+            // 3. Filtrar los títulos locales: SOLO conservar aquellos que tienen archivo físico reproducible y no pirata, y que no fueron ya fusionados en ottResults
+            $validLocal = $localCandidates->filter(function ($t) use ($mergedLocalIds) {
+                if (in_array($t->id, $mergedLocalIds, true)) {
+                    return false;
+                }
+                $hasValidMedia = false;
+                if ($t->type === 'series') {
+                    $firstEp = $t->episodes()->first();
+                    if ($firstEp && !empty($firstEp->file_path)) {
+                        $resEp = \App\Jobs\ProcessMediaIngestJob::resolveDiskPath($firstEp->file_path);
+                        if ($resEp && file_exists($resEp) && !\App\Jobs\ProcessMediaIngestJob::isBannedOrPiratedSource($resEp) && \App\Jobs\ProcessMediaIngestJob::isVideoFilePlayable($resEp)) {
+                            $hasValidMedia = true;
+                        }
+                    }
+                }
+                if (!$hasValidMedia && !empty($t->file_path)) {
+                    $res = \App\Jobs\ProcessMediaIngestJob::resolveDiskPath($t->file_path);
+                    if ($res && file_exists($res) && !\App\Jobs\ProcessMediaIngestJob::isBannedOrPiratedSource($res) && \App\Jobs\ProcessMediaIngestJob::isVideoFilePlayable($res)) {
+                        $hasValidMedia = true;
+                    }
+                }
+                return $hasValidMedia;
+            })->map(function ($item) {
+                $item->title = $item->name;
+                $item->year = $item->release_year;
+                $item->overview = $item->description;
+                $item->media_type = $item->type;
+                $item->is_already_downloaded = true;
+                $item->is_available_locally = true;
+                $item->is_ott = false;
+                $item->is_downloaded = true;
+                $item->status = 'En Catálogo';
+                return $item;
+            })->values();
+
+            // Combinar: Resultados de plataformas conectadas primero (con auténticos ya marcados como En Catálogo), seguidos por títulos locales verificados adicionales
+            $allResults = collect($ottResults)->concat($validLocal)->values();
 
             return response()->json([
                 'status' => 'success',
                 'data' => $allResults,
                 'results' => $allResults,
                 'total_titles' => $allResults->count(),
-                'local_count' => $matched->count(),
+                'local_count' => $validLocal->count(),
                 'ott_count' => count($ottResults),
             ]);
         }

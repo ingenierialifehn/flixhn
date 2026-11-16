@@ -89,7 +89,7 @@ export const BrowseSearchCard = ({ item, onPlay, onOpenModal }) => {
   const yearText = item.year || item.release_year || '';
   const genreText = item.genre || (isSeries ? 'Serie Original' : 'Largometraje');
   const posterUrl = resolvePosterUrl(item.poster_url || item.image || item.poster);
-  const providerKey = isCompleted ? 'local' : (item.provider || item.source_platform || 'local');
+  const providerKey = item.provider || item.source_platform || 'local';
 
   const handleClick = (e) => {
     e.stopPropagation();
@@ -207,6 +207,7 @@ const BrowseSearchGrid = ({
   onOpenModal,
 }) => {
   const [typeFilter, setTypeFilter] = useState('all'); // all, movie, series
+  const [platformFilter, setPlatformFilter] = useState('all'); // all, netflix, disney, amazon_prime, local
 
   const counts = useMemo(() => {
     let movies = 0;
@@ -219,15 +220,37 @@ const BrowseSearchGrid = ({
     return { all: (results || []).length, movies, series };
   }, [results]);
 
+  const platformCounts = useMemo(() => {
+    const pc = { netflix: 0, disney: 0, amazon_prime: 0, local: 0 };
+    (results || []).forEach((item) => {
+      const p = String(item.provider || item.source_platform || 'local').toLowerCase().trim();
+      if (p === 'netflix') pc.netflix++;
+      else if (p.includes('disney')) pc.disney++;
+      else if (p.includes('prime') || p.includes('amazon')) pc.amazon_prime++;
+      else pc.local++;
+    });
+    return pc;
+  }, [results]);
+
   const filteredResults = useMemo(() => {
     return (results || []).filter((item) => {
-      if (typeFilter === 'all') return true;
+      // Filtro por tipo
       const isS = (item.type || item.media_type) === 'series';
-      if (typeFilter === 'series') return isS;
-      if (typeFilter === 'movie') return !isS;
+      if (typeFilter === 'series' && !isS) return false;
+      if (typeFilter === 'movie' && isS) return false;
+
+      // Filtro por plataforma conectada
+      if (platformFilter !== 'all') {
+        const p = String(item.provider || item.source_platform || 'local').toLowerCase().trim();
+        if (platformFilter === 'netflix' && p !== 'netflix') return false;
+        if (platformFilter === 'disney' && !p.includes('disney')) return false;
+        if (platformFilter === 'amazon_prime' && !p.includes('prime') && !p.includes('amazon')) return false;
+        if (platformFilter === 'local' && p !== 'local') return false;
+      }
+
       return true;
     });
-  }, [results, typeFilter]);
+  }, [results, typeFilter, platformFilter]);
 
   return (
     <section className="pt-24 px-4 sm:px-6 md:px-12 pb-16 min-h-[75vh] max-w-[1920px] mx-auto animate-fadeIn select-none">
@@ -251,6 +274,63 @@ const BrowseSearchGrid = ({
             {filteredResults.length} {filteredResults.length === 1 ? 'título' : 'títulos'}
           </span>
         </div>
+      </div>
+
+      {/* Selector de Plataforma Conectada */}
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        <button
+          type="button"
+          onClick={() => setPlatformFilter('all')}
+          className={`px-3 py-1 rounded-full text-xs font-bold transition-all cursor-pointer ${
+            platformFilter === 'all'
+              ? 'bg-zinc-800 text-white border border-zinc-600 shadow-md'
+              : 'text-zinc-400 hover:text-white bg-zinc-900/60 hover:bg-zinc-800 border border-zinc-800'
+          }`}
+        >
+          Todas las Plataformas ({results.length})
+        </button>
+        {platformCounts.netflix > 0 && (
+          <button
+            type="button"
+            onClick={() => setPlatformFilter('netflix')}
+            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold transition-all cursor-pointer ${
+              platformFilter === 'netflix'
+                ? 'bg-[#E50914] text-white border border-red-500 shadow-md'
+                : 'text-zinc-300 hover:text-white bg-black/60 hover:bg-red-950/40 border border-red-500/30'
+            }`}
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-[#E50914]" />
+            Netflix ({platformCounts.netflix})
+          </button>
+        )}
+        {platformCounts.disney > 0 && (
+          <button
+            type="button"
+            onClick={() => setPlatformFilter('disney')}
+            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold transition-all cursor-pointer ${
+              platformFilter === 'disney'
+                ? 'bg-blue-600 text-white border border-blue-400 shadow-md'
+                : 'text-blue-300 hover:text-white bg-blue-950/40 hover:bg-blue-900/50 border border-blue-500/30'
+            }`}
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+            Disney+ ({platformCounts.disney})
+          </button>
+        )}
+        {platformCounts.amazon_prime > 0 && (
+          <button
+            type="button"
+            onClick={() => setPlatformFilter('amazon_prime')}
+            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold transition-all cursor-pointer ${
+              platformFilter === 'amazon_prime'
+                ? 'bg-[#00A8E1] text-white border border-sky-400 shadow-md'
+                : 'text-sky-300 hover:text-white bg-sky-950/40 hover:bg-sky-900/50 border border-sky-500/30'
+            }`}
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-[#00A8E1]" />
+            Prime Video ({platformCounts.amazon_prime})
+          </button>
+        )}
       </div>
 
       {/* 2. Filtros sutiles por tipo si existen múltiples tipos */}

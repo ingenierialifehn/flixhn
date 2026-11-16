@@ -633,6 +633,46 @@ class ProcessMediaIngestJob implements ShouldQueue
     }
 
     /**
+     * Valida si una ruta de archivo o metadatos pertenecen a fuentes no oficiales, piratas o corruptas
+     * (TodoPelisHD, Cinecalidad, Hackstore, Faridieck, Alt-torrent, etc.) para rechazarlas de inmediato.
+     */
+    public static function isBannedOrPiratedSource(?string $diskPath): bool
+    {
+        if (empty($diskPath)) return true;
+
+        $lower = mb_strtolower($diskPath);
+        $bannedTerms = [
+            'todopelis', 'todopelishd', 'cinecalidad', 'hackstore', 'pelisplus',
+            'repelis', 'cuevana', 'gnula', 'divx', 'granpelis', 'somosmovies',
+            'alt-torrent', 'yify', 'yts', 'rarbg', 'faridieck', 'descargas'
+        ];
+
+        foreach ($bannedTerms as $term) {
+            if (str_contains($lower, $term)) {
+                return true;
+            }
+        }
+
+        // Si el archivo físico existe en disco, inspeccionar la etiqueta format_tags=title mediante ffprobe
+        if (file_exists($diskPath) && !is_dir($diskPath)) {
+            try {
+                $escaped = escapeshellarg($diskPath);
+                $tagTitle = @shell_exec("ffprobe -v error -show_entries format_tags=title -of default=noprint_wrappers=1:nokey=1 {$escaped} 2>&1");
+                if ($tagTitle) {
+                    $lowerTag = mb_strtolower(trim($tagTitle));
+                    foreach ($bannedTerms as $term) {
+                        if (str_contains($lowerTag, $term)) {
+                            return true;
+                        }
+                    }
+                }
+            } catch (\Throwable $e) {}
+        }
+
+        return false;
+    }
+
+    /**
      * Valida si un archivo de video existe y es íntegramente reproducible por FFprobe (> 500 KB con stream de video válido).
      */
     public static function isVideoFilePlayable(?string $diskPath): bool
@@ -706,7 +746,7 @@ class ProcessMediaIngestJob implements ShouldQueue
             if (empty($title)) return false;
 
             $linkSuccess = function(string $sourceFile) use ($diskPath, $title, $task): bool {
-                if (!File::exists($sourceFile) || @filesize($sourceFile) <= 20000000 || !self::isVideoFilePlayable($sourceFile)) {
+                if (!File::exists($sourceFile) || @filesize($sourceFile) <= 20000000 || !self::isVideoFilePlayable($sourceFile) || self::isBannedOrPiratedSource($sourceFile)) {
                     return false;
                 }
                 if (@link($sourceFile, $diskPath) || @copy($sourceFile, $diskPath)) {

@@ -293,7 +293,7 @@ class MediaIngestService
                     if ($res && is_dir($res)) {
                         $res = ProcessMediaIngestJob::findFirstPlayableVideoInDirectory($res);
                     }
-                    if ($res && file_exists($res) && filesize($res) > 20000000) {
+                    if ($res && file_exists($res) && filesize($res) > 20000000 && !\App\Jobs\ProcessMediaIngestJob::isBannedOrPiratedSource($res)) {
                         return [
                             'stream_url' => $res,
                             'total_bytes' => filesize($res),
@@ -312,7 +312,7 @@ class MediaIngestService
                     if ($res && is_dir($res)) {
                         $res = ProcessMediaIngestJob::findFirstPlayableVideoInDirectory($res);
                     }
-                    if ($res && file_exists($res) && filesize($res) > 20000000) {
+                    if ($res && file_exists($res) && filesize($res) > 20000000 && !\App\Jobs\ProcessMediaIngestJob::isBannedOrPiratedSource($res)) {
                         return [
                             'stream_url' => $res,
                             'total_bytes' => filesize($res),
