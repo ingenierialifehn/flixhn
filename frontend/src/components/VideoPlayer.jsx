@@ -257,6 +257,13 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
 
   const activeMedia = currentEpisode || title;
 
+  const isDownloadedOtt = Boolean(
+    (title?.provider && title.provider !== 'local' && title.provider !== 'emby') ||
+    (title?.stream_path && (title.stream_path.includes('storage/media/') || title.stream_path.includes('/storage/media/'))) ||
+    (activeMedia?.stream_path && (activeMedia.stream_path.includes('storage/media/') || activeMedia.stream_path.includes('/storage/media/'))) ||
+    progressiveInfo?.active
+  );
+
   const isOtt = isDownloadedOtt || (!activeMedia?.emby_id && !targetItemId);
   const API_BASE_URL = (import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || '').replace(/\/api\/?$/, '');
   const ottStreamUrl = activeMedia?.id ? `${API_BASE_URL}/api/media/${activeMedia.id}/stream` : '';
