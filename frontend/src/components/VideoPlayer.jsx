@@ -264,6 +264,54 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
     progressiveInfo?.active
   );
 
+  // Extraer el ID de ítem del servidor de medios (Emby Item ID)
+  const targetItemId = useMemo(() => {
+    if (isDownloadedOtt) return null;
+    const media = currentEpisode || title;
+    if (
+      media?.provider === 'local' ||
+      media?.source_type === 'local' ||
+      (media?.source_path && (media.source_path.startsWith('/mnt/') || media.source_path.startsWith('/storage/'))) ||
+      (media?.file_path && (media.file_path.startsWith('/mnt/') || media.file_path.startsWith('/storage/')))
+    ) {
+      return null;
+    }
+
+    if (currentEpisode) {
+      if (currentEpisode.emby_id && currentEpisode.emby_id !== 'undefined' && currentEpisode.emby_id !== 'null') {
+        return currentEpisode.emby_id;
+      }
+      const epPath = currentEpisode.stream_path || currentEpisode.stream_url || '';
+      const m = epPath.match(/\/Videos\/([a-zA-Z0-9_-]+)/i) || epPath.match(/\/Items\/([a-zA-Z0-9_-]+)/i);
+      if (m && m[1] !== 'undefined' && m[1] !== 'null') return m[1];
+    }
+    if (title) {
+      if (title.emby_id && title.emby_id !== 'undefined' && title.emby_id !== 'null') {
+        return title.emby_id;
+      }
+      if (title.source_path) {
+        const m = title.source_path.match(/remote:\/\/([a-zA-Z0-9_-]+)/i);
+        if (m && m[1] !== 'undefined' && m[1] !== 'null') return m[1];
+      }
+      const tPath = title.stream_path || title.stream_url || '';
+      const m = tPath.match(/\/Videos\/([a-zA-Z0-9_-]+)/i) || tPath.match(/\/Items\/([a-zA-Z0-9_-]+)/i);
+      if (m && m[1] !== 'undefined' && m[1] !== 'null') return m[1];
+    }
+    return null;
+  }, [title, currentEpisode, isDownloadedOtt]);
+
+  const serverHost = useMemo(() => {
+    if (rawStreamPath && rawStreamPath.startsWith('http')) {
+      try {
+        const parsed = new URL(rawStreamPath);
+        return `${parsed.protocol}//${parsed.host}`;
+      } catch (e) {}
+    }
+    const custom = localStorage.getItem('media_server_url') || localStorage.getItem('emby_server_url');
+    if (custom) return custom;
+    return window.location.origin;
+  }, [rawStreamPath]);
+
   const isOtt = isDownloadedOtt || (!activeMedia?.emby_id && !targetItemId);
   const API_BASE_URL = (import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || '').replace(/\/api\/?$/, '');
   const ottStreamUrl = activeMedia?.id ? `${API_BASE_URL}/api/media/${activeMedia.id}/stream` : '';
