@@ -326,8 +326,8 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
       return `${window.location.origin}${media.stream_path}`;
     }
 
-    // Si es contenido local directo (o sin Emby ID), usar los endpoints nativos de streaming de FlixHN
-    if (media.source_type === 'local' || media.provider === 'local' || !targetItemId) {
+    // Si es contenido local directo comprobado, usar los endpoints nativos de streaming de FlixHN
+    if (media.source_type === 'local' || media.provider === 'local' || media.is_local || media.is_available_locally) {
       if (currentEpisode?.id) {
         return `${window.location.origin}/api/stream/episode/${currentEpisode.id}`;
       }
@@ -661,44 +661,61 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
 
       // Consulta inteligente de disponibilidad FlixGrab & Streaming Progresivo
       const mediaIdToCheck = activeMedia?.id || activeMedia?.content_id;
+      let serverAvailability = null;
       if (mediaIdToCheck) {
         try {
           const availRes = await api.get(`/media/${encodeURIComponent(mediaIdToCheck)}/availability`);
-          const avail = availRes.data?.availability;
-          if (avail) {
+          serverAvailability = availRes.data?.availability;
+          if (serverAvailability) {
             // Contenido en descarga activa o con trabajo existente
-            if (['DOWNLOADING', 'PROCESSING', 'QUEUED'].includes(avail.status) || avail.download_job_id) {
-              const currentJobId = avail.job_id || avail.download_job_id;
+            if (['DOWNLOADING', 'PROCESSING', 'QUEUED'].includes(serverAvailability.status) || serverAvailability.download_job_id) {
+              const currentJobId = serverAvailability.job_id || serverAvailability.download_job_id;
               setProgressiveInfo({
                 active: true,
                 jobId: currentJobId,
-                status: avail.status,
-                progress: avail.progress || 0,
-                downloadSpeed: avail.download_speed || '0.0 MB/s',
-                eta: avail.eta || '--:--',
-                segmentsReady: avail.segments_ready || 0,
-                canPlayProgressive: Boolean(avail.can_play_progressive),
-                streamUrl: avail.stream_url,
+                status: serverAvailability.status,
+                progress: serverAvailability.progress || 0,
+                downloadSpeed: serverAvailability.download_speed || '0.0 MB/s',
+                eta: serverAvailability.eta || '--:--',
+                segmentsReady: serverAvailability.segments_ready || 0,
+                canPlayProgressive: Boolean(serverAvailability.can_play_progressive),
+                streamUrl: serverAvailability.stream_url,
               });
 
-              if (avail.can_play_progressive && avail.stream_url) {
+              if (serverAvailability.can_play_progressive && serverAvailability.stream_url) {
                 setSourceType('PROGRESSIVE-HLS');
-                startHlsPlayback(avail.stream_url);
-                startProgressivePolling(currentJobId, avail.stream_url);
+                startHlsPlayback(serverAvailability.stream_url);
+                startProgressivePolling(currentJobId, serverAvailability.stream_url);
                 return;
               }
 
               // Esperando que se generen segmentos suficientes
               setIsLoading(false);
-              startProgressivePolling(currentJobId, avail.stream_url);
+              startProgressivePolling(currentJobId, serverAvailability.stream_url);
               return;
             }
 
-            // Contenido remoto disponible que requiere solicitar descarga
-            if (avail.status === 'REMOTE' && activeMedia?.source_url) {
+            // Contenido ya completado y listo en almacenamiento FlixGrab
+            if (serverAvailability.status === 'READY' && serverAvailability.stream_url) {
+              setSourceType('PROGRESSIVE-HLS');
+              if (serverAvailability.stream_url.includes('.m3u8')) {
+                startHlsPlayback(serverAvailability.stream_url);
+              } else {
+                setPlaybackMode('direct');
+                video.src = serverAvailability.stream_url;
+                video.load();
+                video.play().catch(() => {});
+              }
+              setIsLoading(false);
+              return;
+            }
+
+            // Contenido remoto disponible que cuenta con source_url o es fuente autorizada
+            const sourceUrlToUse = activeMedia?.source_url || serverAvailability?.source_url;
+            if (serverAvailability.status === 'REMOTE' && sourceUrlToUse) {
               setIsLoading(true);
               const reqRes = await api.post('/download/request', {
-                source_url: activeMedia.source_url,
+                source_url: sourceUrlToUse,
                 title: activeMedia.name || activeMedia.title,
                 content_id: String(mediaIdToCheck),
                 provider: activeMedia.provider || 'flixgrab',
@@ -731,6 +748,7 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
       const isExternalOtt = Boolean(
         activeMedia?.playback_type === 'OTT-EXTERNAL' ||
         activeMedia?.requires_external_app ||
+        activeMedia?.is_ott ||
         (activeMedia?.provider && !['local', 'emby', 'flixhn'].includes(String(activeMedia.provider).toLowerCase())) ||
         (typeof activeMedia?.id === 'string' && /^(ott_|nflx_|disney_|max_|hls_)/.test(activeMedia.id))
       );
@@ -752,13 +770,6 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
             return;
           }
 
-          if (ottRes?.playback_type === 'OTT-UNAVAILABLE') {
-            setSourceType('OTT-UNAVAILABLE');
-            setPlaybackError(ottRes.message || 'El contenido no se encuentra disponible actualmente.');
-            setIsLoading(false);
-            return;
-          }
-
           if (ottRes?.playback_type === 'OTT-HLS-AUTHORIZED' && ottRes.stream_url) {
             setSourceType('OTT-HLS-AUTHORIZED');
             setOttPlaybackInfo(ottRes);
@@ -772,18 +783,44 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
             startHlsPlayback(ottRes.stream_url);
             return;
           }
+
+          // Si el proveedor responde que no está disponible
+          setIsLoading(false);
+          setSourceType('OTT-UNAVAILABLE');
+          setPlaybackError(ottRes?.message || 'Este contenido de plataforma externa no se encuentra disponible actualmente.');
+          return;
         } catch (ottErr) {
           console.warn('Error resolviendo stream OTT dinámico:', ottErr);
+          if (isCancelled) return;
+          const ottData = ottErr.response?.data;
+          if (ottData?.playback_type === 'OTT-EXTERNAL') {
+            setSourceType('OTT-EXTERNAL');
+            setOttPlaybackInfo(ottData);
+            setIsLoading(false);
+            return;
+          }
+          setIsLoading(false);
+          setSourceType('OTT-UNAVAILABLE');
+          setPlaybackError(
+            ottData?.message ||
+            'Este título pertenece a una plataforma de streaming externa y requiere que el proveedor esté configurado o cuente con enlace autorizado.'
+          );
+          return;
         }
       }
 
-      // Detección directa de contenido local FlixHN (reproducción instantánea sin peticiones intermedias)
-      const isLocalMedia =
-        activeMedia?.source_type === 'local' ||
-        activeMedia?.provider === 'local' ||
-        (activeMedia?.source_path && (activeMedia.source_path.startsWith('/mnt/') || activeMedia.source_path.startsWith('/storage/'))) ||
-        (activeMedia?.file_path && (activeMedia.file_path.startsWith('/mnt/') || activeMedia.file_path.startsWith('/storage/'))) ||
-        !targetItemId;
+      // Detección directa de contenido local FlixHN verificado
+      const hasPhysicalLocalPath = Boolean(
+        (activeMedia?.source_path && (activeMedia.source_path.startsWith('/mnt/') || activeMedia.source_path.startsWith('/storage/') || activeMedia.source_path.startsWith('/var/'))) ||
+        (activeMedia?.file_path && (activeMedia.file_path.startsWith('/mnt/') || activeMedia.file_path.startsWith('/storage/') || activeMedia.file_path.startsWith('/var/')))
+      );
+
+      const isLocalMedia = Boolean(
+        serverAvailability?.status === 'LOCAL' ||
+        activeMedia?.is_local === true ||
+        activeMedia?.is_available_locally === true ||
+        (hasPhysicalLocalPath && (activeMedia?.source_type === 'local' || activeMedia?.provider === 'local'))
+      );
 
       const directLocalUrl = currentEpisode?.id
         ? `${window.location.origin}/api/stream/episode/${currentEpisode.id}`
@@ -927,84 +964,18 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
             direct_url: `${cleanBase}/emby/Videos/${targetItemId}/stream?static=true&MediaSourceId=${targetItemId}&DeviceId=flixhn-web-client&api_key=${activeKey}`,
           };
         } else {
-          // Título descargado de OTT o contenido local sin Emby ID:
-          // NUNCA hacer la petición a Emby con /Videos/undefined/...
-          const activeMedia = currentEpisode || title;
-
-      // Consulta inteligente de disponibilidad FlixGrab & Streaming Progresivo
-      const mediaIdToCheck = activeMedia?.id || activeMedia?.content_id;
-      if (mediaIdToCheck) {
-        try {
-          const availRes = await api.get(`/media/${encodeURIComponent(mediaIdToCheck)}/availability`);
-          const avail = availRes.data?.availability;
-          if (avail) {
-            // Contenido en descarga activa o con trabajo existente
-            if (['DOWNLOADING', 'PROCESSING', 'QUEUED'].includes(avail.status) || avail.download_job_id) {
-              const currentJobId = avail.job_id || avail.download_job_id;
-              setProgressiveInfo({
-                active: true,
-                jobId: currentJobId,
-                status: avail.status,
-                progress: avail.progress || 0,
-                downloadSpeed: avail.download_speed || '0.0 MB/s',
-                eta: avail.eta || '--:--',
-                segmentsReady: avail.segments_ready || 0,
-                canPlayProgressive: Boolean(avail.can_play_progressive),
-                streamUrl: avail.stream_url,
-              });
-
-              if (avail.can_play_progressive && avail.stream_url) {
-                setSourceType('PROGRESSIVE-HLS');
-                startHlsPlayback(avail.stream_url);
-                startProgressivePolling(currentJobId, avail.stream_url);
-                return;
-              }
-
-              // Esperando que se generen segmentos suficientes
-              setIsLoading(false);
-              startProgressivePolling(currentJobId, avail.stream_url);
-              return;
-            }
-
-            // Contenido remoto disponible que requiere solicitar descarga
-            if (avail.status === 'REMOTE' && activeMedia?.source_url) {
-              setIsLoading(true);
-              const reqRes = await api.post('/download/request', {
-                source_url: activeMedia.source_url,
-                title: activeMedia.name || activeMedia.title,
-                content_id: String(mediaIdToCheck),
-                provider: activeMedia.provider || 'flixgrab',
-                priority: 1,
-              });
-              if (reqRes.data?.job) {
-                const j = reqRes.data.job;
-                setProgressiveInfo({
-                  active: true,
-                  jobId: j.job_id || j.id,
-                  status: j.status,
-                  progress: j.progress || 0,
-                  downloadSpeed: j.download_speed || 'Iniciando...',
-                  eta: j.eta || '--:--',
-                  segmentsReady: j.segments_ready || 0,
-                  canPlayProgressive: false,
-                  streamUrl: null,
-                });
-                setIsLoading(false);
-                startProgressivePolling(j.job_id || j.id);
-                return;
-              }
-            }
+          // Si no es Emby y tampoco es un archivo local físico verificado
+          if (!isLocalMedia) {
+            setIsLoading(false);
+            setPlaybackError('El archivo físico de este título no se encuentra en el almacenamiento local del servidor ni cuenta con flujo de transmisión activo.');
+            return;
           }
-        } catch (err) {
-          console.debug('Verificación de disponibilidad FlixGrab omitida:', err);
-        }
-      }
 
           const fallbackDirectUrl = streamUrl || (activeMedia?.id ? (currentEpisode?.id ? `/api/stream/episode/${currentEpisode.id}` : `/api/stream/title/${activeMedia.id}`) : '');
           const isHls = fallbackDirectUrl.includes('.m3u8');
           playInfo = {
             is_local: true,
-            is_ott: true,
+            is_ott: false,
             play_session_id: null,
             media_source_id: null,
             container: isHls ? 'm3u8' : 'mp4',

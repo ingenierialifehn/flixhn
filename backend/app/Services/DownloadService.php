@@ -79,7 +79,27 @@ class DownloadService
      */
     public function requestDownload(array $data, ?User $user = null): DownloadJob
     {
+        $contentId = (string) ($data['content_id'] ?? $data['media_id'] ?? '');
+        $titleName = trim($data['title'] ?? $data['name'] ?? '');
         $sourceUrl = trim($data['source_url'] ?? $data['url'] ?? '');
+
+        if (empty($sourceUrl) && !empty($contentId)) {
+            $authorizedSources = [
+                'big-buck-bunny-2008' => 'https://archive.org/download/BigBuckBunny_124/BigBuckBunny_1080p.mp4',
+                'sita-sings-the-blues-2008' => 'https://archive.org/download/Sita_Sings_the_Blues_1080p/Sita_Sings_the_Blues_1080p.mp4',
+                'tears-of-steel-2012' => 'https://archive.org/download/Tears-of-Steel/tears_of_steel_1080p.webm',
+                'cosmos-laundromat-2015' => 'https://archive.org/download/CosmosLaundromatFirstCycle/Cosmos_Laundromat_First_Cycle_1080p.mp4',
+                'night-of-the-living-dead-1968' => 'https://archive.org/download/night_of_the_living_dead/night_of_the_living_dead_1080p.mp4',
+            ];
+            $sourceUrl = $authorizedSources[$contentId] ?? '';
+            if (empty($sourceUrl)) {
+                $t = Title::where('id', $contentId)->orWhere('slug', $contentId)->first();
+                if ($t && $t->stream_url) {
+                    $sourceUrl = $t->stream_url;
+                }
+            }
+        }
+
         if (empty($sourceUrl)) {
             throw new \InvalidArgumentException('La URL de origen autorizada es obligatoria.');
         }
@@ -356,12 +376,27 @@ class DownloadService
         }
 
         // 3. Si no existe localmente ni hay descarga, es contenido REMOTO disponible para solicitud
+        $authorizedSources = [
+            'big-buck-bunny-2008' => 'https://archive.org/download/BigBuckBunny_124/BigBuckBunny_1080p.mp4',
+            'sita-sings-the-blues-2008' => 'https://archive.org/download/Sita_Sings_the_Blues_1080p/Sita_Sings_the_Blues_1080p.mp4',
+            'tears-of-steel-2012' => 'https://archive.org/download/Tears-of-Steel/tears_of_steel_1080p.webm',
+            'cosmos-laundromat-2015' => 'https://archive.org/download/CosmosLaundromatFirstCycle/Cosmos_Laundromat_First_Cycle_1080p.mp4',
+            'night-of-the-living-dead-1968' => 'https://archive.org/download/night_of_the_living_dead/night_of_the_living_dead_1080p.mp4',
+        ];
+        $knownSourceUrl = $authorizedSources[$cleanId] ?? ($title?->stream_url ?: null);
+        $provider = $title?->provider ?? 'remote';
+        $isOtt = in_array(strtolower($provider), ['netflix', 'disney', 'max', 'prime', 'amazon', 'apple', 'paramount', 'starplus', 'crunchyroll']);
+
         return [
             'status' => 'REMOTE',
             'available' => false,
             'can_play_progressive' => false,
             'stream_url' => null,
+            'source_url' => $knownSourceUrl,
             'is_local' => false,
+            'is_ott' => $isOtt,
+            'provider' => $provider,
+            'title' => $title?->name ?? $cleanId,
             'progress' => 0,
         ];
     }

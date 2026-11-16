@@ -25,8 +25,8 @@ class DownloadController extends Controller
     public function requestDownload(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'source_url' => 'required_without:url|nullable|string|max:1000',
-            'url' => 'required_without:source_url|nullable|string|max:1000',
+            'source_url' => 'nullable|string|max:1000',
+            'url' => 'nullable|string|max:1000',
             'title' => 'nullable|string|max:255',
             'content_id' => 'nullable|string|max:100',
             'provider' => 'nullable|string|max:50',

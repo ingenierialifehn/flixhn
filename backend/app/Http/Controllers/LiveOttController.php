@@ -121,12 +121,7 @@ class LiveOttController extends Controller
                 'user_id' => $request->user()?->id,
             ]);
 
-            $status = $playbackInfo['success'] ? 200 : 400;
-            if ($playbackInfo['playback_type'] === 'OTT-UNAVAILABLE' && empty($playbackInfo['success'])) {
-                $status = 404;
-            }
-
-            return response()->json($playbackInfo, $status);
+            return response()->json($playbackInfo, 200);
         } catch (\Throwable $e) {
             Log::error('Error en LiveOttController@streamLink: ' . $e->getMessage());
             return response()->json([

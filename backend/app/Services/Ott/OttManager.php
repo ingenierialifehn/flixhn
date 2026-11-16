@@ -35,6 +35,46 @@ class OttManager
         // Consultar configuración desde base de datos
         $config = OttProviderConfig::bySlug($normalizedSlug)->first();
 
+        if (!$config) {
+            $names = [
+                'prime' => 'Amazon Prime Video',
+                'amazon' => 'Amazon Prime Video',
+                'apple' => 'Apple TV+',
+                'appletv' => 'Apple TV+',
+                'paramount' => 'Paramount+',
+                'paramountplus' => 'Paramount+',
+                'starplus' => 'Star+',
+                'crunchyroll' => 'Crunchyroll',
+            ];
+            $friendlyName = $names[$normalizedSlug] ?? ucfirst($normalizedSlug);
+            $appScheme = match ($normalizedSlug) {
+                'prime', 'amazon' => 'primevideo://',
+                'apple', 'appletv' => 'appletv://',
+                'paramount', 'paramountplus' => 'paramountplus://',
+                'crunchyroll' => 'crunchyroll://',
+                default => "{$normalizedSlug}://",
+            };
+            $webUrl = match ($normalizedSlug) {
+                'prime', 'amazon' => 'https://www.primevideo.com',
+                'apple', 'appletv' => 'https://tv.apple.com',
+                'paramount', 'paramountplus' => 'https://www.paramountplus.com',
+                'crunchyroll' => 'https://www.crunchyroll.com',
+                default => "https://www.{$normalizedSlug}.com",
+            };
+
+            $config = new OttProviderConfig([
+                'slug' => $normalizedSlug,
+                'name' => $friendlyName,
+                'is_active' => true,
+                'integration_type' => 'app_redirect',
+                'playback_config' => [
+                    'direct_playback' => false,
+                    'app_scheme' => $appScheme,
+                    'web_url_template' => $webUrl,
+                ]
+            ]);
+        }
+
         // Mapeo de adaptadores especializados o genéricos
         $adapter = match ($normalizedSlug) {
             'local' => new LocalVodAdapter($config),
@@ -42,7 +82,7 @@ class OttManager
             'netflix' => new NetflixAdapter($config),
             'disney', 'disneyplus', 'disney_plus' => new DisneyPlusAdapter($config),
             'max', 'hbo_max', 'hbo' => new MaxAdapter($config),
-            default => $config ? new GenericPartnerOttAdapter($config) : null,
+            default => new GenericPartnerOttAdapter($config),
         };
 
         if ($adapter) {
