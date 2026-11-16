@@ -1,4 +1,4 @@
-﻿/**
+/**
  * FlixHN OTT Dynamic Service
  * Cliente API oficial para la Integración y Reproductor OTT Dinámico.
  */

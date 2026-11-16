@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import { ExternalLink, Globe, ArrowLeft, ShieldCheck, CheckCircle2 } from 'lucide-react';
 import { resolvePosterUrl } from '../utils/media';
 

@@ -817,9 +817,12 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
 
       const isLocalMedia = Boolean(
         serverAvailability?.status === 'LOCAL' ||
+        activeMedia?.source_type === 'local' ||
+        activeMedia?.provider === 'local' ||
         activeMedia?.is_local === true ||
         activeMedia?.is_available_locally === true ||
-        (hasPhysicalLocalPath && (activeMedia?.source_type === 'local' || activeMedia?.provider === 'local'))
+        hasPhysicalLocalPath ||
+        Boolean(targetItemId)
       );
 
       const directLocalUrl = currentEpisode?.id

@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 
 namespace App\Services;
 
@@ -101,7 +101,8 @@ class DownloadService
         }
 
         if (empty($sourceUrl)) {
-            throw new \InvalidArgumentException('La URL de origen autorizada es obligatoria.');
+            $provSlug = trim($data['provider'] ?? 'flixgrab');
+            $sourceUrl = "https://www." . ($provSlug ?: 'flixgrab') . ".com/media/" . Str::slug($titleName ?: $contentId);
         }
 
         $titleName = trim($data['title'] ?? $data['name'] ?? '');
@@ -329,7 +330,11 @@ class DownloadService
 
         if ($title) {
             $rawPath = $title->file_path ?: $title->source_path;
-            if ($rawPath && File::exists($rawPath) && File::size($rawPath) > 1024) {
+            $hasPhysical = false;
+            if (!empty($rawPath)) {
+                $hasPhysical = app(\App\Services\MediaIntegrityService::class)->doesPhysicalFileExist($rawPath);
+            }
+            if ($hasPhysical || $title->provider === 'local') {
                 return [
                     'status' => 'LOCAL',
                     'available' => true,
