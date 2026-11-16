@@ -2,7 +2,7 @@
 FlixHN OTT Dynamic Stream Fetcher & Media Probe Microservice
 Servicio auxiliar asincrono de alto rendimiento en Python 3.x para FlixHN.
 Intermediario oficial entre Laravel y fuentes de streaming autorizadas.
-Soporta tanto aiohttp (asincrono de alta concurrencia) como fallback HTTP nativo (biblioteca estandar).
+Soporta Python 3.6+, aiohttp (asincrono) y fallback HTTP nativo (biblioteca estandar).
 """
 
 import argparse
@@ -14,6 +14,7 @@ import logging
 import os
 import re
 import socket
+import socketserver
 import subprocess
 import sys
 import time
@@ -27,6 +28,13 @@ try:
 except ImportError:
     aiohttp = None
     web = None
+
+# Servidor multihilo compatible con Python 3.6 y 3.7+
+if hasattr(http.server, "ThreadingHTTPServer"):
+    ThreadingServerClass = http.server.ThreadingHTTPServer
+else:
+    class ThreadingServerClass(socketserver.ThreadingMixIn, http.server.HTTPServer):
+        daemon_threads = True
 
 # Configuracion de Logging Estructurado
 logging.basicConfig(
@@ -527,7 +535,8 @@ def cli_probe_media(url: str):
 
 def main():
     parser = argparse.ArgumentParser(description="FlixHN Stream Fetcher & OTT Probe Daemon")
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    # Compatible con Python 3.6 (no usar required=True en add_subparsers)
+    subparsers = parser.add_subparsers(dest="command")
 
     # Subcomando: serve
     serve_parser = subparsers.add_parser("serve", help="Inicia el microservicio HTTP daemon")
@@ -545,6 +554,10 @@ def main():
 
     args = parser.parse_args()
 
+    if not getattr(args, "command", None):
+        parser.print_help()
+        sys.exit(1)
+
     if args.command == "serve":
         if web is not None:
             logger.info(f"Iniciando microservicio Stream Fetcher con aiohttp en http://{args.host}:{args.port}")
@@ -552,7 +565,7 @@ def main():
             web.run_app(app, host=args.host, port=args.port)
         else:
             logger.info(f"Iniciando microservicio Stream Fetcher con servidor HTTP nativo en http://{args.host}:{args.port}")
-            server = http.server.ThreadingHTTPServer((args.host, args.port), FallbackHttpRequestHandler)
+            server = ThreadingServerClass((args.host, args.port), FallbackHttpRequestHandler)
             try:
                 server.serve_forever()
             except KeyboardInterrupt:
