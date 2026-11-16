@@ -18,6 +18,10 @@ import {
   X,
   Check,
   Tv,
+  DownloadCloud,
+  Clock,
+  Zap,
+  Sparkles,
 } from 'lucide-react';
 import api from '../api/axios';
 import { useAuth } from '../context/AuthContext';
@@ -68,6 +72,29 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
   const [playbackMode, setPlaybackMode] = useState('direct'); // 'direct' | 'hls'
   const [sourceType, setSourceType] = useState('LOCAL-HLS'); // 'LOCAL-HLS' | 'OTT-HLS-AUTHORIZED' | 'OTT-DASH-AUTHORIZED' | 'OTT-EXTERNAL' | 'OTT-UNAVAILABLE'
   const [ottPlaybackInfo, setOttPlaybackInfo] = useState(null);
+
+  // Estado y telemetría para streaming progresivo inteligente FlixGrab
+  const [progressiveInfo, setProgressiveInfo] = useState({
+    active: false,
+    jobId: null,
+    status: null,
+    progress: 0,
+    downloadSpeed: '0.0 MB/s',
+    eta: '--:--',
+    segmentsReady: 0,
+    canPlayProgressive: false,
+    streamUrl: null,
+  });
+  const progressiveTimerRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (progressiveTimerRef.current) {
+        clearInterval(progressiveTimerRef.current);
+      }
+    };
+  }, []);
+
 
   // Menús desplegables de controles
   const [showEpisodeDrawer, setShowEpisodeDrawer] = useState(false);
@@ -229,59 +256,6 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
   const streamBase = import.meta.env.VITE_STREAM_URL || defaultMediaBase;
 
   const activeMedia = currentEpisode || title;
-  const isDownloadedOtt = Boolean(
-    (title?.provider && title.provider !== 'local' && title.provider !== 'emby') ||
-    (title?.stream_path && (title.stream_path.includes('storage/media/') || title.stream_path.includes('/storage/media/'))) ||
-    (activeMedia?.stream_path && (activeMedia.stream_path.includes('storage/media/') || activeMedia.stream_path.includes('/storage/media/')))
-  );
-
-  // Extraer el ID de ítem del servidor de medios (Emby Item ID)
-  const targetItemId = useMemo(() => {
-    if (isDownloadedOtt) return null;
-    const media = currentEpisode || title;
-    if (
-      media?.provider === 'local' ||
-      media?.source_type === 'local' ||
-      (media?.source_path && (media.source_path.startsWith('/mnt/') || media.source_path.startsWith('/storage/'))) ||
-      (media?.file_path && (media.file_path.startsWith('/mnt/') || media.file_path.startsWith('/storage/')))
-    ) {
-      return null;
-    }
-
-    if (currentEpisode) {
-      if (currentEpisode.emby_id && currentEpisode.emby_id !== 'undefined' && currentEpisode.emby_id !== 'null') {
-        return currentEpisode.emby_id;
-      }
-      const epPath = currentEpisode.stream_path || currentEpisode.stream_url || '';
-      const m = epPath.match(/\/Videos\/([a-zA-Z0-9_-]+)/i) || epPath.match(/\/Items\/([a-zA-Z0-9_-]+)/i);
-      if (m && m[1] !== 'undefined' && m[1] !== 'null') return m[1];
-    }
-    if (title) {
-      if (title.emby_id && title.emby_id !== 'undefined' && title.emby_id !== 'null') {
-        return title.emby_id;
-      }
-      if (title.source_path) {
-        const m = title.source_path.match(/remote:\/\/([a-zA-Z0-9_-]+)/i);
-        if (m && m[1] !== 'undefined' && m[1] !== 'null') return m[1];
-      }
-      const tPath = title.stream_path || title.stream_url || '';
-      const m = tPath.match(/\/Videos\/([a-zA-Z0-9_-]+)/i) || tPath.match(/\/Items\/([a-zA-Z0-9_-]+)/i);
-      if (m && m[1] !== 'undefined' && m[1] !== 'null') return m[1];
-    }
-    return null;
-  }, [title, currentEpisode, isDownloadedOtt]);
-
-  const serverHost = useMemo(() => {
-    if (rawStreamPath && rawStreamPath.startsWith('http')) {
-      try {
-        const parsed = new URL(rawStreamPath);
-        return `${parsed.protocol}//${parsed.host}`;
-      } catch (e) {}
-    }
-    const custom = localStorage.getItem('media_server_url') || localStorage.getItem('emby_server_url');
-    if (custom) return custom;
-    return window.location.origin;
-  }, [rawStreamPath]);
 
   const isOtt = isDownloadedOtt || (!activeMedia?.emby_id && !targetItemId);
   const API_BASE_URL = (import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || '').replace(/\/api\/?$/, '');
@@ -542,6 +516,72 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
       }
     };
 
+    
+    // Función de sondeo en tiempo real para descargas progresivas FlixGrab
+    const startProgressivePolling = (jobId, initialStreamUrl = null) => {
+      if (progressiveTimerRef.current) {
+        clearInterval(progressiveTimerRef.current);
+      }
+      progressiveTimerRef.current = setInterval(async () => {
+        if (isCancelled) return;
+        try {
+          const res = await api.get(`/download/${jobId}/status`);
+          if (res.data?.success && res.data.job) {
+            const j = res.data.job;
+            const liveStream = res.data.stream_url || initialStreamUrl;
+            setProgressiveInfo((prev) => ({
+              ...prev,
+              active: true,
+              jobId: jobId,
+              status: j.status,
+              progress: j.progress || 0,
+              downloadSpeed: j.download_speed || '0.0 MB/s',
+              eta: j.eta || '--:--',
+              segmentsReady: j.segments_ready || 0,
+              canPlayProgressive: Boolean(j.can_play_progressive),
+              streamUrl: liveStream || prev.streamUrl,
+            }));
+
+            // Si ya hay suficientes segmentos listos y aún no se inició el reproductor:
+            if (j.can_play_progressive && liveStream && !video.src && !hlsRef.current) {
+              setPlaybackMode('hls');
+              setSourceType('PROGRESSIVE-HLS');
+              startHlsPlayback(liveStream);
+            }
+
+            // Si finalizó completamente (READY)
+            if (j.status === 'READY') {
+              if (progressiveTimerRef.current) {
+                clearInterval(progressiveTimerRef.current);
+              }
+              setTimeout(() => {
+                setProgressiveInfo((prev) => ({ ...prev, active: false }));
+              }, 5000);
+            }
+          }
+        } catch (e) {
+          console.debug('Error en sondeo de FlixGrab:', e);
+        }
+      }, 2000);
+    };
+
+    const handleCancelDownload = async () => {
+      if (progressiveInfo.jobId) {
+        try {
+          await api.post(`/download/${progressiveInfo.jobId}/cancel`);
+        } catch (e) {}
+      }
+      if (progressiveTimerRef.current) {
+        clearInterval(progressiveTimerRef.current);
+      }
+      setProgressiveInfo((prev) => ({ ...prev, active: false }));
+      if (typeof onBack === 'function') {
+        onBack();
+      } else if (typeof onClose === 'function') {
+        onClose();
+      }
+    };
+
     const initPlayerSession = async () => {
       // 1. Reanudar progreso previo
       if (resumeSeconds <= 0 && activeProfile && title) {
@@ -563,6 +603,76 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
 
       // 0. Resolución Dinámica OTT para proveedores externos o enlaces autorizados
       const activeMedia = currentEpisode || title;
+
+      // Consulta inteligente de disponibilidad FlixGrab & Streaming Progresivo
+      const mediaIdToCheck = activeMedia?.id || activeMedia?.content_id;
+      if (mediaIdToCheck) {
+        try {
+          const availRes = await api.get(`/media/${encodeURIComponent(mediaIdToCheck)}/availability`);
+          const avail = availRes.data?.availability;
+          if (avail) {
+            // Contenido en descarga activa o con trabajo existente
+            if (['DOWNLOADING', 'PROCESSING', 'QUEUED'].includes(avail.status) || avail.download_job_id) {
+              const currentJobId = avail.job_id || avail.download_job_id;
+              setProgressiveInfo({
+                active: true,
+                jobId: currentJobId,
+                status: avail.status,
+                progress: avail.progress || 0,
+                downloadSpeed: avail.download_speed || '0.0 MB/s',
+                eta: avail.eta || '--:--',
+                segmentsReady: avail.segments_ready || 0,
+                canPlayProgressive: Boolean(avail.can_play_progressive),
+                streamUrl: avail.stream_url,
+              });
+
+              if (avail.can_play_progressive && avail.stream_url) {
+                setSourceType('PROGRESSIVE-HLS');
+                startHlsPlayback(avail.stream_url);
+                startProgressivePolling(currentJobId, avail.stream_url);
+                return;
+              }
+
+              // Esperando que se generen segmentos suficientes
+              setIsLoading(false);
+              startProgressivePolling(currentJobId, avail.stream_url);
+              return;
+            }
+
+            // Contenido remoto disponible que requiere solicitar descarga
+            if (avail.status === 'REMOTE' && activeMedia?.source_url) {
+              setIsLoading(true);
+              const reqRes = await api.post('/download/request', {
+                source_url: activeMedia.source_url,
+                title: activeMedia.name || activeMedia.title,
+                content_id: String(mediaIdToCheck),
+                provider: activeMedia.provider || 'flixgrab',
+                priority: 1,
+              });
+              if (reqRes.data?.job) {
+                const j = reqRes.data.job;
+                setProgressiveInfo({
+                  active: true,
+                  jobId: j.job_id || j.id,
+                  status: j.status,
+                  progress: j.progress || 0,
+                  downloadSpeed: j.download_speed || 'Iniciando...',
+                  eta: j.eta || '--:--',
+                  segmentsReady: j.segments_ready || 0,
+                  canPlayProgressive: false,
+                  streamUrl: null,
+                });
+                setIsLoading(false);
+                startProgressivePolling(j.job_id || j.id);
+                return;
+              }
+            }
+          }
+        } catch (err) {
+          console.debug('Verificación de disponibilidad FlixGrab omitida:', err);
+        }
+      }
+
       const isExternalOtt = Boolean(
         activeMedia?.playback_type === 'OTT-EXTERNAL' ||
         activeMedia?.requires_external_app ||
@@ -765,6 +875,76 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
           // Título descargado de OTT o contenido local sin Emby ID:
           // NUNCA hacer la petición a Emby con /Videos/undefined/...
           const activeMedia = currentEpisode || title;
+
+      // Consulta inteligente de disponibilidad FlixGrab & Streaming Progresivo
+      const mediaIdToCheck = activeMedia?.id || activeMedia?.content_id;
+      if (mediaIdToCheck) {
+        try {
+          const availRes = await api.get(`/media/${encodeURIComponent(mediaIdToCheck)}/availability`);
+          const avail = availRes.data?.availability;
+          if (avail) {
+            // Contenido en descarga activa o con trabajo existente
+            if (['DOWNLOADING', 'PROCESSING', 'QUEUED'].includes(avail.status) || avail.download_job_id) {
+              const currentJobId = avail.job_id || avail.download_job_id;
+              setProgressiveInfo({
+                active: true,
+                jobId: currentJobId,
+                status: avail.status,
+                progress: avail.progress || 0,
+                downloadSpeed: avail.download_speed || '0.0 MB/s',
+                eta: avail.eta || '--:--',
+                segmentsReady: avail.segments_ready || 0,
+                canPlayProgressive: Boolean(avail.can_play_progressive),
+                streamUrl: avail.stream_url,
+              });
+
+              if (avail.can_play_progressive && avail.stream_url) {
+                setSourceType('PROGRESSIVE-HLS');
+                startHlsPlayback(avail.stream_url);
+                startProgressivePolling(currentJobId, avail.stream_url);
+                return;
+              }
+
+              // Esperando que se generen segmentos suficientes
+              setIsLoading(false);
+              startProgressivePolling(currentJobId, avail.stream_url);
+              return;
+            }
+
+            // Contenido remoto disponible que requiere solicitar descarga
+            if (avail.status === 'REMOTE' && activeMedia?.source_url) {
+              setIsLoading(true);
+              const reqRes = await api.post('/download/request', {
+                source_url: activeMedia.source_url,
+                title: activeMedia.name || activeMedia.title,
+                content_id: String(mediaIdToCheck),
+                provider: activeMedia.provider || 'flixgrab',
+                priority: 1,
+              });
+              if (reqRes.data?.job) {
+                const j = reqRes.data.job;
+                setProgressiveInfo({
+                  active: true,
+                  jobId: j.job_id || j.id,
+                  status: j.status,
+                  progress: j.progress || 0,
+                  downloadSpeed: j.download_speed || 'Iniciando...',
+                  eta: j.eta || '--:--',
+                  segmentsReady: j.segments_ready || 0,
+                  canPlayProgressive: false,
+                  streamUrl: null,
+                });
+                setIsLoading(false);
+                startProgressivePolling(j.job_id || j.id);
+                return;
+              }
+            }
+          }
+        } catch (err) {
+          console.debug('Verificación de disponibilidad FlixGrab omitida:', err);
+        }
+      }
+
           const fallbackDirectUrl = streamUrl || (activeMedia?.id ? (currentEpisode?.id ? `/api/stream/episode/${currentEpisode.id}` : `/api/stream/title/${activeMedia.id}`) : '');
           const isHls = fallbackDirectUrl.includes('.m3u8');
           playInfo = {
@@ -1314,6 +1494,86 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
           <div className="w-16 h-16 border-4 border-[#E50914] border-t-transparent rounded-full animate-spin"></div>
         </div>
       )}
+
+      
+      {/* Overlay de Búfer Progresivo FlixGrab (Esperando segmentos reproducibles) */}
+      {progressiveInfo.active && !progressiveInfo.canPlayProgressive && !playbackError && (
+        <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/95 p-6 text-center select-none backdrop-blur-xl">
+          <div className="relative z-10 max-w-md w-full space-y-5 animate-scaleUp">
+            <div className="inline-flex p-4 rounded-2xl bg-red-600/20 text-[#E50914] border border-red-500/30 shadow-2xl">
+              <DownloadCloud className="w-12 h-12 animate-bounce" />
+            </div>
+
+            <div>
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-bold uppercase tracking-wider bg-red-950/80 text-red-400 border border-red-500/40 mb-2">
+                <span className="w-2 h-2 rounded-full bg-[#E50914] animate-ping" />
+                FlixGrab Streaming Progresivo
+              </span>
+              <h2 className="text-xl md:text-2xl font-black text-white tracking-tight">
+                {title?.name || title?.title || 'Descargando Contenido'}
+              </h2>
+              <p className="text-xs text-zinc-400 mt-1">
+                Descargando en segundo plano y generando segmentos HLS para reproducción inmediata.
+              </p>
+            </div>
+
+            {/* Barra de Progreso */}
+            <div className="bg-zinc-900/90 border border-zinc-800 p-4 rounded-2xl space-y-2 shadow-2xl">
+              <div className="flex justify-between items-center text-xs font-mono">
+                <span className="text-zinc-400">Progreso de descarga</span>
+                <span className="text-[#E50914] font-black">{Math.round(progressiveInfo.progress)}%</span>
+              </div>
+              <div className="w-full bg-zinc-800 h-2.5 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-red-700 via-[#E50914] to-red-500 transition-all duration-300 rounded-full"
+                  style={{ width: `${Math.max(5, progressiveInfo.progress)}%` }}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 pt-2 text-[11px] text-zinc-400 border-t border-zinc-800/60 font-mono">
+                <div className="text-left flex items-center gap-1">
+                  <Zap className="w-3.5 h-3.5 text-amber-400" />
+                  <span>{progressiveInfo.downloadSpeed || '0.0 MB/s'}</span>
+                </div>
+                <div className="text-right flex items-center justify-end gap-1">
+                  <Clock className="w-3.5 h-3.5 text-blue-400" />
+                  <span>ETA: {progressiveInfo.eta || '--:--'}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Estado del Búfer */}
+            <div className="p-3 bg-zinc-900/60 rounded-xl border border-zinc-800 text-[11px] text-zinc-300 flex items-center justify-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+              <span>
+                Búfer de reproducción: {progressiveInfo.segmentsReady} de 2 segmentos listos. La reproducción iniciará automáticamente.
+              </span>
+            </div>
+
+            {/* Botón Cancelar */}
+            <button
+              onClick={handleCancelDownload}
+              className="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white text-xs font-semibold rounded-xl border border-zinc-700 transition-all cursor-pointer shadow-lg"
+            >
+              Cancelar Descarga y Salir
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Pill Flotante Discreto durante Reproducción Progresiva Activa */}
+      {progressiveInfo.active && progressiveInfo.canPlayProgressive && (
+        <div className="absolute top-16 right-6 z-40 pointer-events-none animate-fadeIn">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/85 border border-red-500/40 text-xs font-mono text-zinc-200 backdrop-blur-md shadow-2xl">
+            <span className="w-2 h-2 rounded-full bg-[#E50914] animate-ping" />
+            <span className="text-[#E50914] font-bold">FlixGrab On-Net:</span>
+            <span>{Math.round(progressiveInfo.progress)}%</span>
+            <span className="text-zinc-500">•</span>
+            <span className="text-emerald-400 font-semibold">{progressiveInfo.downloadSpeed}</span>
+          </div>
+        </div>
+      )}
+
 
       {/* Mensaje de Error de Reproducción */}
       {playbackError && (

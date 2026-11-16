@@ -144,3 +144,47 @@ En el Panel de Administración (`/admin`), la ruta de streaming se ingresa de fo
 
 Nginx resolverá automáticamente el archivo en:
 `http://<IP_SERVIDOR_ISP>:7000/media/movies/top-gun/index.m3u8` con encabezados CORS habilitados para cualquier dispositivo conectado al ISP.
+
+---
+
+## ⚡ Motor FlixGrab & Streaming Progresivo Inteligente
+
+FlixHN incorpora **FlixGrab**, un motor multimedia asíncrono y distribuido en Python 3.x y Laravel 11 que unifica la búsqueda, descarga en segundo plano y reproducción progresiva.
+
+### 🔄 Flujo de Trabajo
+```
+BUSCAR -> IDENTIFICAR DISPONIBILIDAD -> SOLICITAR CONTENIDO -> DESCARGAR EN SEGUNDO PLANO -> PROCESAR -> PUBLICAR SEGMENTOS HLS -> REPRODUCIR INMEDIATAMENTE -> COMPLETAR DESCARGA
+```
+
+### 📡 Estados del Contenido
+- `LOCAL`: Contenido almacenado y verificado físicamente en el servidor FlixHN.
+- `REMOTE`: Disponible en catálogo o CDN externo autorizado, listo para solicitar.
+- `QUEUED`: Solicitud registrada y asignada en la cola de prioridades.
+- `DOWNLOADING`: Descarga en curso con cálculo reactivo de velocidad y ETA.
+- `PROCESSING`: Remuxing y segmentación HLS en segundo plano mediante FFmpeg.
+- `READY`: Archivo descargado, validado e indexado automáticamente al catálogo.
+- `ERROR`: Falla de conexión o verificación de integridad (con opción de reintento).
+
+### 🛠️ Endpoints API de FlixGrab
+| Método | Endpoint | Descripción |
+| :--- | :--- | :--- |
+| `POST` | `/api/media/search` | Búsqueda unificada en catálogo local y proveedores externos |
+| `POST` | `/api/download/request` | Encolar una nueva descarga con control de duplicados |
+| `GET` | `/api/download/{id}/status` | Consultar progreso, velocidad, ETA y disponibilidad de segmentos |
+| `POST` | `/api/download/{id}/cancel` | Cancelar y abortar una descarga activa |
+| `GET` | `/api/media/{id}/play` | Resolver inteligente de reproducción (directa o progresiva HLS) |
+| `GET` | `/api/media/{id}/availability` | Estado de disponibilidad en tiempo real para el reproductor |
+| `GET` | `/api/streaming/hls/{jobId}/{file}` | Servir lista de reproducción `.m3u8` y fragmentos `.ts` en caliente |
+| `GET` | `/api/streaming/progressive/{jobId}` | Streaming HTTP 206 Byte Range de archivos de descarga |
+
+### 🚀 Cómo Iniciar el Daemon FlixGrab
+```bash
+# En Windows (PowerShell)
+.\daemon\start_flixgrab.ps1
+
+# En Windows (CMD)
+.\daemon\start_flixgrab.bat
+
+# En Linux / Contenedor Docker
+./daemon/start_flixgrab.sh
+```

@@ -534,3 +534,70 @@ CREATE TABLE `cache_locks` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 SET FOREIGN_KEY_CHECKS = 1;
+
+-- ==============================================================================
+-- TABLAS FLIXGRAB & FUENTES MULTIMEDIA AUTORIZADAS
+-- ==============================================================================
+
+CREATE TABLE IF NOT EXISTS `media_sources` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `name` varchar(150) NOT NULL,
+  `slug` varchar(50) NOT NULL,
+  `type` varchar(50) NOT NULL DEFAULT 'authorized_cdn',
+  `base_url` varchar(500) DEFAULT NULL,
+  `api_key` varchar(255) DEFAULT NULL,
+  `auth_headers` json DEFAULT NULL,
+  `priority` int unsigned NOT NULL DEFAULT '1',
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `is_downloadable` tinyint(1) NOT NULL DEFAULT '1',
+  `settings` json DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT NULL,
+  `updated_at` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `media_sources_slug_unique` (`slug`),
+  KEY `media_sources_is_active_index` (`is_active`),
+  KEY `media_sources_priority_index` (`priority`),
+  KEY `media_sources_type_index` (`type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `download_jobs` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `job_id` varchar(64) DEFAULT NULL,
+  `content_id` varchar(100) NOT NULL,
+  `media_item_id` bigint unsigned DEFAULT NULL,
+  `title_id` bigint unsigned DEFAULT NULL,
+  `media_source_id` bigint unsigned DEFAULT NULL,
+  `user_id` bigint unsigned DEFAULT NULL,
+  `title` varchar(255) NOT NULL,
+  `provider` varchar(50) NOT NULL DEFAULT 'flixgrab',
+  `source_url` text NOT NULL,
+  `storage_path` varchar(500) NOT NULL,
+  `hls_path` varchar(500) DEFAULT NULL,
+  `hls_playlist_url` varchar(500) DEFAULT NULL,
+  `total_bytes` bigint unsigned NOT NULL DEFAULT '0',
+  `downloaded_bytes` bigint unsigned NOT NULL DEFAULT '0',
+  `progress` decimal(5,2) NOT NULL DEFAULT '0.00',
+  `download_speed` varchar(50) NOT NULL DEFAULT '0.0 MB/s',
+  `eta` varchar(50) DEFAULT NULL,
+  `status` enum('QUEUED','DOWNLOADING','PROCESSING','READY','ERROR','CANCELLED') NOT NULL DEFAULT 'QUEUED',
+  `priority` int unsigned NOT NULL DEFAULT '5',
+  `retry_count` int unsigned NOT NULL DEFAULT '0',
+  `max_retries` int unsigned NOT NULL DEFAULT '3',
+  `error_message` text,
+  `segments_ready` int unsigned NOT NULL DEFAULT '0',
+  `can_play_progressive` tinyint(1) NOT NULL DEFAULT '0',
+  `duration_seconds` int unsigned NOT NULL DEFAULT '0',
+  `quality` varchar(30) NOT NULL DEFAULT '1080p',
+  `started_at` timestamp NULL DEFAULT NULL,
+  `completed_at` timestamp NULL DEFAULT NULL,
+  `metadata` json DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT NULL,
+  `updated_at` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `download_jobs_job_id_unique` (`job_id`),
+  KEY `download_jobs_content_id_index` (`content_id`),
+  KEY `download_jobs_status_index` (`status`),
+  KEY `download_jobs_priority_index` (`priority`),
+  KEY `download_jobs_can_play_progressive_index` (`can_play_progressive`),
+  KEY `download_jobs_created_at_index` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

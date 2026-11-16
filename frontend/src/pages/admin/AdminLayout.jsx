@@ -18,6 +18,7 @@ import MetadataManager from './MetadataManager';
 import StatsDashboard from './StatsDashboard';
 import OttSyncManagement from './OttSyncManagement';
 import IngestManagement from './IngestManagement';
+import FlixGrabAdmin from './FlixGrabAdmin';
 import api from '../../services/api';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
@@ -512,8 +513,8 @@ const AdminLayout = ({ onBackToBrowse }) => {
                 <OttSyncManagement initialView="queue" />
               )}
 
-              {(activeTab === 'downloads' || activeTab === 'ingest') && (
-                <IngestManagement />
+              {(activeTab === 'downloads' || activeTab === 'ingest' || activeTab === 'flixgrab') && (
+                <FlixGrabAdmin />
               )}
 
               {activeTab !== 'dashboard' && activeTab !== 'library' && activeTab !== 'catalog' && activeTab !== 'users' && activeTab !== 'network' && activeTab !== 'livetv' && activeTab !== 'transcoding' && activeTab !== 'database' && activeTab !== 'backup' && activeTab !== 'backups' && activeTab !== 'tasks' && activeTab !== 'scheduled_tasks' && activeTab !== 'logs' && activeTab !== 'devices' && activeTab !== 'downloads' && activeTab !== 'ingest' && activeTab !== 'ott_sync' && activeTab !== 'ott-sync' && activeTab !== 'ott_queue' && activeTab !== 'ott-queue' && activeTab !== 'plugins' && activeTab !== 'apikeys' && activeTab !== 'api_keys' && activeTab !== 'metadata' && activeTab !== 'stats' && activeTab !== 'statistics' && (

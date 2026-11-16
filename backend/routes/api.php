@@ -30,6 +30,9 @@ use App\Http\Controllers\PasswordResetController;
 use App\Http\Controllers\MediaIngestController;
 use App\Http\Controllers\MediaStreamController;
 use App\Http\Controllers\LiveOttController;
+use App\Http\Controllers\DownloadController;
+use App\Http\Controllers\MediaCatalogController;
+use App\Http\Controllers\StreamingController;
 
 use App\Http\Middleware\EnsureAdmin;
 use App\Http\Middleware\EnsureUserIsAdmin;
@@ -89,6 +92,32 @@ Route::match(['delete', 'post'], '/livetv/active-encoding', [LiveTvController::c
 Route::get('/media/local-image', [App\Http\Controllers\MediaStreamController::class, 'localImage'])->name('media.local-image');
 
 // Catálogo público unificado y endpoints de integridad
+
+// =========================================================================
+// FLIXHN FLIXGRAB & STREAMING PROGRESIVO INTELIGENTE
+// =========================================================================
+Route::post('/media/search', [MediaCatalogController::class, 'search']);
+Route::get('/media/{id}/availability', [MediaCatalogController::class, 'availability']);
+
+Route::post('/download/request', [DownloadController::class, 'requestDownload']);
+Route::get('/download/{id}/status', [DownloadController::class, 'status']);
+Route::post('/download/{id}/cancel', [DownloadController::class, 'cancel']);
+
+// Streaming inteligente (Local inmediato / HLS progresivo)
+Route::get('/media/{id}/play', [StreamingController::class, 'play'])->name('media.play');
+Route::get('/streaming/hls/{jobId}/{file}', [StreamingController::class, 'serveHls'])->where('file', '.*');
+Route::get('/streaming/progressive/{jobId}', [StreamingController::class, 'serveProgressive']);
+
+// Panel Administrativo FlixGrab
+Route::prefix('admin/download')->group(function () {
+    Route::get('/jobs', [DownloadController::class, 'adminJobs']);
+    Route::post('/{id}/priority', [DownloadController::class, 'updatePriority']);
+    Route::post('/{id}/retry', [DownloadController::class, 'retryJob']);
+});
+Route::get('/admin/flixgrab/jobs', [DownloadController::class, 'adminJobs']);
+Route::post('/admin/flixgrab/{id}/priority', [DownloadController::class, 'updatePriority']);
+Route::post('/admin/flixgrab/{id}/retry', [DownloadController::class, 'retryJob']);
+
 Route::get('/media', [TitleController::class, 'index']);
 Route::get('/catalog', [TitleController::class, 'index']);
 Route::get('/media/{id}', [TitleController::class, 'show'])->whereNumber('id');
@@ -98,7 +127,7 @@ Route::match(['get', 'head'], '/stream/title/{id}', [App\Http\Controllers\MediaS
 Route::match(['get', 'head'], '/stream/episode/{id}', [App\Http\Controllers\MediaStreamController::class, 'streamEpisode'])->name('stream.episode');
 Route::match(['get', 'head'], '/media/{id}/stream', [App\Http\Controllers\MediaStreamController::class, 'streamTitle'])->name('media.stream');
 Route::match(['get', 'head'], '/episodes/{id}/stream', [App\Http\Controllers\MediaStreamController::class, 'streamEpisode'])->name('episodes.stream');
-Route::get('/media/{id}/play', [App\Http\Controllers\MediaStreamController::class, 'playMedia'])->name('media.play');
+// Route::get('/media/{id}/play', [App\Http\Controllers\MediaStreamController::class, 'playMedia'])->name('media.play');
 Route::get('/episodes/{id}/play', [App\Http\Controllers\MediaStreamController::class, 'playEpisode'])->name('episodes.play');
 Route::match(['get', 'head'], '/stream/{id}', [App\Http\Controllers\MediaStreamController::class, 'stream'])->name('stream.direct');
 Route::match(['get', 'head'], '/media/stream', [App\Http\Controllers\MediaStreamController::class, 'stream']);
