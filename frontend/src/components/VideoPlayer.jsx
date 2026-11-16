@@ -87,6 +87,23 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
   });
   const progressiveTimerRef = useRef(null);
 
+  const handleCancelDownload = useCallback(async () => {
+    if (progressiveInfo.jobId) {
+      try {
+        await api.post(`/download/${progressiveInfo.jobId}/cancel`);
+      } catch (e) {}
+    }
+    if (progressiveTimerRef.current) {
+      clearInterval(progressiveTimerRef.current);
+    }
+    setProgressiveInfo((prev) => ({ ...prev, active: false }));
+    if (typeof onBack === 'function') {
+      onBack();
+    } else if (typeof onClose === 'function') {
+      onClose();
+    }
+  }, [progressiveInfo.jobId, onBack, onClose]);
+
   useEffect(() => {
     return () => {
       if (progressiveTimerRef.current) {
@@ -160,8 +177,10 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
 
   // Cargar información completa de temporadas y episodios si es una serie
   useEffect(() => {
-    if (title?.type === 'series') {
-      api.get(`/titles/${title.id}`)
+    const isSeries = title?.type === 'series' || Boolean(currentEpisode) || Boolean(title?.seasons?.length);
+    const seriesId = title?.id || currentEpisode?.title_id;
+    if (isSeries && seriesId) {
+      api.get(`/titles/${seriesId}`)
         .then((res) => {
           if (res.data?.title) {
             setFullSeriesData(res.data.title);
@@ -169,7 +188,7 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
         })
         .catch((err) => console.warn('No se pudo cargar la lista completa de episodios:', err));
     }
-  }, [title?.id, title?.type]);
+  }, [title?.id, title?.type, currentEpisode?.title_id]);
 
   // Cerrar el reproductor y redirigir al catálogo inmediatamente si el contenido fue eliminado
   useEffect(() => {
@@ -215,28 +234,42 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
 
   // Lista plana ordenada de episodios para navegación sencilla, excluyendo trailers o capítulos con 0 (Puntos 3 y 4)
   const allEpisodes = useMemo(() => {
-    if (!fullSeriesData?.seasons) return currentEpisode ? [currentEpisode] : [];
+    const seasonsData = fullSeriesData?.seasons || title?.seasons;
+    if (!seasonsData || !Array.isArray(seasonsData) || seasonsData.length === 0) {
+      const directEps = fullSeriesData?.episodes || title?.episodes;
+      if (directEps && Array.isArray(directEps) && directEps.length > 0) {
+        return directEps;
+      }
+      return currentEpisode ? [currentEpisode] : [];
+    }
+
     const list = [];
-    const sortedSeasons = [...fullSeriesData.seasons].sort((a, b) => (a.season_number || 1) - (b.season_number || 1));
+    const sortedSeasons = [...seasonsData].sort((a, b) => (parseInt(a.season_number, 10) || 1) - (parseInt(b.season_number, 10) || 1));
     sortedSeasons.forEach((s) => {
       const sNum = parseInt(s.season_number, 10);
-      if (sNum === 0 || /^(especiales|trailers|temporada\s*0)/i.test(s.title || '')) return;
-      if (s.episodes) {
+      if (sNum === 0 || /^(especiales|trailers|temporada\s*0\b)/i.test(s.title || '')) return;
+      if (s.episodes && Array.isArray(s.episodes)) {
         const sortedEps = [...s.episodes]
           .filter((ep) => {
             const epNum = parseInt(ep.episode_number, 10);
-            const epTitle = (ep.title || '').trim();
-            return epNum > 0 && !/^(0+|0\d+|cap[ií]tulo\s*0+|episodio\s*0+|trailer|especial)/i.test(epTitle);
+            if (!isNaN(epNum) && epNum === 0) return false;
+            const epTitle = (ep.title || ep.name || '').trim();
+            if (/^(trailer|tráiler|especial\b|cap[ií]tulo\s*0\b|episodio\s*0\b)/i.test(epTitle)) return false;
+            return true;
           })
-          .sort((a, b) => (a.episode_number || 1) - (b.episode_number || 1));
+          .sort((a, b) => (parseInt(a.episode_number, 10) || 1) - (parseInt(b.episode_number, 10) || 1));
 
         sortedEps.forEach((ep) => {
           list.push({ ...ep, season_number: s.season_number || 1 });
         });
       }
     });
+
+    if (list.length === 0 && currentEpisode) {
+      return [currentEpisode];
+    }
     return list;
-  }, [fullSeriesData, currentEpisode]);
+  }, [fullSeriesData, title, currentEpisode]);
 
   // Encontrar el siguiente episodio si existe
   const nextEpisode = useMemo(() => {
@@ -620,22 +653,7 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
       }, 2000);
     };
 
-    const handleCancelDownload = async () => {
-      if (progressiveInfo.jobId) {
-        try {
-          await api.post(`/download/${progressiveInfo.jobId}/cancel`);
-        } catch (e) {}
-      }
-      if (progressiveTimerRef.current) {
-        clearInterval(progressiveTimerRef.current);
-      }
-      setProgressiveInfo((prev) => ({ ...prev, active: false }));
-      if (typeof onBack === 'function') {
-        onBack();
-      } else if (typeof onClose === 'function') {
-        onClose();
-      }
-    };
+    // handleCancelDownload está disponible a nivel de componente
 
     const initPlayerSession = async () => {
       // 1. Reanudar progreso previo
