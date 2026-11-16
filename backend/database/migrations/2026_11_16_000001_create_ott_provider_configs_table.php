@@ -13,29 +13,29 @@ return new class extends Migration
     public function up(): void
     {
         if (!Schema::hasTable('ott_provider_configs')) {
-            Schema::create('ott_provider_configs', function (Blueprint ) {
-                ->id();
-                ->string('name', 100);
-                ->string('slug', 50)->unique();
-                ->string('integration_type', 50)->default('partner_api'); // partner_api, deep_link, authorized_hls, internal_vod, oauth2
-                ->string('api_endpoint', 500)->nullable();
-                ->text('api_credentials')->nullable(); // Cifrado
-                ->text('oauth_config')->nullable(); // Cifrado
-                ->string('connection_status', 50)->default('disconnected'); // connected, degraded, error, disconnected
-                ->boolean('is_active')->default(true);
-                ->json('playback_config')->nullable(); // supported_types, direct_playback, app_scheme, web_url_template, etc.
-                ->integer('timeout_seconds')->default(10);
-                ->timestamp('last_sync_at')->nullable();
-                ->text('last_error')->nullable();
-                ->timestamps();
+            Schema::create('ott_provider_configs', function (Blueprint $table) {
+                $table->id();
+                $table->string('name', 100);
+                $table->string('slug', 50)->unique();
+                $table->string('integration_type', 50)->default('partner_api'); // partner_api, deep_link, authorized_hls, internal_vod, oauth2
+                $table->string('api_endpoint', 500)->nullable();
+                $table->text('api_credentials')->nullable(); // Cifrado
+                $table->text('oauth_config')->nullable(); // Cifrado
+                $table->string('connection_status', 50)->default('disconnected'); // connected, degraded, error, disconnected
+                $table->boolean('is_active')->default(true);
+                $table->json('playback_config')->nullable(); // supported_types, direct_playback, app_scheme, web_url_template, etc.
+                $table->integer('timeout_seconds')->default(10);
+                $table->timestamp('last_sync_at')->nullable();
+                $table->text('last_error')->nullable();
+                $table->timestamps();
 
-                ->index('slug');
-                ->index('is_active');
-                ->index('integration_type');
+                $table->index('slug');
+                $table->index('is_active');
+                $table->index('integration_type');
             });
 
             // Semillas de proveedores base autorizados y mecanismos de interoperabilidad
-             = [
+            $initialProviders = [
                 [
                     'name' => 'FlixHN Catálogo Local',
                     'slug' => 'local',
@@ -156,7 +156,7 @@ return new class extends Migration
                 ],
             ];
 
-            DB::table('ott_provider_configs')->insert();
+            DB::table('ott_provider_configs')->insert($initialProviders);
         }
     }
 
