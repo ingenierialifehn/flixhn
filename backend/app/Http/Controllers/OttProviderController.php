@@ -643,6 +643,16 @@ class OttProviderController extends Controller
 
         // Si la tarea falló, reportar honestamente el error sin sintetizar video falso
         if ($task?->status === 'failed') {
+            if ($title) {
+                $checkDisk = $title->file_path ? \App\Jobs\ProcessMediaIngestJob::resolveDiskPath($title->file_path) : null;
+                if (!$checkDisk || !file_exists($checkDisk)) {
+                    try {
+                        \App\Models\Episode::where('title_id', $title->id)->delete();
+                        \App\Models\Season::where('title_id', $title->id)->delete();
+                        $title->delete();
+                    } catch (\Throwable $e) {}
+                }
+            }
             return response()->json([
                 'success' => false,
                 'ready' => false,
