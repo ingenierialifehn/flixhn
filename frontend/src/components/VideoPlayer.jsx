@@ -23,6 +23,8 @@ import api from '../api/axios';
 import { useAuth } from '../context/AuthContext';
 import useTelemetryHeartbeat from '../hooks/useTelemetryHeartbeat';
 import { resolvePosterUrl, handlePosterError } from '../utils/media';
+import OttExternalModal from './OttExternalModal';
+import ottService from '../services/ottService';
 
 // Loader personalizado de HLS para inyectar obligatoriamente la api_key en los fragmentos .ts y listas m3u8
 class EmbyHlsLoader extends (Hls.DefaultConfig?.loader || class {}) {
@@ -64,6 +66,8 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
   const [isLoading, setIsLoading] = useState(true);
   const [playbackError, setPlaybackError] = useState(null);
   const [playbackMode, setPlaybackMode] = useState('direct'); // 'direct' | 'hls'
+  const [sourceType, setSourceType] = useState('LOCAL-HLS'); // 'LOCAL-HLS' | 'OTT-HLS-AUTHORIZED' | 'OTT-DASH-AUTHORIZED' | 'OTT-EXTERNAL' | 'OTT-UNAVAILABLE'
+  const [ottPlaybackInfo, setOttPlaybackInfo] = useState(null);
 
   // Menús desplegables de controles
   const [showEpisodeDrawer, setShowEpisodeDrawer] = useState(false);
@@ -557,8 +561,58 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
 
       if (isCancelled || !videoRef.current) return;
 
-      // Detección directa de contenido local FlixHN (reproducción instantánea sin peticiones intermedias)
+      // 0. Resolución Dinámica OTT para proveedores externos o enlaces autorizados
       const activeMedia = currentEpisode || title;
+      const isExternalOtt = Boolean(
+        activeMedia?.playback_type === 'OTT-EXTERNAL' ||
+        activeMedia?.requires_external_app ||
+        (activeMedia?.provider && !['local', 'emby', 'flixhn'].includes(String(activeMedia.provider).toLowerCase())) ||
+        (typeof activeMedia?.id === 'string' && /^(ott_|nflx_|disney_|max_|hls_)/.test(activeMedia.id))
+      );
+
+      if (isExternalOtt) {
+        try {
+          const ottRes = await ottService.getStreamLink({
+            content_id: String(activeMedia?.id || ''),
+            provider: activeMedia?.provider,
+            type: activeMedia?.type || (currentEpisode ? 'episode' : 'movie'),
+          });
+
+          if (isCancelled) return;
+
+          if (ottRes?.playback_type === 'OTT-EXTERNAL') {
+            setSourceType('OTT-EXTERNAL');
+            setOttPlaybackInfo(ottRes);
+            setIsLoading(false);
+            return;
+          }
+
+          if (ottRes?.playback_type === 'OTT-UNAVAILABLE') {
+            setSourceType('OTT-UNAVAILABLE');
+            setPlaybackError(ottRes.message || 'El contenido no se encuentra disponible actualmente.');
+            setIsLoading(false);
+            return;
+          }
+
+          if (ottRes?.playback_type === 'OTT-HLS-AUTHORIZED' && ottRes.stream_url) {
+            setSourceType('OTT-HLS-AUTHORIZED');
+            setOttPlaybackInfo(ottRes);
+            startHlsPlayback(ottRes.stream_url);
+            return;
+          }
+
+          if (ottRes?.playback_type === 'OTT-DASH-AUTHORIZED' && ottRes.stream_url) {
+            setSourceType('OTT-DASH-AUTHORIZED');
+            setOttPlaybackInfo(ottRes);
+            startHlsPlayback(ottRes.stream_url);
+            return;
+          }
+        } catch (ottErr) {
+          console.warn('Error resolviendo stream OTT dinámico:', ottErr);
+        }
+      }
+
+      // Detección directa de contenido local FlixHN (reproducción instantánea sin peticiones intermedias)
       const isLocalMedia =
         activeMedia?.source_type === 'local' ||
         activeMedia?.provider === 'local' ||
@@ -1213,6 +1267,16 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
   const episodeLabel = currentEpisode
     ? `T${currentEpisode.season_number || 1} E${currentEpisode.episode_number || 1} - ${currentEpisode.title || currentEpisode.name || ''}`
     : null;
+
+  if (sourceType === 'OTT-EXTERNAL' && ottPlaybackInfo) {
+    return (
+      <OttExternalModal
+        title={title}
+        playbackInfo={ottPlaybackInfo}
+        onClose={handleClose}
+      />
+    );
+  }
 
   return (
     <div

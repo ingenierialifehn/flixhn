@@ -17,6 +17,7 @@ import {
   Tv,
 } from 'lucide-react';
 import api from '../api/axios';
+import ottService from '../services/ottService';
 
 const Navbar = ({
   currentTab,
@@ -83,10 +84,22 @@ const Navbar = ({
     if (typeof onSearchingChange === 'function') onSearchingChange(true);
 
     try {
-      const res = await api.get(`/titles?q=${encodeURIComponent(trimmed)}`, {
-        signal: abortControllerRef.current.signal,
-      });
-      const results = res.data?.results || res.data?.data || [];
+      let results = [];
+      try {
+        const ottRes = await ottService.search(trimmed, { type: 'all', limit: 40 }, abortControllerRef.current.signal);
+        if (ottRes && Array.isArray(ottRes.results)) {
+          results = ottRes.results;
+        } else {
+          throw new Error('Respuesta no compatible');
+        }
+      } catch (ottErr) {
+        if (ottErr.name === 'CanceledError' || ottErr.code === 'ERR_CANCELED') throw ottErr;
+        const res = await api.get(`/titles?q=${encodeURIComponent(trimmed)}`, {
+          signal: abortControllerRef.current.signal,
+        });
+        results = res.data?.results || res.data?.data || [];
+      }
+
       if (typeof onSearchResults === 'function') {
         onSearchResults(results, trimmed);
       }

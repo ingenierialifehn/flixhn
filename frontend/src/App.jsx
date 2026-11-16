@@ -245,6 +245,26 @@ function App() {
 
   // Manejo de Reproducción con soporte para reanudación en el segundo exacto
   const handlePlay = useCallback((title, episode = null, resumeTime = null) => {
+    // Si el contenido especifica un modo de reproducción dinámico OTT o app oficial, delegar inmediatamente a VideoPlayer
+    if (
+      title?.playback_type === 'OTT-EXTERNAL' ||
+      title?.playback_type === 'OTT-HLS-AUTHORIZED' ||
+      title?.playback_type === 'LOCAL-HLS' ||
+      title?.requires_external_app ||
+      (typeof title?.id === 'string' && /^(nflx_|disney_|max_|hls_)/.test(title.id))
+    ) {
+      const startSec = resumeTime !== null
+        ? resumeTime
+        : (title?.progress_seconds || episode?.progress_seconds || 0);
+
+      setActiveVideo({
+        title,
+        episode,
+        initialTime: startSec,
+      });
+      return;
+    }
+
     // Si es un contenido OTT que aún no está descargado localmente
     const isUndownloadedOtt = Boolean(
       (title?.is_ott && title?.is_downloaded === false) ||

@@ -29,6 +29,8 @@ use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\PasswordResetController;
 use App\Http\Controllers\MediaIngestController;
 use App\Http\Controllers\MediaStreamController;
+use App\Http\Controllers\LiveOttController;
+
 use App\Http\Middleware\EnsureAdmin;
 use App\Http\Middleware\EnsureUserIsAdmin;
 use App\Http\Middleware\AuthenticateApiKey;
@@ -390,5 +392,14 @@ Route::prefix('v1')->group(function () {
     });
 });
 
-
-
+/*
+|--------------------------------------------------------------------------
+| Módulo: Integración y Reproductor OTT Dinámico (FlixHN)
+|--------------------------------------------------------------------------
+*/
+Route::prefix('ott')->group(function () {
+    Route::post('/search', [LiveOttController::class, 'search']);
+    Route::post('/stream-link', [LiveOttController::class, 'streamLink']);
+    Route::get('/providers', [LiveOttController::class, 'getProviders']);
+    Route::get('/provider/{id}/status', [LiveOttController::class, 'getProviderStatus']);
+});

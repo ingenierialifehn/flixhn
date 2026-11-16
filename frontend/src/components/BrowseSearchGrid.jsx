@@ -1,5 +1,5 @@
-import React, { useState, useMemo } from 'react';
-import { Film, Tv, Play, Search, Loader2 } from 'lucide-react';
+﻿import React, { useState, useMemo } from 'react';
+import { Film, Tv, Play, Search, Loader2, ExternalLink, ShieldCheck } from 'lucide-react';
 import { resolvePosterUrl } from '../utils/media';
 
 /**
@@ -31,7 +31,7 @@ export const PlatformMiniBadge = ({ provider }) => {
       return (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-[#5822b4]/40 text-purple-300 border border-purple-500/40 shadow-sm backdrop-blur-md">
           <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />
-          HBO Max
+          Max
         </span>
       );
     case 'amazon_prime':
@@ -59,6 +59,13 @@ export const PlatformMiniBadge = ({ provider }) => {
           Paramount+
         </span>
       );
+    case 'partner_hls':
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-emerald-950/90 text-emerald-400 border border-emerald-500/40 shadow-sm backdrop-blur-md">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+          HLS Autorizado
+        </span>
+      );
     case 'local':
     case 'flixhn':
     default:
@@ -72,13 +79,19 @@ export const PlatformMiniBadge = ({ provider }) => {
 };
 
 /**
- * Tarjeta individual del buscador de Browse.
- * Estilo visual vertical cinematográfico idéntico a la referencia de plataformas conectadas.
- * Acción unificada y transparente: solo un clic en "Ver" o "Reproducir".
+ * Tarjeta individual del buscador de Browse con distinción clara de disponibilidad y tipo de reproducción.
  */
 export const BrowseSearchCard = ({ item, onPlay, onOpenModal }) => {
   const isSeries = (item.type || item.media_type) === 'series';
+  const isExternal = Boolean(
+    item.playback_type === 'OTT-EXTERNAL' ||
+    item.requires_external_app ||
+    (typeof item.id === 'string' && /^(nflx_|disney_|max_)/.test(item.id))
+  );
+  const isHlsAuthorized = item.playback_type === 'OTT-HLS-AUTHORIZED';
+
   const isCompleted = Boolean(
+    item.playback_type === 'LOCAL-HLS' ||
     item.is_already_downloaded ||
     item.is_available_locally ||
     item.status === 'En Catálogo' ||
@@ -121,23 +134,37 @@ export const BrowseSearchCard = ({ item, onPlay, onOpenModal }) => {
           <div className="absolute inset-x-0 top-0 h-14 bg-gradient-to-b from-black/80 via-black/40 to-transparent pointer-events-none" />
           <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/90 via-black/40 to-transparent pointer-events-none" />
 
-          {/* Badge superior de plataforma (FlixHN, Netflix, Disney+, HBO Max, Prime Video) */}
+          {/* Badge superior de plataforma (FlixHN, Netflix, Disney+, Max, Prime Video) */}
           <div className="absolute top-2 left-2 z-10 pointer-events-none">
             <PlatformMiniBadge provider={providerKey} />
           </div>
 
-          {/* Badge de tipo de contenido (Serie / Película) */}
+          {/* Badge de tipo de contenido o tipo de reproducción */}
           <div className="absolute top-2 right-2 z-10 pointer-events-none">
-            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-black/75 text-zinc-300 border border-zinc-700/50 backdrop-blur-md">
-              {isSeries ? <Tv className="w-2.5 h-2.5" /> : <Film className="w-2.5 h-2.5" />}
-              {isSeries ? 'Serie' : 'Película'}
-            </span>
+            {isExternal ? (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-950/90 text-amber-300 border border-amber-600/50 backdrop-blur-md">
+                <ExternalLink className="w-2.5 h-2.5" /> App Oficial
+              </span>
+            ) : isHlsAuthorized ? (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-950/90 text-emerald-300 border border-emerald-600/50 backdrop-blur-md">
+                HLS Stream
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-black/75 text-zinc-300 border border-zinc-700/50 backdrop-blur-md">
+                {isSeries ? <Tv className="w-2.5 h-2.5" /> : <Film className="w-2.5 h-2.5" />}
+                {isSeries ? 'Serie' : 'Película'}
+              </span>
+            )}
           </div>
 
           {/* Botón flotante central de Reproducir en hover */}
           <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
             <div className="w-11 h-11 rounded-full bg-[#E50914] text-white flex items-center justify-center shadow-xl transform group-hover:scale-110 transition-transform">
-              <Play className="w-5 h-5 fill-white ml-0.5" />
+              {isExternal ? (
+                <ExternalLink className="w-5 h-5 text-white" />
+              ) : (
+                <Play className="w-5 h-5 fill-white ml-0.5" />
+              )}
             </div>
           </div>
 
@@ -165,27 +192,37 @@ export const BrowseSearchCard = ({ item, onPlay, onOpenModal }) => {
         </div>
       </div>
 
-      {/* Botón de Acción Limpio: "Reproducir" o "Ver" */}
+      {/* Botón de Acción Adaptativo */}
       <div className="mt-3 pt-2 border-t border-zinc-800/80">
-        {isCompleted ? (
+        {isExternal ? (
           <button
             type="button"
             onClick={handleClick}
-            className="flex items-center justify-center gap-1.5 w-full py-2 px-2.5 rounded-lg text-xs font-bold bg-[#E50914] hover:bg-red-700 text-white transition-all shadow-md active:scale-95 cursor-pointer"
-            title="Reproducir inmediatamente desde el almacenamiento local"
+            className="flex items-center justify-center gap-1.5 w-full py-2 px-2.5 rounded-lg text-xs font-bold bg-zinc-800 hover:bg-[#E50914] text-zinc-200 hover:text-white border border-zinc-700/80 hover:border-red-600 transition-all shadow-md active:scale-95 cursor-pointer"
+            title="Abrir en la aplicación o portal oficial autorizado"
+          >
+            <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+            <span>App Oficial</span>
+          </button>
+        ) : isHlsAuthorized ? (
+          <button
+            type="button"
+            onClick={handleClick}
+            className="flex items-center justify-center gap-1.5 w-full py-2 px-2.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white transition-all shadow-md active:scale-95 cursor-pointer"
+            title="Reproducir transmisión HLS autorizada"
           >
             <Play className="w-3.5 h-3.5 fill-white text-white shrink-0" />
-            <span>Reproducir</span>
+            <span>Reproducir HLS</span>
           </button>
         ) : (
           <button
             type="button"
             onClick={handleClick}
-            className="flex items-center justify-center gap-1.5 w-full py-2 px-2.5 rounded-lg text-xs font-bold bg-zinc-800 hover:bg-[#E50914] text-white border border-zinc-700/80 hover:border-red-600 transition-all shadow-md active:scale-95 cursor-pointer"
-            title="Cargar y descargar automáticamente al servidor para ver ahora"
+            className="flex items-center justify-center gap-1.5 w-full py-2 px-2.5 rounded-lg text-xs font-bold bg-[#E50914] hover:bg-red-700 text-white transition-all shadow-md active:scale-95 cursor-pointer"
+            title="Reproducir inmediatamente desde el catálogo local On-Net"
           >
             <Play className="w-3.5 h-3.5 fill-white text-white shrink-0" />
-            <span>Ver</span>
+            <span>Reproducir</span>
           </button>
         )}
       </div>
@@ -194,10 +231,8 @@ export const BrowseSearchCard = ({ item, onPlay, onOpenModal }) => {
 };
 
 /**
- * Vista de Búsqueda Completa para /browse.
- * Cabecera limpia estilo Netflix (Resultados para: "...", total títulos)
- * sin badges técnicos ni marcas administrativas.
- * Muestra tanto títulos locales del catálogo como de plataformas OTT conectadas.
+ * Vista de Búsqueda Unificada para /browse.
+ * Integra catálogo local y plataformas OTT autorizadas.
  */
 const BrowseSearchGrid = ({
   searchQuery,
@@ -207,26 +242,17 @@ const BrowseSearchGrid = ({
   onOpenModal,
 }) => {
   const [typeFilter, setTypeFilter] = useState('all'); // all, movie, series
-  const [platformFilter, setPlatformFilter] = useState('all'); // all, netflix, disney, amazon_prime, local
-
-  const counts = useMemo(() => {
-    let movies = 0;
-    let series = 0;
-    (results || []).forEach((item) => {
-      const isS = (item.type || item.media_type) === 'series';
-      if (isS) series++;
-      else movies++;
-    });
-    return { all: (results || []).length, movies, series };
-  }, [results]);
+  const [platformFilter, setPlatformFilter] = useState('all'); // all, netflix, disney, max, amazon_prime, partner_hls, local
 
   const platformCounts = useMemo(() => {
-    const pc = { netflix: 0, disney: 0, amazon_prime: 0, local: 0 };
+    const pc = { netflix: 0, disney: 0, max: 0, amazon_prime: 0, partner_hls: 0, local: 0 };
     (results || []).forEach((item) => {
       const p = String(item.provider || item.source_platform || 'local').toLowerCase().trim();
       if (p === 'netflix') pc.netflix++;
       else if (p.includes('disney')) pc.disney++;
+      else if (p.includes('max') || p.includes('hbo')) pc.max++;
       else if (p.includes('prime') || p.includes('amazon')) pc.amazon_prime++;
+      else if (p.includes('hls') || p.includes('partner')) pc.partner_hls++;
       else pc.local++;
     });
     return pc;
@@ -244,7 +270,9 @@ const BrowseSearchGrid = ({
         const p = String(item.provider || item.source_platform || 'local').toLowerCase().trim();
         if (platformFilter === 'netflix' && p !== 'netflix') return false;
         if (platformFilter === 'disney' && !p.includes('disney')) return false;
+        if (platformFilter === 'max' && !p.includes('max') && !p.includes('hbo')) return false;
         if (platformFilter === 'amazon_prime' && !p.includes('prime') && !p.includes('amazon')) return false;
+        if (platformFilter === 'partner_hls' && !p.includes('hls') && !p.includes('partner')) return false;
         if (platformFilter === 'local' && p !== 'local') return false;
       }
 
@@ -309,12 +337,26 @@ const BrowseSearchGrid = ({
             onClick={() => setPlatformFilter('disney')}
             className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold transition-all cursor-pointer ${
               platformFilter === 'disney'
-                ? 'bg-blue-600 text-white border border-blue-400 shadow-md'
-                : 'text-blue-300 hover:text-white bg-blue-950/40 hover:bg-blue-900/50 border border-blue-500/30'
+                ? 'bg-[#0063E5] text-white border border-blue-500 shadow-md'
+                : 'text-zinc-300 hover:text-white bg-black/60 hover:bg-blue-950/40 border border-blue-500/30'
             }`}
           >
-            <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+            <span className="w-1.5 h-1.5 rounded-full bg-[#0063E5]" />
             Disney+ ({platformCounts.disney})
+          </button>
+        )}
+        {platformCounts.max > 0 && (
+          <button
+            type="button"
+            onClick={() => setPlatformFilter('max')}
+            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold transition-all cursor-pointer ${
+              platformFilter === 'max'
+                ? 'bg-[#5822b4] text-white border border-purple-500 shadow-md'
+                : 'text-zinc-300 hover:text-white bg-black/60 hover:bg-purple-950/40 border border-purple-500/30'
+            }`}
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-[#5822b4]" />
+            Max ({platformCounts.max})
           </button>
         )}
         {platformCounts.amazon_prime > 0 && (
@@ -323,87 +365,67 @@ const BrowseSearchGrid = ({
             onClick={() => setPlatformFilter('amazon_prime')}
             className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold transition-all cursor-pointer ${
               platformFilter === 'amazon_prime'
-                ? 'bg-[#00A8E1] text-white border border-sky-400 shadow-md'
-                : 'text-sky-300 hover:text-white bg-sky-950/40 hover:bg-sky-900/50 border border-sky-500/30'
+                ? 'bg-[#00A8E1] text-white border border-sky-500 shadow-md'
+                : 'text-zinc-300 hover:text-white bg-black/60 hover:bg-sky-950/40 border border-sky-500/30'
             }`}
           >
             <span className="w-1.5 h-1.5 rounded-full bg-[#00A8E1]" />
             Prime Video ({platformCounts.amazon_prime})
           </button>
         )}
+        {platformCounts.partner_hls > 0 && (
+          <button
+            type="button"
+            onClick={() => setPlatformFilter('partner_hls')}
+            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold transition-all cursor-pointer ${
+              platformFilter === 'partner_hls'
+                ? 'bg-emerald-600 text-white border border-emerald-500 shadow-md'
+                : 'text-zinc-300 hover:text-white bg-black/60 hover:bg-emerald-950/40 border border-emerald-500/30'
+            }`}
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+            HLS Autorizado ({platformCounts.partner_hls})
+          </button>
+        )}
+        {platformCounts.local > 0 && (
+          <button
+            type="button"
+            onClick={() => setPlatformFilter('local')}
+            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold transition-all cursor-pointer ${
+              platformFilter === 'local'
+                ? 'bg-red-900 text-white border border-red-600 shadow-md'
+                : 'text-zinc-300 hover:text-white bg-zinc-900/60 hover:bg-zinc-800 border border-zinc-800'
+            }`}
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-[#E50914]" />
+            Catálogo Local FlixHN ({platformCounts.local})
+          </button>
+        )}
       </div>
 
-      {/* 2. Filtros sutiles por tipo si existen múltiples tipos */}
-      {counts.movies > 0 && counts.series > 0 && (
-        <div className="flex items-center gap-2 mb-6">
-          <button
-            type="button"
-            onClick={() => setTypeFilter('all')}
-            className={`px-3 py-1 rounded-md text-xs font-bold transition-all cursor-pointer ${
-              typeFilter === 'all'
-                ? 'bg-zinc-800 text-white border border-zinc-600 shadow'
-                : 'text-zinc-400 hover:text-white hover:bg-zinc-900 border border-transparent'
-            }`}
-          >
-            Todos ({counts.all})
-          </button>
-          <button
-            type="button"
-            onClick={() => setTypeFilter('movie')}
-            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-bold transition-all cursor-pointer ${
-              typeFilter === 'movie'
-                ? 'bg-zinc-800 text-white border border-zinc-600 shadow'
-                : 'text-zinc-400 hover:text-white hover:bg-zinc-900 border border-transparent'
-            }`}
-          >
-            <Film className="w-3.5 h-3.5" />
-            Películas ({counts.movies})
-          </button>
-          <button
-            type="button"
-            onClick={() => setTypeFilter('series')}
-            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-bold transition-all cursor-pointer ${
-              typeFilter === 'series'
-                ? 'bg-zinc-800 text-white border border-zinc-600 shadow'
-                : 'text-zinc-400 hover:text-white hover:bg-zinc-900 border border-transparent'
-            }`}
-          >
-            <Tv className="w-3.5 h-3.5" />
-            Series ({counts.series})
-          </button>
-        </div>
-      )}
-
-      {/* 3. Grid de Resultados */}
-      {filteredResults.length === 0 ? (
-        <div className="py-24 text-center space-y-3">
-          {isSearching ? (
-            <div className="flex flex-col items-center justify-center space-y-3">
-              <div className="w-10 h-10 border-3 border-[#E50914] border-t-transparent rounded-full animate-spin" />
-              <p className="text-sm text-zinc-400">Buscando en catálogo local y plataformas vinculadas...</p>
-            </div>
-          ) : (
-            <>
-              <Search className="w-10 h-10 text-zinc-600 mx-auto" />
-              <p className="text-base text-zinc-600 dark:text-zinc-400 font-semibold">
-                No se encontraron títulos que coincidan con "{searchQuery}".
-              </p>
-              <p className="text-xs text-zinc-500">
-                Prueba con otro título de Netflix, Disney+, HBO Max o Prime Video.
-              </p>
-            </>
-          )}
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4 md:gap-5">
+      {/* Grid de Resultados */}
+      {filteredResults.length > 0 ? (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-3 sm:gap-4 md:gap-5">
           {filteredResults.map((item) => (
             <BrowseSearchCard
-              key={item.id || item.title || item.name}
+              key={item.id || item.slug || Math.random()}
               item={item}
               onPlay={onPlay}
               onOpenModal={onOpenModal}
             />
           ))}
+        </div>
+      ) : (
+        <div className="py-20 text-center space-y-3">
+          <div className="w-16 h-16 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center mx-auto text-zinc-500">
+            <Search className="w-7 h-7" />
+          </div>
+          <p className="text-zinc-400 text-sm">
+            No se encontraron títulos que coincidan con "{searchQuery}".
+          </p>
+          <p className="text-zinc-500 text-xs">
+            Verifique la ortografía o intente con el nombre de otra película, serie o plataforma.
+          </p>
         </div>
       )}
     </section>
@@ -411,4 +433,3 @@ const BrowseSearchGrid = ({
 };
 
 export default BrowseSearchGrid;
-
