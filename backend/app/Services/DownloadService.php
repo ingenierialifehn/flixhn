@@ -175,7 +175,7 @@ class DownloadService
     protected function notifyDaemonNewJob(DownloadJob $job): bool
     {
         try {
-            $response = Http::timeout(3)->post("{$this->daemonUrl}/jobs", [
+            $response = Http::timeout(3)->post("{$this->getActiveDaemonUrl()}/jobs", [
                 'job_id' => $job->job_id,
                 'content_id' => $job->content_id,
                 'title' => $job->title,
@@ -211,7 +211,7 @@ class DownloadService
         // Si el trabajo sigue activo, consultar el estado actualizado del daemon Python
         if ($job->isActive() && $job->job_id) {
             try {
-                $response = Http::timeout(2)->get("{$this->daemonUrl}/jobs/{$job->job_id}");
+                $response = Http::timeout(2)->get("{$this->getActiveDaemonUrl()}/jobs/{$job->job_id}");
                 if ($response->successful()) {
                     $daemonData = $response->json();
                     if (!empty($daemonData['status'])) {
@@ -286,7 +286,7 @@ class DownloadService
         // Notificar al daemon para matar el proceso / subproceso
         if ($job->job_id) {
             try {
-                Http::timeout(3)->post("{$this->daemonUrl}/jobs/{$job->job_id}/cancel");
+                Http::timeout(3)->post("{$this->getActiveDaemonUrl()}/jobs/{$job->job_id}/cancel");
             } catch (\Throwable $e) {
                 Log::info("No fue posible notificar cancelación a daemon: " . $e->getMessage());
             }
@@ -481,5 +481,31 @@ class DownloadService
         $power = $bytes > 0 ? floor(log($bytes, 1024)) : 0;
         $power = min($power, count($units) - 1);
         return round($bytes / pow(1024, $power), 2) . ' ' . $units[$power];
+    }
+
+    /**
+     * Resuelve dinámicamente la URL activa del daemon FlixGrab.
+     * Compatible tanto con host local nativo como con contenedores Docker (host.docker.internal / bridge gateway).
+     */
+    public function getActiveDaemonUrl(): string
+    {
+        $urls = [$this->daemonUrl];
+        if (str_contains($this->daemonUrl, '127.0.0.1') || str_contains($this->daemonUrl, 'localhost')) {
+            $urls[] = 'http://172.17.0.1:8001';
+            $urls[] = 'http://host.docker.internal:8001';
+        }
+
+        foreach ($urls as $url) {
+            try {
+                $check = Http::timeout(1)->get("{$url}/health");
+                if ($check->successful()) {
+                    return $url;
+                }
+            } catch (\Throwable) {
+                // Siguiente candidato
+            }
+        }
+
+        return $this->daemonUrl;
     }
 }
