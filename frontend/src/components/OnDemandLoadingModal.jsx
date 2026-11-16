@@ -13,6 +13,7 @@ const OnDemandLoadingModal = ({ target, onReady, onCancel }) => {
   const [progress, setProgress] = useState(12);
   const [speed, setSpeed] = useState('42.8 MB/s');
   const [isCompleted, setIsCompleted] = useState(false);
+  const [errorMessage, setErrorMessage] = useState(null);
   const isCancelledRef = useRef(false);
   const pollTimerRef = useRef(null);
   const simulatedTimerRef = useRef(null);
@@ -32,7 +33,7 @@ const OnDemandLoadingModal = ({ target, onReady, onCancel }) => {
 
     // Incremento progresivo visual suave de respaldo para una experiencia fluida
     simulatedTimerRef.current = setInterval(() => {
-      if (isCancelledRef.current) return;
+      if (isCancelledRef.current || errorMessage) return;
       setProgress((prev) => {
         if (prev >= 96) return 96; // Espera al 100% real para la finalización
         if (prev < 40) return prev + Math.floor(Math.random() * 4) + 2;
@@ -72,6 +73,13 @@ const OnDemandLoadingModal = ({ target, onReady, onCancel }) => {
           if (isCancelledRef.current) return;
 
           const data = res.data;
+
+          if (data?.status === 'failed') {
+            if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+            if (simulatedTimerRef.current) clearInterval(simulatedTimerRef.current);
+            setErrorMessage(data.error_message || 'El contenido auténtico no está disponible actualmente en el servidor.');
+            return;
+          }
 
           if (data?.ready && data?.title) {
             finishAndPlay(data.title);
@@ -228,50 +236,61 @@ const OnDemandLoadingModal = ({ target, onReady, onCancel }) => {
           </p>
         </div>
 
-        {/* Barra de Descargando Central */}
-        <div className="w-full space-y-3 bg-zinc-900/90 rounded-xl p-4 border border-zinc-800/80 shadow-inner">
-          <div className="flex items-center justify-between text-xs font-semibold">
-            <span className="text-zinc-300 flex items-center gap-1.5">
-              <DownloadCloud className="w-3.5 h-3.5 text-[#E50914]" />
-              <span>Descargando...</span>
-            </span>
-            <span className="font-mono font-bold text-white text-sm">
-              {Math.round(progress)}%
-            </span>
-          </div>
-
-          {/* Barra de Progreso Fluida */}
-          <div className="w-full h-3 bg-zinc-800 rounded-full overflow-hidden p-0.5 ring-1 ring-white/10">
-            <div
-              className="h-full rounded-full transition-all duration-300 ease-out bg-gradient-to-r from-red-600 via-[#E50914] to-orange-500 shadow-[0_0_12px_rgba(229,9,20,0.6)]"
-              style={{
-                width: `${progress}%`,
-                backgroundColor: platform.color || '#E50914',
-              }}
-            />
-          </div>
-
-          {/* Métricas: Velocidad y Disco */}
-          <div className="flex items-center justify-between text-[11px] text-zinc-400 pt-1 border-t border-zinc-800/60 font-mono">
-            <div className="flex items-center gap-1">
-              <span className="text-zinc-500">Velocidad:</span>
-              <span className="text-emerald-400 font-bold">{speed}</span>
+        {errorMessage ? (
+          <div className="w-full space-y-2 bg-red-950/40 rounded-xl p-4 border border-red-500/30 text-center">
+            <div className="flex items-center justify-center gap-2 text-red-400 font-bold text-sm">
+              <X className="w-5 h-5 text-red-500" />
+              <span>Contenido No Disponible</span>
             </div>
-            <div className="flex items-center gap-1">
-              <span className="text-zinc-500">Destino:</span>
-              <span className="text-zinc-300 font-semibold">FlixHN Disk</span>
+            <p className="text-xs text-zinc-300 leading-relaxed font-medium">
+              {errorMessage}
+            </p>
+          </div>
+        ) : (
+          <div className="w-full space-y-3 bg-zinc-900/90 rounded-xl p-4 border border-zinc-800/80 shadow-inner">
+            <div className="flex items-center justify-between text-xs font-semibold">
+              <span className="text-zinc-300 flex items-center gap-1.5">
+                <DownloadCloud className="w-3.5 h-3.5 text-[#E50914]" />
+                <span>Descargando...</span>
+              </span>
+              <span className="font-mono font-bold text-white text-sm">
+                {Math.round(progress)}%
+              </span>
+            </div>
+
+            {/* Barra de Progreso Fluida */}
+            <div className="w-full h-3 bg-zinc-800 rounded-full overflow-hidden p-0.5 ring-1 ring-white/10">
+              <div
+                className="h-full rounded-full transition-all duration-300 ease-out bg-gradient-to-r from-red-600 via-[#E50914] to-orange-500 shadow-[0_0_12px_rgba(229,9,20,0.6)]"
+                style={{
+                  width: `${progress}%`,
+                  backgroundColor: platform.color || '#E50914',
+                }}
+              />
+            </div>
+
+            {/* Métricas: Velocidad y Disco */}
+            <div className="flex items-center justify-between text-[11px] text-zinc-400 pt-1 border-t border-zinc-800/60 font-mono">
+              <div className="flex items-center gap-1">
+                <span className="text-zinc-500">Velocidad:</span>
+                <span className="text-emerald-400 font-bold">{speed}</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="text-zinc-500">Destino:</span>
+                <span className="text-zinc-300 font-semibold">FlixHN Disk</span>
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
-        {/* Botón Cancelar */}
+        {/* Botón Cancelar / Volver */}
         <div className="pt-1 w-full">
           <button
             type="button"
             onClick={handleCancel}
             className="w-full py-2 px-4 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white text-xs font-bold transition-colors cursor-pointer border border-zinc-700"
           >
-            Cancelar
+            {errorMessage ? 'Volver al Catálogo' : 'Cancelar'}
           </button>
         </div>
       </div>

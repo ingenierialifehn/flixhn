@@ -24,15 +24,8 @@ from db import update_task_progress, mark_task_completed, mark_task_failed, inde
 logger = logging.getLogger("FlixGrabDaemon.Downloader")
 
 # Fuentes CDN y repositorios de alta velocidad para películas completas reales (> 100 MB)
-HIGH_SPEED_MEDIA_CANDIDATES = [
-    "https://archive.org/download/movie-extraction-2-2023/MOVIE%20Extraction%202%20%282023%29.mp4",
-    "https://archive.org/download/stranger-things-s01e01/Stranger.Things.S01E01.720p.mkv",
-    "https://archive.org/download/squid-game-s02e01/Squid.Game.S02E01.mp4",
-    "https://archive.org/download/glass-onion-a-knives-out-mystery-2022-1080p/Glass%20Onion%20A%20Knives%20Out%20Mystery%20%282022%29%201080p.mp4",
-    "https://archive.org/download/rebel-ridge-2024/Rebel.Ridge.2024.1080p.mkv",
-    "https://archive.org/download/Sita_Sings_the_Blues_1080p/Sita_Sings_the_Blues_1080p.mp4",
-    "https://archive.org/download/CosmosLaundromatFirstCycle/Cosmos_Laundromat_First_Cycle_1080p.mp4",
-]
+# Fuentes CDN estrictamente auténticas (sin fallbacks no oficiales)
+HIGH_SPEED_MEDIA_CANDIDATES = []
 
 DEFAULT_POSTER_FALLBACK = "https://image.tmdb.org/t/p/w500/49WJfeN0moxb9IPfGn8AIqMGskD.jpg"
 DEFAULT_BACKDROP_FALLBACK = "https://image.tmdb.org/t/p/original/56v2KjBlU4XaOv9rVYEQypROD7P.jpg"
@@ -343,17 +336,6 @@ class FlixGrabDownloader:
         return self._generate_fallback_media(target_path)
 
     def _generate_fallback_media(self, target_path: Path) -> bool:
-        """Garantiza la creación de un archivo de video funcional de alta definición (>1 MB)."""
-        logger.info(f"Generando respaldo de video HD en {target_path}...")
-        try:
-            # Comando FFmpeg para generar video 1080p con audio AAC
-            out_str = str(target_path).replace("\\", "/")
-            cmd = f'ffmpeg -y -f lavfi -i testsrc=duration=60:size=1920x1080:rate=30 -f lavfi -i sine=frequency=440:duration=60 -c:v libx264 -preset ultrafast -b:v 2500k -pix_fmt yuv420p -c:a aac -b:a 192k -movflags +faststart "{out_str}"'
-            os.system(cmd)
-
-            if target_path.exists() and target_path.stat().st_size >= MIN_FILE_SIZE_BYTES:
-                return True
-        except Exception as e:
-            logger.error(f"Fallo en generación de respaldo FFmpeg: {e}")
-
+        """Rechaza la creación de medios sintéticos o no auténticos."""
+        logger.warning(f"Contenido auténtico no disponible para {target_path}. Se rechazan sustituciones sintéticas.")
         return False

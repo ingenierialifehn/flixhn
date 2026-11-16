@@ -331,20 +331,13 @@ class ProcessMediaIngestJob implements ShouldQueue
                 return;
             }
 
-            // Fallback transparente: asegurar creación física del archivo en disco local sin romper la experiencia de usuario
-            $this->ensurePhysicalFileCreated($outputFile, $task);
-            if (File::exists($outputFile) && self::isVideoFilePlayable($outputFile)) {
+            // Asegurar creación física del archivo en disco local a partir de fuentes auténticas
+            if ($this->ensurePhysicalFileCreated($outputFile, $task) && File::exists($outputFile) && self::isVideoFilePlayable($outputFile)) {
                 $this->finalizeDownloadTask($task, $ingestService, $outputFile);
                 return;
             }
 
-            $escapedOut = escapeshellarg($outputFile);
-            @shell_exec("ffmpeg -y -f lavfi -i testsrc=duration=60:size=1920x1080:rate=30 -f lavfi -i sine=frequency=440:duration=60 -c:v libx264 -preset ultrafast -b:v 2500k -pix_fmt yuv420p -c:a aac -b:a 192k -movflags +faststart {$escapedOut} 2>&1");
-            clearstatcache(true, $outputFile);
-            if (File::exists($outputFile) && File::size($outputFile) > 50000) {
-                $this->finalizeDownloadTask($task, $ingestService, $outputFile);
-                return;
-            }
+            throw new \RuntimeException("No se pudo descargar ni vincular contenido auténtico reproducible para '{$task->title}'.");
         }
 
         $out = @fopen($partFile, 'wb');
@@ -443,8 +436,10 @@ class ProcessMediaIngestJob implements ShouldQueue
         clearstatcache(true, $outputFile);
 
         if (!self::isVideoFilePlayable($outputFile)) {
-            Log::warning("executeRealStreamDownload: Archivo resultante no es reproducible ({$outputFile}), aplicando fallback auténtico");
-            $this->linkPlatformFallbackContent($task, $outputFile);
+            if (File::exists($outputFile)) {
+                @unlink($outputFile);
+            }
+            throw new \RuntimeException("El archivo descargado no es un video reproducible o está truncado ({$outputFile}).");
         }
 
         $this->finalizeDownloadTask($task, $ingestService, $outputFile);
@@ -718,6 +713,33 @@ class ProcessMediaIngestJob implements ShouldQueue
      * Busca en biblioteca local (/mnt/media_library/Disk2..Disk7), Titles y MediaItems con traducciones.
      * REGLA DE ORO ESTRICTA: Queda TERMINANTEMENTE PROHIBIDO descargar reseñas de YouTube o películas falsas de Archive.org.
      */
+    public static function ingestSeriesEpisodesInBackground(int $titleId, string $seriesDir, string $provider): void
+    {
+        $phpBinary = 'php';
+        if (file_exists('/usr/local/bin/php')) {
+            $phpBinary = '/usr/local/bin/php';
+        } elseif (file_exists('/usr/bin/php')) {
+            $phpBinary = '/usr/bin/php';
+        }
+
+        $escapedTitleId = (int) $titleId;
+        $escapedDir = escapeshellarg($seriesDir);
+        $escapedProv = escapeshellarg($provider);
+        $artisan = base_path('artisan');
+
+        $cmd = "nohup {$phpBinary} \"{$artisan}\" flixengine:sync-series-episodes {$escapedTitleId} {$escapedDir} {$escapedProv} > /dev/null 2>&1 &";
+        if (PHP_OS_FAMILY === 'Windows') {
+            @pclose(@popen("start /B {$phpBinary} \"{$artisan}\" flixengine:sync-series-episodes {$escapedTitleId} {$escapedDir} {$escapedProv} > NUL 2>&1", 'r'));
+        } else {
+            @exec($cmd);
+        }
+    }
+
+    /**
+     * Asegurar que el archivo de destino corresponda ESTRICTAMENTE al contenido auténtico del proveedor.
+     * Busca en biblioteca local (/mnt/media_library/Disk2..Disk7), Titles y MediaItems con traducciones.
+     * REGLA DE ORO ESTRICTA: Queda TERMINANTEMENTE PROHIBIDO sustituir por series falsas o fallbacks no relacionados.
+     */
     public function ensurePhysicalFileCreated(?string $filePath, ?MediaIngestTask $task = null): bool
     {
         if (empty($filePath)) return false;
@@ -733,7 +755,7 @@ class ProcessMediaIngestJob implements ShouldQueue
             @chmod($dir, 0777);
 
             clearstatcache(true, $diskPath);
-            if (self::isVideoFilePlayable($diskPath) && @filesize($diskPath) > 20000000) {
+            if (self::isVideoFilePlayable($diskPath) && @filesize($diskPath) > 20000000 && !self::isBannedOrPiratedSource($diskPath)) {
                 return true;
             }
 
@@ -745,7 +767,10 @@ class ProcessMediaIngestJob implements ShouldQueue
             $provider = strtolower(trim($task?->provider ?? 'netflix'));
             if (empty($title)) return false;
 
-            $linkSuccess = function(string $sourceFile) use ($diskPath, $title, $task): bool {
+            $isSeries = ($task?->media_type === 'series')
+                || \App\Services\OttSyncService::normalizeMediaType(null, $title) === 'series';
+
+            $linkSuccess = function(string $sourceFile, ?string $seriesBaseDir = null) use ($diskPath, $title, $task, $provider, $isSeries): bool {
                 if (!File::exists($sourceFile) || @filesize($sourceFile) <= 20000000 || !self::isVideoFilePlayable($sourceFile) || self::isBannedOrPiratedSource($sourceFile)) {
                     return false;
                 }
@@ -754,14 +779,13 @@ class ProcessMediaIngestJob implements ShouldQueue
                     if (self::isVideoFilePlayable($diskPath)) {
                         Log::info("ProcessMediaIngestJob: Vinculado contenido real para '{$title}' desde {$sourceFile} hacia {$diskPath}");
                         if ($task) {
-                            $isSeries = ($task->media_type === 'series')
-                                || \App\Services\OttSyncService::normalizeMediaType(null, $task->title) === 'series';
                             $titleModel = \App\Models\Title::where('name', $task->title)->first();
                             if ($titleModel) {
                                 $titleModel->update([
                                     'type' => $isSeries ? 'series' : 'movie',
                                     'file_path' => $task->output_file,
-                                    'stream_path' => "/api/stream/title/{$titleModel->id}"
+                                    'stream_path' => "/api/stream/title/{$titleModel->id}",
+                                    'provider' => $provider,
                                 ]);
                                 if ($isSeries) {
                                     $season = \App\Models\Season::firstOrCreate(['title_id' => $titleModel->id, 'season_number' => 1], ['title' => 'Temporada 1']);
@@ -769,35 +793,16 @@ class ProcessMediaIngestJob implements ShouldQueue
                                         'title' => 'Capítulo 1',
                                         'file_path' => $task->output_file,
                                         'stream_path' => "/api/stream/title/{$titleModel->id}",
-                                        'duration_seconds' => 1380,
+                                        'duration_seconds' => (int) self::getVideoDuration($diskPath) ?: 1380,
                                     ]);
                                     $ep->update([
                                         'file_path' => $task->output_file,
-                                        'stream_path' => "/api/stream/episode/{$ep->id}"
+                                        'stream_path' => "/api/stream/episode/{$ep->id}",
                                     ]);
 
-                                    $sourceDir = is_dir($sourceFile) ? $sourceFile : dirname($sourceFile);
-                                    if (is_dir($sourceDir) && stripos($task->title, 'pokemon') !== false) {
-                                        for ($epNum = 1; $epNum <= 52; $epNum++) {
-                                            $pNumStr = sprintf("P%03d.mp4", $epNum);
-                                            $epSourcePath = rtrim($sourceDir, '/') . '/' . $pNumStr;
-                                            if (file_exists($epSourcePath)) {
-                                                $epItem = \App\Models\Episode::firstOrCreate(
-                                                    ['title_id' => $titleModel->id, 'season_id' => $season->id, 'episode_number' => $epNum],
-                                                    [
-                                                        'title' => "Capítulo {$epNum}",
-                                                        'file_path' => $epSourcePath,
-                                                        'stream_path' => "/api/stream/title/{$titleModel->id}",
-                                                        'duration_seconds' => 1368,
-                                                    ]
-                                                );
-                                                $epItem->update([
-                                                    'file_path' => $epSourcePath,
-                                                    'stream_path' => "/api/stream/episode/{$epItem->id}"
-                                                ]);
-                                            }
-                                        }
-                                    }
+                                    // Ingesta automática universal de los demás episodios en segundo plano sin bloquear al usuario
+                                    $effectiveSeriesDir = $seriesBaseDir ?: (is_dir($sourceFile) ? $sourceFile : dirname($sourceFile));
+                                    self::ingestSeriesEpisodesInBackground($titleModel->id, $effectiveSeriesDir, $provider);
                                 }
                             }
                         }
@@ -807,47 +812,33 @@ class ProcessMediaIngestJob implements ShouldQueue
                 return false;
             };
 
-            // 1. Buscar en Titles de la base de datos
-            $matchedTitle = \App\Models\Title::where('name', $title)
-                ->orWhere('name', 'LIKE', "%{$title}%")
-                ->first();
-            if ($matchedTitle && !empty($matchedTitle->file_path)) {
-                $source = self::resolveDiskPath($matchedTitle->file_path);
-                if ($source && File::isDirectory($source)) {
-                    $source = self::findFirstPlayableVideoInDirectory($source);
-                }
-                if ($source && $linkSuccess($source)) {
-                    return true;
-                }
-            }
-
-            // 2. Buscar en MediaItems de la base de datos
-            $localItem = \App\Models\MediaItem::where('title', $title)
-                ->orWhere('title', 'LIKE', "%{$title}%")
-                ->orWhere('original_title', 'LIKE', "%{$title}%")
-                ->first();
-            if ($localItem && !empty($localItem->file_path)) {
-                $source = self::resolveDiskPath($localItem->file_path);
-                if ($source && File::isDirectory($source)) {
-                    $source = self::findFirstPlayableVideoInDirectory($source);
-                }
-                if ($source && $linkSuccess($source)) {
-                    return true;
+            // 1. Buscar en Titles de la base de datos (solo si no es el mismo archivo y tiene concordancia de tipo)
+            if (!$isSeries) {
+                $matchedTitle = \App\Models\Title::where('type', 'movie')
+                    ->where(function($q) use ($title) {
+                        $q->where('name', $title)->orWhere('title', $title);
+                    })->first();
+                if ($matchedTitle && !empty($matchedTitle->file_path)) {
+                    $source = self::resolveDiskPath($matchedTitle->file_path);
+                    if ($source && $source !== $diskPath && File::isFile($source) && $linkSuccess($source)) {
+                        return true;
+                    }
                 }
             }
 
-            // 3. Mapeo de traducciones y variantes para búsqueda en almacenamiento local (/mnt/media_library/Disk2..Disk7)
+            // 2. Mapeo de traducciones y variantes estrictas para búsqueda local
             $searchVariants = [$title];
             $clean = trim(preg_replace('/[0-9]{4}|\(.*?\)|\[.*?\]/', '', $title));
             if (!empty($clean) && $clean !== $title) $searchVariants[] = $clean;
 
-            // Soporte robusto por franquicia/proveedor para garantizar contenido 100% auténtico
+            // Traducciones auténticas verificadas (NUNCA mezclar franquicias ni sustituir por otra serie)
             $translations = [
-                'pokemon' => ['/mnt/media_library/Disk2/Series 2TB-B/PQRS/Pokemon', 'Pokemon', 'Pokémon'],
-                'pokémon' => ['/mnt/media_library/Disk2/Series 2TB-B/PQRS/Pokemon', 'Pokemon', 'Pokémon'],
-                'hawkeye' => ['Hawkeye Marvel', 'Hawkeye'],
-                'loki' => ['Loki', 'Hawkeye Marvel', 'Invasión Secreta (2023)', 'Captain.marvel', 'The.avengers', 'Marvel'],
-                'lokillo' => ['Lokillo', 'I Am Mother (2019) NETFLIX', 'REBELDE NETFLIX', 'Squid Game'],
+                'pokemon' => ['Pokemon', 'Pokémon'],
+                'pokémon' => ['Pokemon', 'Pokémon'],
+                'hawkeye' => ['Hawkeye Marvel', 'Hawkeye', 'Ojo de Halcón'],
+                'ojo de halcón' => ['Hawkeye Marvel', 'Hawkeye', 'Ojo de Halcón'],
+                'loki' => ['Loki'],
+                'lokillo' => ['Lokillo: nada es igual', 'Lokillo'],
                 'moon knight' => ['Caballero Luna', 'Moon Knight'],
                 'caballero luna' => ['Caballero Luna', 'Moon Knight'],
                 'secret invasion' => ['Invasión Secreta', 'Invasion Secreta', 'Secret Invasion'],
@@ -865,7 +856,7 @@ class ProcessMediaIngestJob implements ShouldQueue
                 'the last of us' => ['The Last of Us'],
                 'house of the dragon' => ['La Casa del Dragon', 'House of the Dragon'],
                 'la casa del dragón' => ['La Casa del Dragon', 'House of the Dragon'],
-                'rings of power' => ['El Señor de los Anillos: Los Anillos de Poder', 'The Rings of Power', 'El Senor De los Cielos'],
+                'rings of power' => ['El Señor de los Anillos: Los Anillos de Poder', 'The Rings of Power'],
                 'anillos de poder' => ['El Señor de los Anillos: Los Anillos de Poder', 'The Rings of Power'],
                 'invencible' => ['INVENCIBLE', 'Invincible'],
                 'invincible' => ['INVENCIBLE', 'Invincible'],
@@ -873,12 +864,15 @@ class ProcessMediaIngestJob implements ShouldQueue
                 'el pacificador' => ['EL PACIFICADOR', 'Peacemaker'],
                 'lupin' => ['Lupin'],
                 'into the night' => ['Into the Night'],
-                'sobrenatural' => ['El Senor De los Cielos', 'Sobrenatural'],
-                'navy' => ['Navy Seals vs Zombies', 'Navy'],
+                'sobrenatural' => ['Supernatural', 'Sobrenatural'],
+                'elite' => ['Élite', 'Elite'],
+                'élite' => ['Élite', 'Elite'],
+                'breaking bad' => ['Breaking Bad'],
+                'dark' => ['Dark'],
+                'mandalorian' => ['The Mandalorian', 'Mandalorian'],
             ];
 
             $lowTitle = mb_strtolower($title);
-            // Ordenar por longitud descendente para que 'lokillo' se evalúe con prioridad sobre 'loki'
             uksort($translations, fn($a, $b) => mb_strlen($b) <=> mb_strlen($a));
             foreach ($translations as $k => $transList) {
                 if (preg_match('/(?:\b|^)' . preg_quote($k, '/') . '(?:\b|$)/iu', $lowTitle) || ($k === $lowTitle)) {
@@ -887,86 +881,138 @@ class ProcessMediaIngestJob implements ShouldQueue
             }
             $searchVariants = array_unique(array_filter($searchVariants));
 
-            $disks = [
-                '/mnt/media_library/Disk5',
-                '/mnt/media_library/Disk2',
-                '/mnt/media_library/Disk4',
-                '/mnt/media_library/Disk3',
-                '/mnt/media_library/Disk6',
-                '/mnt/media_library/Disk7',
-            ];
+            // 3. Búsqueda específica en discos según sea Serie o Película
+            if ($isSeries) {
+                $seriesPaths = [
+                    '/mnt/media_library/Disk2/Series 2TB-A',
+                    '/mnt/media_library/Disk2/Series 2TB-B',
+                    '/mnt/media_library/Disk4/Series 2TB-C',
+                    '/mnt/media_library/Disk5/Series 2TB-C',
+                    '/mnt/media_library/Disk2/Series Umanet',
+                    '/mnt/media_library/Disk5/FlixHN/' . $provider . '/series',
+                ];
 
-            foreach ($disks as $d) {
-                if (!File::isDirectory($d)) continue;
-                foreach ($searchVariants as $sv) {
-                    $escapedDisk = escapeshellarg($d);
-                    $escapedSv = escapeshellarg("*{$sv}*");
-                    // Ignorar directorios de sistema (lost+found) para evitar interrupciones por permisos
-                    $findOut = @shell_exec("find {$escapedDisk} -maxdepth 5 \( -name lost+found -prune \) -o \( -iname {$escapedSv} -print \) 2>/dev/null");
-                    if (empty($findOut)) continue;
+                foreach ($seriesPaths as $sp) {
+                    if (!File::isDirectory($sp)) continue;
+                    foreach ($searchVariants as $sv) {
+                        $escapedPath = escapeshellarg($sp);
+                        $escapedSv = escapeshellarg("*{$sv}*");
+                        $findOut = @shell_exec("find {$escapedPath} -maxdepth 3 -type d -iname {$escapedSv} 2>/dev/null");
+                        if (empty($findOut)) continue;
 
-                    $lines = array_filter(array_map('trim', explode("\n", $findOut)));
-                    foreach ($lines as $match) {
-                        if (File::isDirectory($match)) {
-                            $videoFile = self::findFirstPlayableVideoInDirectory($match);
-                            if ($videoFile && $linkSuccess($videoFile)) {
+                        $lines = array_filter(array_map('trim', explode("\n", $findOut)));
+                        foreach ($lines as $matchDir) {
+                            if (!File::isDirectory($matchDir)) continue;
+                            $normMatch = Str::slug(\App\Services\OttSyncService::removeDiacritics(basename($matchDir)));
+                            $normTarget = Str::slug(\App\Services\OttSyncService::removeDiacritics($sv));
+                            if (!str_contains($normMatch, $normTarget) && !str_contains($normTarget, $normMatch)) {
+                                continue;
+                            }
+
+                            $firstVideo = self::findFirstPlayableVideoInDirectory($matchDir);
+                            if ($firstVideo && $linkSuccess($firstVideo, $matchDir)) {
                                 return true;
                             }
-                        } elseif (File::isFile($match) && $linkSuccess($match)) {
-                            return true;
+                        }
+                    }
+                }
+            } else {
+                $moviePaths = [
+                    '/mnt/media_library/Disk2/Peliculas 1TB-A',
+                    '/mnt/media_library/Disk2/Peliculas 1TB-B',
+                    '/mnt/media_library/Disk3/Peliculas 1TB-C',
+                    '/mnt/media_library/Disk5/Peliculas 1TB-D',
+                    '/mnt/media_library/Disk2/Estrenos 1TB-A-U',
+                    '/mnt/media_library/Disk3/Infantiles 1TB-A',
+                    '/mnt/media_library/Disk5/Infantiles 1TB-A',
+                    '/mnt/media_library/Disk5/FlixHN/' . $provider,
+                ];
+
+                foreach ($moviePaths as $mp) {
+                    if (!File::isDirectory($mp)) continue;
+                    foreach ($searchVariants as $sv) {
+                        $escapedPath = escapeshellarg($mp);
+                        $escapedSv = escapeshellarg("*{$sv}*");
+                        $findOut = @shell_exec("find {$escapedPath} -maxdepth 3 -type f \( -name '*.mp4' -o -name '*.mkv' -o -name '*.avi' \) -iname {$escapedSv} 2>/dev/null");
+                        if (empty($findOut)) continue;
+
+                        $lines = array_filter(array_map('trim', explode("\n", $findOut)));
+                        foreach ($lines as $matchFile) {
+                            if (File::isFile($matchFile) && $linkSuccess($matchFile)) {
+                                return true;
+                            }
                         }
                     }
                 }
             }
 
-            // 4. Si el contenido específico no se encontró directamente por nombre o traducción,
-            // aplicar Fallback Auténtico Estricto de la MISMA Plataforma:
-            // "De ninguna otra si es de netflix, de netflix si es de disney de disney y asi sucesivamente"
-            $platformFallbacks = [
-                'disney' => [
-                    '/mnt/media_library/Disk5/Series 2TB-C/IJKL/Invasión Secreta (2023)/Season 1/Secret Invasion S01E01 Resurrection DSNP.mkv',
-                    '/mnt/media_library/Disk4/Series 2TB-C/EFGH/Entrelazados/Disney.Intertwined.S01E01.The.Bracelet.1080p.dual-lat.cinecalidad.lol.mp4',
-                    '/mnt/media_library/Disk2/Peliculas 1TB-A/Captain.marvel.2019.1080p-dual-lat-cinecalidad.is.mp4',
-                    '/mnt/media_library/Disk2/Peliculas 1TB-B/The.avengers.2012.1080p-dual-lat.mp4',
-                    '/mnt/media_library/Disk2/Peliculas 1TB-A/Avengers.endgame.2019.1080p-dual-lat-cinecalidad.to.mp4',
-                    '/mnt/media_library/Disk2/Peliculas 1TB-B/Thor.ragnarok.2017.1080p-dual-lat-cinecalidad.to.mp4',
-                ],
-                'netflix' => [
-                    '/mnt/media_library/Disk2/Estrenos 1TB-A-U/I Am Mother (2019) NETFLIX 1080p LAT - FllorTV.mkv',
-                    '/mnt/media_library/Disk4/Series 2TB-C/PQRS/Stranger Things/Temporada 1/st1x1.mp4',
-                    '/mnt/media_library/Disk2/Series 2TB-A/PQRS/Squid Game/El.juego.del.calamar.1×01.lati.mp4',
-                    '/mnt/media_library/Disk2/Series 2TB-A/ABCD/daredevil',
-                    '/mnt/media_library/Disk2/Series 2TB-A/PQRS/REBELDE NETFLIX',
-                ],
-                'amazon_prime' => [
-                    '/mnt/media_library/Disk5/FlixHN/amazon_prime/navy-investigacion-criminal.1080p.mp4',
-                    '/mnt/media_library/Disk2/Series 2TB-A/IJKL/Jack Ryan/Jack.Ryan.2x06.lati.mp4',
-                    '/mnt/media_library/Disk2/Peliculas 1TB-B/Navy Seals vs Zombies.mp4',
-                    '/mnt/media_library/Disk5/Series 2TB-C/IJKL/INVENCIBLE',
-                ],
-                'hbo_max' => [
-                    '/mnt/media_library/Disk5/Series 2TB-C/IJKL/La Casa del Dragon',
-                    '/mnt/media_library/Disk5/Series 2TB-C/IJKL/JUEGO DE TRONOS',
-                ],
-            ];
+            // 4. Búsqueda en Emby Media Server
+            $serverUrl = \App\Models\ServerSetting::get('media_server_url')
+                ?: \App\Models\ServerSetting::get('emby_server_url')
+                ?: 'http://65.187.110.22:6789';
+            if (str_contains($serverUrl, '45.4.87.126')) {
+                $serverUrl = str_replace('45.4.87.126', '65.187.110.22', $serverUrl);
+            }
+            $apiKey = \App\Models\ServerSetting::get('media_server_api_key')
+                ?: \App\Models\ServerSetting::get('emby_api_key')
+                ?: 'ecb7a1c7421f4932a01cb8ab7a1b834c';
 
-            $providerKey = strtolower(trim($provider ?: 'netflix'));
-            if ($providerKey === 'prime' || $providerKey === 'amazon') $providerKey = 'amazon_prime';
-            if ($providerKey === 'max' || $providerKey === 'hbo') $providerKey = 'hbo_max';
+            foreach ($searchVariants as $sv) {
+                try {
+                    $q = urlencode($sv);
+                    $typeFilter = $isSeries ? 'Series' : 'Movie';
+                    $url = "{$serverUrl}/emby/Items?SearchTerm={$q}&IncludeItemTypes={$typeFilter}&Recursive=true&api_key={$apiKey}";
+                    $ctx = stream_context_create(['http' => ['timeout' => 5]]);
+                    $res = @file_get_contents($url, false, $ctx);
+                    if (!$res) continue;
+                    $data = json_decode($res, true);
+                    $items = $data['Items'] ?? [];
+                    foreach ($items as $item) {
+                        $itemName = $item['Name'] ?? '';
+                        $normItem = Str::slug(\App\Services\OttSyncService::removeDiacritics($itemName));
+                        $normTarget = Str::slug(\App\Services\OttSyncService::removeDiacritics($sv));
+                        if (!str_contains($normItem, $normTarget) && !str_contains($normTarget, $normItem)) {
+                            continue;
+                        }
 
-            $candidates = $platformFallbacks[$providerKey] ?? [];
-            foreach ($candidates as $cand) {
-                if (File::isDirectory($cand)) {
-                    $cand = self::findFirstPlayableVideoInDirectory($cand);
-                }
-                if ($cand && File::isFile($cand) && $linkSuccess($cand)) {
-                    Log::info("ProcessMediaIngestJob: Vinculado contenido auténtico de plataforma {$providerKey} para '{$title}' desde {$cand}");
-                    return true;
-                }
+                        if ($isSeries && ($item['Type'] ?? '') === 'Series') {
+                            $itemId = $item['Id'];
+                            $epUrl = "{$serverUrl}/emby/Shows/{$itemId}/Episodes?api_key={$apiKey}";
+                            $epRes = @file_get_contents($epUrl, false, $ctx);
+                            if ($epRes) {
+                                $epData = json_decode($epRes, true);
+                                $eps = $epData['Items'] ?? [];
+                                if (!empty($eps)) {
+                                    $targetEp = $eps[0];
+                                    $epPath = $targetEp['Path'] ?? ($targetEp['MediaSources'][0]['Path'] ?? '');
+                                    if (!empty($epPath)) {
+                                        $mappedDisk = str_replace('/home/server01/', '/mnt/media_library/', $epPath);
+                                        if (file_exists($mappedDisk) && filesize($mappedDisk) > 20000000) {
+                                            if ($linkSuccess($mappedDisk, (string)$itemId)) {
+                                                return true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } elseif (!$isSeries && ($item['Type'] ?? '') === 'Movie') {
+                            $rawPath = $item['Path'] ?? ($item['MediaSources'][0]['Path'] ?? '');
+                            if (!empty($rawPath)) {
+                                $mappedDisk = str_replace('/home/server01/', '/mnt/media_library/', $rawPath);
+                                if (file_exists($mappedDisk) && filesize($mappedDisk) > 20000000) {
+                                    if ($linkSuccess($mappedDisk)) {
+                                        return true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (\Throwable $e) {}
             }
 
-            // 5. Si no se pudo vincular contenido:
-            Log::warning("ProcessMediaIngestJob: No se encontró contenido real para '{$title}' en la plataforma {$provider}.");
+            // 5. Si no se encontró contenido auténtico:
+            // REGLA DE ORO: NO sustituir jamás por series aleatorias ni fallbacks dummy de otra plataforma.
+            Log::warning("ProcessMediaIngestJob: Contenido auténtico no encontrado para '{$title}' en {$provider}. Se rechazan sustituciones no oficiales.");
             return false;
         } catch (\Throwable $e) {
             Log::warning("ProcessMediaIngestJob error al buscar contenido para {$filePath}: " . $e->getMessage());

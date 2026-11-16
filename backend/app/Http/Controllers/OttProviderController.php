@@ -594,10 +594,10 @@ class OttProviderController extends Controller
             $title = Title::where('name', $task->title)->first();
         }
 
-        // Si el archivo físico ya existe en disco y tiene contenido reproducible
+        // Si el archivo físico ya existe en disco y tiene contenido reproducible auténtico
         $outputFile = $task?->output_file ?: $title?->file_path;
         $diskPath = $outputFile ? \App\Jobs\ProcessMediaIngestJob::resolveDiskPath($outputFile) : null;
-        $fileExists = $diskPath && file_exists($diskPath) && filesize($diskPath) > 50000 && \App\Jobs\ProcessMediaIngestJob::isVideoFilePlayable($diskPath);
+        $fileExists = $diskPath && file_exists($diskPath) && filesize($diskPath) > 50000 && \App\Jobs\ProcessMediaIngestJob::isVideoFilePlayable($diskPath) && !\App\Jobs\ProcessMediaIngestJob::isBannedOrPiratedSource($diskPath);
         $isCompleted = ($task?->status === 'completed') || ($task?->progress >= 100);
 
         if ($fileExists) {
@@ -608,19 +608,22 @@ class OttProviderController extends Controller
                 try {
                     $season = \App\Models\Season::firstOrCreate(
                         ['title_id' => $title->id, 'season_number' => 1],
-                        ['name' => 'Temporada 1']
+                        ['title' => 'Temporada 1']
                     );
                     $ep = \App\Models\Episode::firstOrCreate(
                         ['title_id' => $title->id, 'season_id' => $season->id, 'episode_number' => 1],
                         [
                             'title' => 'Capítulo 1',
                             'file_path' => $outputFile,
-                            'stream_path' => "/api/episodes/stream?title_id={$title->id}",
-                            'duration_seconds' => 3600,
+                            'stream_path' => "/api/stream/title/{$title->id}",
+                            'duration_seconds' => 1380,
                         ]
                     );
                     if ($ep->file_path !== $outputFile) {
-                        $ep->update(['file_path' => $outputFile]);
+                        $ep->update([
+                            'file_path' => $outputFile,
+                            'stream_path' => "/api/stream/episode/{$ep->id}",
+                        ]);
                     }
                 } catch (\Throwable $e) {}
             }
@@ -634,7 +637,7 @@ class OttProviderController extends Controller
                 'progress' => 100,
                 'title_id' => $title?->id,
                 'title' => $title,
-                'stream_url' => $title ? "/api/media/{$title->id}/stream" : null,
+                'stream_url' => $title ? "/api/stream/title/{$title->id}" : null,
             ]);
         }
 
@@ -647,7 +650,7 @@ class OttProviderController extends Controller
                 'progress' => 0,
                 'title_id' => $title?->id,
                 'title' => $title,
-                'error_message' => $task->error_message ?: 'Error durante la descarga del contenido OTT oficial.',
+                'error_message' => $task->error_message ?: 'El contenido auténtico no está disponible actualmente en el servidor.',
             ]);
         }
 

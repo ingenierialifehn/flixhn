@@ -137,9 +137,12 @@ class MediaIngestService
         }
         $apiKey = \App\Models\ServerSetting::get('media_server_api_key')
             ?: \App\Models\ServerSetting::get('emby_api_key')
-            ?: '0fe0eb20e78f431d9fa474e05ab2d82f';
+            ?: 'ecb7a1c7421f4932a01cb8ab7a1b834c';
 
-        // 1. Trminos de bsqueda candidatos
+        $isSeries = ($mediaType === 'series')
+            || \App\Services\OttSyncService::normalizeMediaType($mediaType, $title) === 'series';
+
+        // 1. Términos de búsqueda candidatos
         $searchTerms = [];
         $cleanTitle = trim(preg_replace('/[0-9]{4}|\(.*?\)|\[.*?\]/', '', $title));
         $searchTerms[] = $title;
@@ -154,45 +157,30 @@ class MediaIngestService
         }
 
         $lower = mb_strtolower($title);
-        if (str_contains($lower, 'black friday')) {
-            $searchTerms[] = 'Viernes Negro';
-            $searchTerms[] = 'Black Friday';
+        if (str_contains($lower, 'pokemon') || str_contains($lower, 'pokémon')) {
+            $searchTerms[] = 'Pokemon';
+            $searchTerms[] = 'Pokémon';
         }
-        if (str_contains($lower, 'viernes negro')) {
-            $searchTerms[] = 'Viernes Negro';
-            $searchTerms[] = 'Black Friday';
-        }
-        if (str_contains($lower, 'extraction') || str_contains($lower, 'rescate')) {
-            $searchTerms[] = 'Misin de rescate';
-            $searchTerms[] = 'Extraction';
-        }
-        if (str_contains($lower, 'arcane')) $searchTerms[] = 'Arcane';
         if (str_contains($lower, 'stranger things')) $searchTerms[] = 'Stranger Things';
         if (str_contains($lower, 'mandalorian')) $searchTerms[] = 'The Mandalorian';
-        if (str_contains($lower, 'gladiator')) $searchTerms[] = 'Gladiator';
-        if (str_contains($lower, 'dune')) $searchTerms[] = 'Dune';
-        if (str_contains($lower, 'the boys') || str_contains($lower, 'boys')) $searchTerms[] = 'The Boys';
-        if (str_contains($lower, 'fallout')) {
-            $searchTerms[] = 'Fallout';
-            $searchTerms[] = 'The Fallout';
-        }
-        if (str_contains($lower, 'reacher')) $searchTerms[] = 'Reacher';
-        if (str_contains($lower, 'invincible') || str_contains($lower, 'invencible')) {
-            $searchTerms[] = 'Invencible';
-            $searchTerms[] = 'Invincible';
-        }
         if (str_contains($lower, 'house of the dragon') || str_contains($lower, 'casa del drag')) {
             $searchTerms[] = 'La Casa del Dragón';
             $searchTerms[] = 'House of the Dragon';
         }
-        if (str_contains($lower, 'ted lasso')) $searchTerms[] = 'Ted Lasso';
-        if (str_contains($lower, 'halo')) $searchTerms[] = 'Halo';
         if (str_contains($lower, 'rings of power') || str_contains($lower, 'anillos de poder')) {
             $searchTerms[] = 'El Señor de los Anillos';
             $searchTerms[] = 'The Lord of the Rings';
         }
-        if (str_contains($lower, 'jack ryan')) $searchTerms[] = 'Jack Ryan';
-        if (str_contains($lower, 'last of us')) $searchTerms[] = 'The Last of Us';
+        if (str_contains($lower, 'squid game') || str_contains($lower, 'juego del calamar')) {
+            $searchTerms[] = 'El juego del calamar';
+            $searchTerms[] = 'Squid Game';
+        }
+        if (str_contains($lower, 'dark')) $searchTerms[] = 'Dark';
+        if (str_contains($lower, 'breaking bad')) $searchTerms[] = 'Breaking Bad';
+        if (str_contains($lower, 'elite') || str_contains($lower, 'élite')) {
+            $searchTerms[] = 'Élite';
+            $searchTerms[] = 'Elite';
+        }
 
         $searchTerms = array_unique(array_filter($searchTerms));
 
@@ -200,7 +188,8 @@ class MediaIngestService
         foreach ($searchTerms as $term) {
             try {
                 $q = urlencode($term);
-                $url = "{$serverUrl}/emby/Items?SearchTerm={$q}&IncludeItemTypes=Movie,Series,Episode&Recursive=true&api_key={$apiKey}";
+                $typeFilter = $isSeries ? 'Series' : 'Movie';
+                $url = "{$serverUrl}/emby/Items?SearchTerm={$q}&IncludeItemTypes={$typeFilter}&Recursive=true&api_key={$apiKey}";
                 $ctx = stream_context_create(['http' => ['timeout' => 5]]);
                 $res = @file_get_contents($url, false, $ctx);
                 if (!$res) continue;
@@ -213,23 +202,15 @@ class MediaIngestService
                     $itemId = $item['Id'] ?? null;
                     if (!$itemId) continue;
 
-                    // Si el archivo físico de Emby existe en almacenamiento local (/mnt/media_library/):
-                    $rawItemPath = $item['Path'] ?? ($item['MediaSources'][0]['Path'] ?? '');
-                    if (!empty($rawItemPath)) {
-                        $mappedDisk = str_replace('/home/server01/', '/mnt/media_library/', $rawItemPath);
-                        if (file_exists($mappedDisk) && filesize($mappedDisk) > 20000000) {
-                            return [
-                                'stream_url' => $mappedDisk,
-                                'total_bytes' => filesize($mappedDisk),
-                                'title' => $item['Name'] ?? $title,
-                                'type' => strtolower($type),
-                                'item_id' => $itemId,
-                                'source' => 'emby_local_disk'
-                            ];
-                        }
+                    // Validación estricta del nombre para evitar coincidencias falsas
+                    $itemName = $item['Name'] ?? '';
+                    $normItem = Str::slug(\App\Services\OttSyncService::removeDiacritics($itemName));
+                    $normSearch = Str::slug(\App\Services\OttSyncService::removeDiacritics($term));
+                    if (!str_contains($normItem, $normSearch) && !str_contains($normSearch, $normItem)) {
+                        continue;
                     }
 
-                    if ($type === 'Series') {
+                    if ($isSeries && $type === 'Series') {
                         $epUrl = "{$serverUrl}/emby/Shows/{$itemId}/Episodes?api_key={$apiKey}";
                         $epRes = @file_get_contents($epUrl, false, $ctx);
                         if ($epRes) {
@@ -238,12 +219,27 @@ class MediaIngestService
                             if (!empty($eps)) {
                                 $targetEp = $eps[0];
                                 $epId = $targetEp['Id'];
+                                $rawEpPath = $targetEp['Path'] ?? ($targetEp['MediaSources'][0]['Path'] ?? '');
+                                if (!empty($rawEpPath)) {
+                                    $mappedDisk = str_replace('/home/server01/', '/mnt/media_library/', $rawEpPath);
+                                    if (file_exists($mappedDisk) && filesize($mappedDisk) > 20000000 && !\App\Jobs\ProcessMediaIngestJob::isBannedOrPiratedSource($mappedDisk)) {
+                                        return [
+                                            'stream_url' => $mappedDisk,
+                                            'total_bytes' => filesize($mappedDisk),
+                                            'title' => ($item['Name'] ?? $title) . ' - ' . ($targetEp['Name'] ?? 'Episodio 1'),
+                                            'type' => 'episode',
+                                            'item_id' => $epId,
+                                            'source' => 'emby_local_disk',
+                                            'emby_series_id' => $itemId,
+                                        ];
+                                    }
+                                }
+
                                 $streamUrl = "{$serverUrl}/emby/Videos/{$epId}/stream.mp4?static=true&api_key={$apiKey}";
                                 $infoUrl = "{$serverUrl}/emby/Items/{$epId}/PlaybackInfo?api_key={$apiKey}";
                                 $infoRes = @file_get_contents($infoUrl, false, $ctx);
                                 $infoData = $infoRes ? json_decode($infoRes, true) : [];
                                 $size = $infoData['MediaSources'][0]['Size'] ?? 650000000;
-                                // Verificar que el stream responda exitosamente (no 404)
                                 $headers = @get_headers($streamUrl, 1);
                                 if ($headers && (str_contains($headers[0], '200') || str_contains($headers[0], '206'))) {
                                     return [
@@ -252,27 +248,42 @@ class MediaIngestService
                                         'title' => ($item['Name'] ?? $title) . ' - ' . ($targetEp['Name'] ?? 'Episodio 1'),
                                         'type' => 'episode',
                                         'item_id' => $epId,
-                                        'source' => 'emby'
+                                        'source' => 'emby',
+                                        'emby_series_id' => $itemId,
                                     ];
                                 }
                             }
                         }
-                    } elseif ($type === 'Movie' || $type === 'Episode') {
+                    } elseif (!$isSeries && ($type === 'Movie' || $type === 'Episode')) {
+                        $rawItemPath = $item['Path'] ?? ($item['MediaSources'][0]['Path'] ?? '');
+                        if (!empty($rawItemPath)) {
+                            $mappedDisk = str_replace('/home/server01/', '/mnt/media_library/', $rawItemPath);
+                            if (file_exists($mappedDisk) && filesize($mappedDisk) > 20000000 && !\App\Jobs\ProcessMediaIngestJob::isBannedOrPiratedSource($mappedDisk)) {
+                                return [
+                                    'stream_url' => $mappedDisk,
+                                    'total_bytes' => filesize($mappedDisk),
+                                    'title' => $item['Name'] ?? $title,
+                                    'type' => 'movie',
+                                    'item_id' => $itemId,
+                                    'source' => 'emby_local_disk',
+                                ];
+                            }
+                        }
+
                         $streamUrl = "{$serverUrl}/emby/Videos/{$itemId}/stream.mp4?static=true&api_key={$apiKey}";
                         $infoUrl = "{$serverUrl}/emby/Items/{$itemId}/PlaybackInfo?api_key={$apiKey}";
                         $infoRes = @file_get_contents($infoUrl, false, $ctx);
                         $infoData = $infoRes ? json_decode($infoRes, true) : [];
                         $size = $infoData['MediaSources'][0]['Size'] ?? 2100000000;
-                        // Verificar que el stream responda exitosamente (no 404)
                         $headers = @get_headers($streamUrl, 1);
                         if ($headers && (str_contains($headers[0], '200') || str_contains($headers[0], '206'))) {
                             return [
                                 'stream_url' => $streamUrl,
                                 'total_bytes' => (int) $size,
                                 'title' => $item['Name'] ?? $title,
-                                'type' => strtolower($type),
+                                'type' => 'movie',
                                 'item_id' => $itemId,
-                                'source' => 'emby'
+                                'source' => 'emby',
                             ];
                         }
                     }
@@ -282,12 +293,18 @@ class MediaIngestService
             }
         }
 
-        // Prioridad 2: Base de datos local (Titles y MediaItems)
+        // Prioridad 2: Base de datos local (Titles y MediaItems con concordancia estricta de tipo)
         try {
-            foreach ($searchTerms as $st) {
-                $localMedia = \App\Models\MediaItem::where('title', 'LIKE', "%{$st}%")
-                    ->orWhere('original_title', 'LIKE', "%{$st}%")
-                    ->first();
+            foreach ($searchVariants as $st) {
+                $targetType = $isSeries ? 'series' : 'movie';
+                $localMedia = \App\Models\MediaItem::where('type', $targetType)
+                    ->where(function($q) use ($st) {
+                        $q->where('title', $st)
+                          ->orWhere('original_title', $st)
+                          ->orWhere('title', 'LIKE', "{$st}:%")
+                          ->orWhere('title', 'LIKE', "{$st} -%");
+                    })->first();
+
                 if ($localMedia && !empty($localMedia->file_path)) {
                     $res = ProcessMediaIngestJob::resolveDiskPath($localMedia->file_path);
                     if ($res && is_dir($res)) {
@@ -299,14 +316,18 @@ class MediaIngestService
                             'total_bytes' => filesize($res),
                             'title' => $localMedia->title,
                             'type' => $localMedia->type ?: ($mediaType ?: 'movie'),
-                            'source' => 'local_disk'
+                            'source' => 'local_disk',
                         ];
                     }
                 }
 
-                $localTitle = Title::where('name', 'LIKE', "%{$st}%")
-                    ->orWhere('slug', 'LIKE', "%" . Str::slug($st) . "%")
-                    ->first();
+                $localTitle = Title::where('type', $targetType)
+                    ->where(function($q) use ($st) {
+                        $q->where('name', $st)
+                          ->orWhere('name', 'LIKE', "{$st}:%")
+                          ->orWhere('name', 'LIKE', "{$st} -%");
+                    })->first();
+
                 if ($localTitle && !empty($localTitle->file_path)) {
                     $res = ProcessMediaIngestJob::resolveDiskPath($localTitle->file_path);
                     if ($res && is_dir($res)) {
@@ -318,20 +339,7 @@ class MediaIngestService
                             'total_bytes' => filesize($res),
                             'title' => $localTitle->name,
                             'type' => $localTitle->type ?: 'movie',
-                            'source' => 'local_disk'
-                        ];
-                    }
-                }
-                if ($localTitle && !empty($localTitle->stream_path)) {
-                    $path = $localTitle->stream_path;
-                    $resolved = ProcessMediaIngestJob::resolveDiskPath($path);
-                    if ($resolved && file_exists($resolved) && filesize($resolved) > 20000000) {
-                        return [
-                            'stream_url' => $resolved,
-                            'total_bytes' => filesize($resolved),
-                            'title' => $localTitle->name,
-                            'type' => $localTitle->type ?: 'movie',
-                            'source' => 'local_disk'
+                            'source' => 'local_disk',
                         ];
                     }
                 }
