@@ -101,7 +101,7 @@ class StreamingController extends Controller
             }
 
             // Si está descargando y ya tiene suficientes segmentos HLS para reproducir en caliente
-            if ($job->can_play_progressive && $job->segments_ready >= (int) config('flixgrab.min_segments_for_playback', 2)) {
+            if ($job->can_play_progressive && $job->segments_ready >= (int) config('flixgrab.min_segments_for_playback', 1)) {
                 $playlistUrl = url("/api/streaming/hls/{$job->job_id}/playlist.m3u8");
                 return response()->json([
                     'success' => true,
@@ -129,7 +129,7 @@ class StreamingController extends Controller
                 'progress' => (float) $job->progress,
                 'download_speed' => $job->download_speed,
                 'segments_ready' => $job->segments_ready,
-                'required_segments' => (int) config('flixgrab.min_segments_for_playback', 2),
+                'required_segments' => (int) config('flixgrab.min_segments_for_playback', 1),
                 'eta' => $job->eta,
             ], 202);
         }
@@ -157,11 +157,18 @@ class StreamingController extends Controller
         $jobFolder = rtrim($hlsBase, '/\\') . DIRECTORY_SEPARATOR . $jobId;
         $targetFile = $jobFolder . DIRECTORY_SEPARATOR . $file;
 
-        // Si no existe con ese ID, buscar si el trabajo tiene una ruta personalizada
+        // Si no existe con ese ID, buscar si el trabajo tiene una ruta personalizada o coincide con el slug
         if (!File::exists($targetFile)) {
-            $job = DownloadJob::where('job_id', $jobId)->orWhere('id', $jobId)->first();
+            $job = DownloadJob::where('job_id', $jobId)
+                ->orWhere('id', $jobId)
+                ->orWhere('hls_path', 'LIKE', "%{$jobId}%")
+                ->orWhere('hls_playlist_url', 'LIKE', "%{$jobId}%")
+                ->first();
             if ($job && !empty($job->hls_path)) {
-                $targetFile = rtrim($job->hls_path, '/\\') . DIRECTORY_SEPARATOR . $file;
+                $customPath = rtrim($job->hls_path, '/\\') . DIRECTORY_SEPARATOR . $file;
+                if (File::exists($customPath)) {
+                    $targetFile = $customPath;
+                }
             }
         }
 

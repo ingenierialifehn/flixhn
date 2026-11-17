@@ -139,13 +139,10 @@ CHUNK_SIZE = 128 * 1024  # 128 KB
 
 # Candidatos de alta velocidad para streaming progresivo de plataformas OTT
 HIGH_SPEED_MEDIA_CANDIDATES = [
-    "https://archive.org/download/movie-extraction-2-2023/MOVIE%20Extraction%202%20%282023%29.mp4",
-    "https://archive.org/download/stranger-things-s01e01/Stranger.Things.S01E01.720p.mkv",
-    "https://archive.org/download/squid-game-s02e01/Squid.Game.S02E01.mp4",
-    "https://archive.org/download/glass-onion-a-knives-out-mystery-2022-1080p/Glass%20Onion%20A%20Knives%20Out%20Mystery%20%282022%29%201080p.mp4",
-    "https://archive.org/download/rebel-ridge-2024/Rebel.Ridge.2024.1080p.mkv",
-    "https://archive.org/download/Sita_Sings_the_Blues_1080p/Sita_Sings_the_Blues_1080p.mp4",
-    "https://archive.org/download/BigBuckBunny_124/BigBuckBunny_1080p.mp4",
+    "https://media.w3.org/2010/05/bunny/movie.mp4",
+    "https://vjs.zencdn.net/v/oceans.mp4",
+    "https://media.w3.org/2010/05/sintel/trailer.mp4",
+    "https://raw.githubusercontent.com/bower-media-samples/big-buck-bunny-1080p-30s/master/video.mp4",
 ]
 
 def resolve_playable_source_url(task: 'DownloadTask') -> str:
@@ -160,7 +157,7 @@ def resolve_playable_source_url(task: 'DownloadTask') -> str:
         return chosen
     return url
 
-MIN_SEGMENTS_FOR_PLAYBACK = int(os.getenv("FLIXGRAB_MIN_SEGMENTS_PLAY", "2"))
+MIN_SEGMENTS_FOR_PLAYBACK = int(os.getenv("FLIXGRAB_MIN_SEGMENTS_PLAY", "1"))
 HLS_SEGMENT_DURATION = int(os.getenv("FLIXGRAB_HLS_SEGMENT_DURATION", "4"))
 
 # Detección de FFmpeg
@@ -239,7 +236,7 @@ class DownloadTask:
         self.started_at: str = datetime.now().isoformat()
         self.completed_at: Optional[str] = None
         
-        self.cancel_event = asyncio.Event()
+        self.cancel_event = threading.Event()
         self.ffmpeg_proc: Optional[subprocess.Popen] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -329,15 +326,172 @@ class FlixGrabEngine:
                 return existing
 
         self.jobs[task.job_id] = task
-        # Tupla para PriorityQueue: (prioridad ascendente, timestamp, job_id)
-        item = (task.priority, time.time(), task.job_id)
-        if self.loop and self.loop.is_running():
-            self.loop.call_soon_threadsafe(self.queue.put_nowait, item)
-        else:
-            self.queue.put_nowait(item)
         self.sync_db(task)
-        logger.info(f"Trabajo registrado en cola: [{task.title}] (ID: {task.job_id}, Prioridad: {task.priority})")
+        logger.info(f"Trabajo registrado e iniciando descarga en segundo plano: [{task.title}] (ID: {task.job_id}, Prioridad: {task.priority})")
+
+        # Iniciar hilo de procesamiento nativo para descarga y HLS progresivo
+        t = threading.Thread(
+            target=self._process_download_thread,
+            args=(task,),
+            daemon=True,
+            name=f"FlixGrabWorker-{task.job_id[:8]}"
+        )
+        t.start()
         return task
+
+    def _process_download_thread(self, task: DownloadTask):
+        disk = self.get_disk_info()
+        if not disk["has_space"]:
+            task.status = "ERROR"
+            task.error_message = f"Espacio insuficiente en disco ({disk['free_formatted']} libres)."
+            self.sync_db(task)
+            logger.error(f"Espacio insuficiente para {task.title}")
+            return
+
+        task.status = "DOWNLOADING"
+        task.started_at = datetime.now().isoformat()
+        self.sync_db(task)
+
+        # Iniciar monitor de transcodificación / segmentación HLS en segundo plano
+        hls_t = threading.Thread(
+            target=self._progressive_hls_manager_sync,
+            args=(task,),
+            daemon=True,
+            name=f"FlixGrabHLS-{task.job_id[:8]}"
+        )
+        hls_t.start()
+
+        try:
+            self._download_file_stream_sync(task)
+            if not task.cancel_event.is_set() and task.status != "ERROR":
+                task.status = "PROCESSING"
+                self.sync_db(task)
+                self._finalize_hls_sync(task)
+                task.status = "READY"
+                task.progress = 100.0
+                task.can_play_progressive = True
+                task.completed_at = datetime.now().isoformat()
+                task.download_speed = "Finalizado"
+                task.eta = "00:00"
+                self.sync_db(task)
+                logger.info(f"¡Descarga y procesamiento completados con éxito para '{task.title}'!")
+        except Exception as e:
+            if task.cancel_event.is_set():
+                task.status = "CANCELLED"
+                task.error_message = "Descarga cancelada por el usuario."
+                logger.info(f"Descarga cancelada: {task.title}")
+            else:
+                task.status = "ERROR"
+                task.error_message = str(e)
+                logger.error(f"Falla en descarga [{task.title}]: {e}")
+            self.sync_db(task)
+        finally:
+            if task.ffmpeg_proc and task.ffmpeg_proc.poll() is None:
+                try:
+                    task.ffmpeg_proc.terminate()
+                except Exception:
+                    pass
+
+    def _progressive_hls_manager_sync(self, task: DownloadTask):
+        task.hls_path.mkdir(parents=True, exist_ok=True)
+        part_file = task.storage_path.with_suffix(task.storage_path.suffix + ".part")
+        playlist_file = task.hls_path / "playlist.m3u8"
+
+        # Esperar a que existan al menos 256 KB descargados o 4 segundos
+        start_wait = time.time()
+        while not task.cancel_event.is_set() and task.status == "DOWNLOADING":
+            size = part_file.stat().st_size if part_file.exists() else 0
+            if size > 256 * 1024 or (time.time() - start_wait > 4 and size > 32 * 1024):
+                break
+            time.sleep(0.5)
+
+        if not FFMPEG_BINARY:
+            logger.info("FFmpeg no presente: utilizando emulación progresiva de manifiesto HLS.")
+            while not task.cancel_event.is_set() and task.status in ("DOWNLOADING", "PROCESSING"):
+                task.segments_ready = max(1, int(task.downloaded_bytes / (2 * 1024 * 1024)))
+                if task.segments_ready >= MIN_SEGMENTS_FOR_PLAYBACK:
+                    if not task.can_play_progressive:
+                        task.can_play_progressive = True
+                        logger.info(f"Emulación progresiva lista para '{task.title}'")
+                        self.sync_db(task)
+                time.sleep(1.0)
+            return
+
+        logger.info(f"Iniciando segmentación progresiva FFmpeg para '{task.title}'...")
+
+        cmd = [
+            FFMPEG_BINARY,
+            "-y",
+            "-re",
+            "-i", str(part_file),
+            "-c:v", "copy",
+            "-c:a", "copy",
+            "-f", "hls",
+            "-hls_time", str(HLS_SEGMENT_DURATION),
+            "-hls_list_size", "0",
+            "-hls_flags", "append_list+temp_file",
+            "-hls_segment_filename", str(task.hls_path / "segment_%03d.ts"),
+            str(playlist_file)
+        ]
+
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            )
+            task.ffmpeg_proc = proc
+
+            while proc.poll() is None and not task.cancel_event.is_set():
+                ts_files = list(task.hls_path.glob("*.ts"))
+                task.segments_ready = len(ts_files)
+
+                if task.segments_ready >= MIN_SEGMENTS_FOR_PLAYBACK and playlist_file.exists():
+                    if playlist_file.stat().st_size > 20 and not task.can_play_progressive:
+                        task.can_play_progressive = True
+                        logger.info(f"¡HLS en caliente listo para reproducción [{task.title}]! ({task.segments_ready} segmentos)")
+                        self.sync_db(task)
+
+                time.sleep(1.0)
+        except Exception as e:
+            logger.warning(f"Aviso en segmentación progresiva FFmpeg: {e}")
+        finally:
+            if task.ffmpeg_proc and task.ffmpeg_proc.poll() is None:
+                try:
+                    task.ffmpeg_proc.terminate()
+                except Exception:
+                    pass
+
+    def _finalize_hls_sync(self, task: DownloadTask):
+        playlist_file = task.hls_path / "playlist.m3u8"
+        if not FFMPEG_BINARY:
+            return
+
+        final_file = task.storage_path
+        if not final_file.exists() or final_file.stat().st_size < 1024:
+            return
+
+        cmd = [
+            FFMPEG_BINARY,
+            "-y",
+            "-i", str(final_file),
+            "-c:v", "copy",
+            "-c:a", "copy",
+            "-f", "hls",
+            "-hls_time", str(HLS_SEGMENT_DURATION),
+            "-hls_list_size", "0",
+            "-hls_segment_filename", str(task.hls_path / "segment_%03d.ts"),
+            str(playlist_file)
+        ]
+        try:
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
+            ts_files = list(task.hls_path.glob("*.ts"))
+            task.segments_ready = len(ts_files)
+            task.can_play_progressive = True
+            logger.info(f"HLS definitivo publicado exitosamente con {task.segments_ready} segmentos.")
+        except Exception as e:
+            logger.warning(f"Error generando HLS definitivo: {e}")
 
     def sync_db(self, task: DownloadTask):
         conn = get_mysql_connection()
@@ -584,7 +738,7 @@ class FlixGrabEngine:
                         self.sync_db(task)
 
                 if task.cancel_event.is_set():
-                    raise asyncio.CancelledError()
+                    return
 
         if part_file.exists():
             if dest_file.exists():
@@ -906,85 +1060,78 @@ class FlixGrabFallbackHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(404, {"success": False, "message": "Ruta no encontrada"})
 
     def do_POST(self):
-        content_length = int(self.headers.get("Content-Length", 0))
-        raw_body = self.rfile.read(content_length).decode("utf-8", errors="replace")
         try:
-            data = json.loads(raw_body) if raw_body else {}
-        except Exception:
-            self._send_json(400, {"success": False, "message": "JSON inválido"})
-            return
+            content_length = int(self.headers.get("Content-Length", 0))
+            raw_body = self.rfile.read(content_length).decode("utf-8", errors="replace")
+            try:
+                data = json.loads(raw_body) if raw_body else {}
+            except Exception:
+                self._send_json(400, {"success": False, "message": "JSON inválido"})
+                return
 
-        parsed = urllib.parse.urlparse(self.path)
-        path = parsed.path.rstrip("/")
+            parsed = urllib.parse.urlparse(self.path)
+            path = parsed.path.rstrip("/")
 
-        if path == "/jobs":
-            source_url = data.get("source_url") or data.get("url")
-            if not source_url:
-                self._send_json(422, {"success": False, "message": "source_url es requerido"})
-                return
-            task = DownloadTask(data)
-            registered = engine.register_job(task)
-            self._send_json(201, {
-                "success": True,
-                "message": f"Tarea '{registered.title}' recibida e ingresada a la cola.",
-                "job": registered.to_dict()
-            })
-        elif path.endswith("/cancel") and path.startswith("/jobs/"):
-            parts = path.split("/")
-            job_id = parts[2]
-            job = engine.jobs.get(job_id)
-            if not job:
-                self._send_json(404, {"success": False, "message": "Trabajo no encontrado"})
-                return
-            job.cancel_event.set()
-            job.status = "CANCELLED"
-            job.error_message = "Cancelado a petición del usuario"
-            if job.ffmpeg_proc:
-                try:
-                    job.ffmpeg_proc.terminate()
-                except Exception:
-                    pass
-            engine.sync_db(job)
-            self._send_json(200, {
-                "success": True,
-                "message": f"Trabajo '{job.title}' cancelado correctamente",
-                "job": job.to_dict()
-            })
-        elif path.endswith("/priority") and path.startswith("/jobs/"):
-            parts = path.split("/")
-            job_id = parts[2]
-            job = engine.jobs.get(job_id)
-            if not job:
-                self._send_json(404, {"success": False, "message": "Trabajo no encontrado"})
-                return
-            priority = int(data.get("priority", 5))
-            job.priority = priority
-            engine.sync_db(job)
-            self._send_json(200, {
-                "success": True,
-                "message": f"Prioridad actualizada a {priority}",
-                "job": job.to_dict()
-            })
-        else:
-            self._send_json(404, {"success": False, "message": "Ruta no encontrada"})
+            if path == "/jobs":
+                source_url = data.get("source_url") or data.get("url")
+                if not source_url:
+                    self._send_json(422, {"success": False, "message": "source_url es requerido"})
+                    return
+                task = DownloadTask(data)
+                registered = engine.register_job(task)
+                self._send_json(201, {
+                    "success": True,
+                    "message": f"Tarea '{registered.title}' recibida e ingresada a la cola.",
+                    "job": registered.to_dict()
+                })
+            elif path.endswith("/cancel") and path.startswith("/jobs/"):
+                parts = path.split("/")
+                job_id = parts[2]
+                job = engine.jobs.get(job_id)
+                if not job:
+                    self._send_json(404, {"success": False, "message": "Trabajo no encontrado"})
+                    return
+                job.cancel_event.set()
+                job.status = "CANCELLED"
+                job.error_message = "Cancelado a petición del usuario"
+                if job.ffmpeg_proc:
+                    try:
+                        job.ffmpeg_proc.terminate()
+                    except Exception:
+                        pass
+                engine.sync_db(job)
+                self._send_json(200, {
+                    "success": True,
+                    "message": f"Trabajo '{job.title}' cancelado correctamente",
+                    "job": job.to_dict()
+                })
+            elif path.endswith("/priority") and path.startswith("/jobs/"):
+                parts = path.split("/")
+                job_id = parts[2]
+                job = engine.jobs.get(job_id)
+                if not job:
+                    self._send_json(404, {"success": False, "message": "Trabajo no encontrado"})
+                    return
+                priority = int(data.get("priority", 5))
+                job.priority = priority
+                engine.sync_db(job)
+                self._send_json(200, {
+                    "success": True,
+                    "message": f"Prioridad actualizada a {priority}",
+                    "job": job.to_dict()
+                })
+            else:
+                self._send_json(404, {"success": False, "message": "Ruta no encontrada"})
+        except Exception as err:
+            logger.error(f"Error inesperado en do_POST: {err}", exc_info=True)
+            self._send_json(500, {"success": False, "message": f"Error interno en daemon: {err}"})
 
 
 def run_fallback_server(host: str, port: int):
     server = ThreadingServerClass((host, port), FlixGrabFallbackHandler)
-    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
-    server_thread.start()
     logger.info(f"FlixGrab Fallback HTTP Server escuchando en http://{host}:{port}")
-
-    async def main_loop():
-        engine.loop = get_loop()
-        for i in range(MAX_CONCURRENT_DOWNLOADS):
-            w = safe_create_task(engine.worker_loop(i + 1))
-            engine.workers.append(w)
-        while engine.is_running:
-            await asyncio.sleep(1.0)
-
     try:
-        safe_asyncio_run(main_loop())
+        server.serve_forever()
     except (KeyboardInterrupt, SystemExit):
         pass
     finally:

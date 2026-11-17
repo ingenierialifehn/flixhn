@@ -693,7 +693,7 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
           const res = await api.get(`/download/${jobId}/status`);
           if (res.data?.success && res.data.job) {
             const j = res.data.job;
-            const liveStream = res.data.stream_url || initialStreamUrl;
+            const liveStream = res.data.stream_url || initialStreamUrl || (j.hls_playlist_url ? `${API_BASE_URL}${j.hls_playlist_url}` : null) || `${API_BASE_URL}/api/streaming/hls/${jobId}/playlist.m3u8`;
             setProgressiveInfo((prev) => ({
               ...prev,
               active: true,
@@ -707,8 +707,8 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
               streamUrl: liveStream || prev.streamUrl,
             }));
 
-            // Si ya hay suficientes segmentos listos y aún no se inició el reproductor:
-            if (j.can_play_progressive && liveStream && !video.src && !hlsRef.current) {
+            // Si ya hay suficientes segmentos listos o la descarga está lista y aún no se inició el reproductor:
+            if ((j.can_play_progressive || j.status === 'READY') && liveStream && !hlsRef.current) {
               setPlaybackMode('hls');
               setSourceType('PROGRESSIVE-HLS');
               startHlsPlayback(liveStream);
@@ -778,16 +778,17 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
                 streamUrl: serverAvailability.stream_url,
               });
 
-              if (serverAvailability.can_play_progressive && serverAvailability.stream_url) {
+              const liveUrl = serverAvailability.stream_url || `${API_BASE_URL}/api/streaming/hls/${currentJobId}/playlist.m3u8`;
+              if (serverAvailability.can_play_progressive && liveUrl) {
                 setSourceType('PROGRESSIVE-HLS');
-                startHlsPlayback(serverAvailability.stream_url);
-                startProgressivePolling(currentJobId, serverAvailability.stream_url);
+                startHlsPlayback(liveUrl);
+                startProgressivePolling(currentJobId, liveUrl);
                 return;
               }
 
               // Esperando que se generen segmentos suficientes en segundo plano
               setIsLoading(true);
-              startProgressivePolling(currentJobId, serverAvailability.stream_url);
+              startProgressivePolling(currentJobId, liveUrl);
               return;
             }
 

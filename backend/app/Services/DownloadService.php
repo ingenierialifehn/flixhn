@@ -232,22 +232,28 @@ class DownloadService
             return null;
         }
 
+        // Si el trabajo sigue en QUEUED, asegurar reenvío al daemon si este se reinició
+        if ($job->status === 'QUEUED') {
+            $this->notifyDaemonNewJob($job);
+        }
+
         // Si el trabajo sigue activo, consultar el estado actualizado del daemon Python
         if ($job->isActive() && $job->job_id) {
             try {
                 $response = Http::timeout(2)->get("{$this->getActiveDaemonUrl()}/jobs/{$job->job_id}");
                 if ($response->successful()) {
                     $daemonData = $response->json();
-                    if (!empty($daemonData['status'])) {
+                    $jobInfo = $daemonData['job'] ?? $daemonData;
+                    if (!empty($jobInfo['status'])) {
                         $job->update([
-                            'status' => $daemonData['status'],
-                            'progress' => $daemonData['progress'] ?? $job->progress,
-                            'download_speed' => $daemonData['download_speed'] ?? $job->download_speed,
-                            'eta' => $daemonData['eta'] ?? $job->eta,
-                            'total_bytes' => $daemonData['total_bytes'] ?? $job->total_bytes,
-                            'downloaded_bytes' => $daemonData['downloaded_bytes'] ?? $job->downloaded_bytes,
-                            'segments_ready' => $daemonData['segments_ready'] ?? $job->segments_ready,
-                            'can_play_progressive' => (bool) ($daemonData['can_play_progressive'] ?? $job->can_play_progressive),
+                            'status' => $jobInfo['status'],
+                            'progress' => $jobInfo['progress'] ?? $job->progress,
+                            'download_speed' => $jobInfo['download_speed'] ?? $job->download_speed,
+                            'eta' => $jobInfo['eta'] ?? $job->eta,
+                            'total_bytes' => $jobInfo['total_bytes'] ?? $job->total_bytes,
+                            'downloaded_bytes' => $jobInfo['downloaded_bytes'] ?? $job->downloaded_bytes,
+                            'segments_ready' => $jobInfo['segments_ready'] ?? $job->segments_ready,
+                            'can_play_progressive' => (bool) ($jobInfo['can_play_progressive'] ?? $job->can_play_progressive),
                         ]);
                     }
                 }
@@ -281,7 +287,7 @@ class DownloadService
         $segmentCount = is_array($tsFiles) ? count($tsFiles) : 0;
 
         $hasPlaylist = File::exists($playlistFile) && File::size($playlistFile) > 20;
-        $canPlay = $hasPlaylist && ($segmentCount >= (int) config('flixgrab.min_segments_for_playback', 2));
+        $canPlay = $hasPlaylist && ($segmentCount >= (int) config('flixgrab.min_segments_for_playback', 1));
 
         if ($segmentCount !== $job->segments_ready || $canPlay !== $job->can_play_progressive) {
             $job->update([
@@ -357,13 +363,16 @@ class DownloadService
             ->first();
 
         if ($job) {
+            if ($job->status === 'QUEUED') {
+                $this->notifyDaemonNewJob($job);
+            }
             $this->syncHlsProgressiveAvailability($job);
 
             $streamUrl = null;
             if ($job->status === 'READY') {
                 $streamUrl = url("/api/streaming/progressive/{$job->id}");
             } elseif ($job->can_play_progressive) {
-                $streamUrl = url("/api/streaming/hls/{$job->job_id}/playlist.m3u8");
+                $streamUrl = url($job->hls_playlist_url ?: "/api/streaming/hls/{$job->job_id}/playlist.m3u8");
             }
 
             return [

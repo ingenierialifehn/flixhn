@@ -21,7 +21,7 @@ return [
 
     // Parámetros de reproducción progresiva HLS
     'hls_segment_duration' => (int) env('FLIXGRAB_HLS_SEGMENT_DURATION', 4),
-    'min_segments_for_playback' => (int) env('FLIXGRAB_MIN_SEGMENTS_PLAY', 2),
+    'min_segments_for_playback' => (int) env('FLIXGRAB_MIN_SEGMENTS_PLAY', 1),
 
     // Binarios multimedia
     'ffmpeg_path' => env('FFMPEG_PATH', 'ffmpeg'),
