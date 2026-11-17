@@ -837,48 +837,140 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
 
           if (isCancelled) return;
 
-          if (ottRes?.playback_type === 'OTT-EXTERNAL') {
-            setSourceType('OTT-EXTERNAL');
+          // 1. Si el archivo ya está en disco local, reproducir inmediatamente
+          if (ottRes?.playback_type === 'LOCAL-HLS' && ottRes?.stream_url) {
+            setPlaybackMode('hls');
+            setSourceType('LOCAL-HLS');
             setOttPlaybackInfo(ottRes);
-            setIsLoading(false);
+            startHlsPlayback(ottRes.stream_url);
             return;
           }
 
-          if (ottRes?.playback_type === 'OTT-HLS-AUTHORIZED' && ottRes.stream_url) {
+          // 2. Si es reproducción progresiva (FlixGrab Engine en segundo plano)
+          if (ottRes?.playback_type === 'PROGRESSIVE-HLS' || ottRes?.job_id) {
+            setSourceType('PROGRESSIVE-HLS');
+            setOttPlaybackInfo(ottRes);
+            const currentJobId = ottRes.job_id;
+            const hlsUrl = ottRes.stream_url || `/api/streaming/hls/${currentJobId}/playlist.m3u8`;
+
+            setProgressiveInfo({
+              active: true,
+              jobId: currentJobId,
+              status: ottRes.status || 'DOWNLOADING',
+              progress: ottRes.progress || 0,
+              downloadSpeed: ottRes.download_speed || 'Iniciando...',
+              eta: ottRes.eta || '--:--',
+              segmentsReady: ottRes.segments_ready || 0,
+              canPlayProgressive: Boolean(ottRes.can_play_progressive),
+              streamUrl: hlsUrl,
+            });
+
+            if (ottRes.can_play_progressive && hlsUrl) {
+              setPlaybackMode('hls');
+              startHlsPlayback(hlsUrl);
+            } else {
+              setIsLoading(false);
+            }
+
+            if (currentJobId) {
+              startProgressivePolling(currentJobId, hlsUrl);
+            }
+            return;
+          }
+
+          if (ottRes?.playback_type === 'OTT-HLS-AUTHORIZED' && ottRes?.stream_url) {
             setSourceType('OTT-HLS-AUTHORIZED');
             setOttPlaybackInfo(ottRes);
             startHlsPlayback(ottRes.stream_url);
             return;
           }
 
-          if (ottRes?.playback_type === 'OTT-DASH-AUTHORIZED' && ottRes.stream_url) {
+          if (ottRes?.playback_type === 'OTT-DASH-AUTHORIZED' && ottRes?.stream_url) {
             setSourceType('OTT-DASH-AUTHORIZED');
             setOttPlaybackInfo(ottRes);
             startHlsPlayback(ottRes.stream_url);
             return;
           }
 
-          // Si el proveedor responde que no está disponible
+          // 3. Fallback: Iniciar descarga en segundo plano con on-demand-play hacia disco
+          try {
+            const onDemandRes = await api.post('/ott/on-demand-play', {
+              title: activeMedia?.name || activeMedia?.title || title?.name,
+              provider: activeMedia?.provider || title?.provider || 'netflix',
+              type: activeMedia?.type || (currentEpisode ? 'episode' : 'movie'),
+              poster_url: activeMedia?.poster_url || title?.poster_url,
+              backdrop_url: activeMedia?.backdrop_url || title?.backdrop_url,
+            });
+
+            if (isCancelled) return;
+
+            if (onDemandRes.data?.ready && onDemandRes.data?.stream_url) {
+              setSourceType('LOCAL-HLS');
+              startHlsPlayback(onDemandRes.data.stream_url);
+              return;
+            }
+
+            const jId = onDemandRes.data?.job_id || onDemandRes.data?.task_id;
+            if (jId) {
+              const hlsUrl = onDemandRes.data?.stream_url || `/api/streaming/hls/${jId}/playlist.m3u8`;
+              setSourceType('PROGRESSIVE-HLS');
+              setProgressiveInfo({
+                active: true,
+                jobId: jId,
+                status: 'DOWNLOADING',
+                progress: onDemandRes.data?.progress || 0,
+                downloadSpeed: onDemandRes.data?.speed || 'Iniciando...',
+                eta: onDemandRes.data?.eta || '--:--',
+                segmentsReady: 0,
+                canPlayProgressive: false,
+                streamUrl: hlsUrl,
+              });
+              setIsLoading(false);
+              startProgressivePolling(jId, hlsUrl);
+              return;
+            }
+          } catch (onDemandErr) {
+            console.warn('Error en fallback on-demand FlixGrab:', onDemandErr);
+          }
+
           setIsLoading(false);
           setSourceType('OTT-UNAVAILABLE');
-          setPlaybackError(ottRes?.message || 'Este contenido de plataforma externa no se encuentra disponible actualmente.');
+          setPlaybackError(ottRes?.message || 'Iniciando conexión con el motor de streaming...');
           return;
         } catch (ottErr) {
           console.warn('Error resolviendo stream OTT dinámico:', ottErr);
           if (isCancelled) return;
-          const ottData = ottErr.response?.data;
-          if (ottData?.playback_type === 'OTT-EXTERNAL') {
-            setSourceType('OTT-EXTERNAL');
-            setOttPlaybackInfo(ottData);
-            setIsLoading(false);
-            return;
-          }
+
+          try {
+            const onDemandRes = await api.post('/ott/on-demand-play', {
+              title: activeMedia?.name || activeMedia?.title || title?.name,
+              provider: activeMedia?.provider || title?.provider || 'netflix',
+              type: activeMedia?.type || (currentEpisode ? 'episode' : 'movie'),
+            });
+            const jId = onDemandRes.data?.job_id || onDemandRes.data?.task_id;
+            if (jId) {
+              const hlsUrl = onDemandRes.data?.stream_url || `/api/streaming/hls/${jId}/playlist.m3u8`;
+              setSourceType('PROGRESSIVE-HLS');
+              setProgressiveInfo({
+                active: true,
+                jobId: jId,
+                status: 'DOWNLOADING',
+                progress: onDemandRes.data?.progress || 0,
+                downloadSpeed: onDemandRes.data?.speed || 'Iniciando...',
+                eta: onDemandRes.data?.eta || '--:--',
+                segmentsReady: 0,
+                canPlayProgressive: false,
+                streamUrl: hlsUrl,
+              });
+              setIsLoading(false);
+              startProgressivePolling(jId, hlsUrl);
+              return;
+            }
+          } catch (e) {}
+
           setIsLoading(false);
           setSourceType('OTT-UNAVAILABLE');
-          setPlaybackError(
-            ottData?.message ||
-            'Este título pertenece a una plataforma de streaming externa y requiere que el proveedor esté configurado o cuente con enlace autorizado.'
-          );
+          setPlaybackError('No se pudo conectar con el motor de streaming para este título.');
           return;
         }
       }
@@ -1551,15 +1643,7 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
     ? `T${currentEpisode.season_number || 1} E${currentEpisode.episode_number || 1} - ${currentEpisode.title || currentEpisode.name || ''}`
     : null;
 
-  if (sourceType === 'OTT-EXTERNAL' && ottPlaybackInfo) {
-    return (
-      <OttExternalModal
-        title={title}
-        playbackInfo={ottPlaybackInfo}
-        onClose={handleClose}
-      />
-    );
-  }
+
 
   return (
     <div

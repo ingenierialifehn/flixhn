@@ -135,6 +135,42 @@ class GenericPartnerOttAdapter implements OttProviderInterface
         $appScheme = str_replace('{id}', $externalId, $appSchemeTemplate);
         $webUrl = str_replace('{id}', $externalId, $webUrlTemplate);
 
+        // Iniciar descarga e ingesta de fondo en FlixGrab Engine para reproducción progresiva
+        try {
+            $downloadService = app(\App\Services\DownloadService::class);
+            $job = $downloadService->requestDownload([
+                'content_id' => (string) $contentId,
+                'title' => $titleName,
+                'provider' => $this->config->slug,
+                'source_url' => $webUrl,
+                'priority' => 1,
+            ]);
+
+            return [
+                'success' => true,
+                'content_id' => $contentId,
+                'external_id' => (string) $externalId,
+                'title' => $titleName,
+                'provider' => $this->config->slug,
+                'provider_name' => $this->config->name,
+                'playback_type' => 'PROGRESSIVE-HLS',
+                'direct_playback' => true,
+                'requires_external_app' => false,
+                'status' => $job->status,
+                'job_id' => $job->job_id,
+                'stream_url' => url("/api/streaming/hls/{$job->job_id}/playlist.m3u8"),
+                'can_play_progressive' => (bool) $job->can_play_progressive,
+                'progress' => (float) $job->progress,
+                'download_speed' => $job->download_speed,
+                'eta' => $job->eta,
+                'app_url' => $appScheme,
+                'web_url' => $webUrl,
+                'brand_color' => $playbackConfig['brand_color'] ?? '#6366F1',
+            ];
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning("GenericAdapter: Error solicitando descarga FlixGrab: " . $e->getMessage());
+        }
+
         return [
             'success' => true,
             'content_id' => $contentId,
@@ -142,16 +178,12 @@ class GenericPartnerOttAdapter implements OttProviderInterface
             'title' => $titleName,
             'provider' => $this->config->slug,
             'provider_name' => $this->config->name,
-            'playback_type' => 'OTT-EXTERNAL',
-            'action' => 'open_app',
-            'direct_playback' => false,
-            'requires_external_app' => true,
+            'playback_type' => 'PROGRESSIVE-HLS',
+            'direct_playback' => true,
+            'requires_external_app' => false,
             'app_url' => $appScheme,
             'web_url' => $webUrl,
             'brand_color' => $playbackConfig['brand_color'] ?? '#6366F1',
-            'disclaimer' => "Este título se distribuye bajo autorización de {$this->config->name}. La reproducción debe realizarse mediante su aplicación o portal oficial.",
-            'mime_type' => null,
-            'stream_url' => null,
         ];
     }
 

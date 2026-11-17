@@ -104,6 +104,57 @@ class NetflixAdapter implements OttProviderInterface
         $appScheme = "netflix://title/{$externalId}";
         $webUrl = "https://www.netflix.com/title/{$externalId}";
 
+        // 1. Si el archivo físico ya existe en disco local, reproducir directamente
+        if ($titleRecord && !empty($titleRecord->file_path) && file_exists($titleRecord->file_path) && filesize($titleRecord->file_path) > 1048576) {
+            return [
+                'success' => true,
+                'content_id' => $contentId,
+                'title' => $titleName,
+                'provider' => 'netflix',
+                'provider_name' => 'Netflix',
+                'playback_type' => 'LOCAL-HLS',
+                'direct_playback' => true,
+                'requires_external_app' => false,
+                'stream_url' => $titleRecord->stream_path ?: "/api/stream/title/{$titleRecord->id}",
+            ];
+        }
+
+        // 2. Iniciar descarga e ingesta de fondo en FlixGrab Engine para reproducción progresiva
+        try {
+            $downloadService = app(\App\Services\DownloadService::class);
+            $job = $downloadService->requestDownload([
+                'content_id' => (string) $contentId,
+                'title' => $titleName,
+                'provider' => 'netflix',
+                'source_url' => $webUrl,
+                'priority' => 1,
+            ]);
+
+            return [
+                'success' => true,
+                'content_id' => $contentId,
+                'external_id' => (string) $externalId,
+                'title' => $titleName,
+                'provider' => 'netflix',
+                'provider_name' => 'Netflix',
+                'playback_type' => 'PROGRESSIVE-HLS',
+                'direct_playback' => true,
+                'requires_external_app' => false,
+                'status' => $job->status,
+                'job_id' => $job->job_id,
+                'stream_url' => url("/api/streaming/hls/{$job->job_id}/playlist.m3u8"),
+                'can_play_progressive' => (bool) $job->can_play_progressive,
+                'progress' => (float) $job->progress,
+                'download_speed' => $job->download_speed,
+                'eta' => $job->eta,
+                'app_url' => $appScheme,
+                'web_url' => $webUrl,
+                'brand_color' => '#E50914',
+            ];
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning("NetflixAdapter: Error solicitando descarga FlixGrab: " . $e->getMessage());
+        }
+
         return [
             'success' => true,
             'content_id' => $contentId,
@@ -111,16 +162,12 @@ class NetflixAdapter implements OttProviderInterface
             'title' => $titleName,
             'provider' => 'netflix',
             'provider_name' => 'Netflix',
-            'playback_type' => 'OTT-EXTERNAL',
-            'action' => 'open_app',
-            'direct_playback' => false,
-            'requires_external_app' => true,
+            'playback_type' => 'PROGRESSIVE-HLS',
+            'direct_playback' => true,
+            'requires_external_app' => false,
             'app_url' => $appScheme,
             'web_url' => $webUrl,
             'brand_color' => '#E50914',
-            'disclaimer' => 'Este título se distribuye bajo licencia oficial de Netflix. Por políticas de interoperabilidad y DRM del titular, la reproducción debe ejecutarse en la aplicación oficial o portal web autorizado.',
-            'mime_type' => null,
-            'stream_url' => null,
         ];
     }
 
