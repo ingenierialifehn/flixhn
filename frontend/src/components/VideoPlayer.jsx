@@ -832,6 +832,7 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
           const ottRes = await ottService.getStreamLink({
             content_id: String(activeMedia?.id || ''),
             provider: activeMedia?.provider,
+            title: activeMedia?.title || activeMedia?.name || title?.name,
             type: activeMedia?.type || (currentEpisode ? 'episode' : 'movie'),
           });
 

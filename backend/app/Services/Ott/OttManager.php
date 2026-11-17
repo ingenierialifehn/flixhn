@@ -141,38 +141,102 @@ class OttManager
         }
 
         $specificProvider = $options['provider'] ?? null;
-        $adaptersToQuery = [];
-
-        if (!empty($specificProvider) && $specificProvider !== 'all') {
-            $single = $this->resolveAdapter($specificProvider);
-            if ($single) {
-                $adaptersToQuery[$specificProvider] = $single;
-            }
-        } else {
-            $adaptersToQuery = $this->getActiveAdapters();
-        }
+        $typeFilter = $options['type'] ?? 'all';
+        $limit = min(100, max(1, (int) ($options['limit'] ?? 40)));
 
         $allRawResults = [];
 
-        // 1. Consultar proveedores activos con aislamiento de errores
-        foreach ($adaptersToQuery as $slug => $adapter) {
+        // 1. Catálogo local On-Net del servidor FlixHN
+        if (empty($specificProvider) || $specificProvider === 'all' || $specificProvider === 'local') {
             try {
-                $results = $adapter->search($cleanQuery, $options);
-                foreach ($results as $item) {
+                $localAdapter = new \App\Services\Ott\Adapters\LocalVodAdapter(null);
+                $localResults = $localAdapter->search($cleanQuery, $options);
+                foreach ($localResults as $item) {
                     $allRawResults[] = $item;
                 }
             } catch (\Throwable $e) {
-                Log::warning("Error en búsqueda OTT para proveedor [{$slug}]: " . $e->getMessage());
+                Log::warning("Error en búsqueda LocalVodAdapter: " . $e->getMessage());
             }
         }
 
-        // 2. Unificar y Desduplicar resultados
+        // 2. Búsqueda remota en vivo en plataformas OTT conectadas (Netflix, Disney+, Max, Prime Video, etc.)
+        if (empty($specificProvider) || $specificProvider !== 'local') {
+            try {
+                $platformTarget = ($specificProvider && $specificProvider !== 'all') ? $specificProvider : null;
+                $ottResults = \App\Services\OttSyncService::searchReal($cleanQuery, $platformTarget);
+
+                foreach ($ottResults as $item) {
+                    $pKey = $item['platform'] ?? $item['provider'] ?? 'netflix';
+                    $cleanSlug = match ($pKey) {
+                        'disney_plus', 'disney' => 'disney',
+                        'hbo_max', 'max', 'hbo' => 'max',
+                        'amazon_prime', 'prime_video', 'prime' => 'amazon_prime',
+                        'apple_tv', 'apple' => 'apple_tv',
+                        'paramount', 'paramount_plus' => 'paramount',
+                        default => $pKey,
+                    };
+
+                    $pName = match ($cleanSlug) {
+                        'netflix' => 'Netflix',
+                        'disney' => 'Disney+',
+                        'max' => 'Max',
+                        'amazon_prime' => 'Prime Video',
+                        'apple_tv' => 'Apple TV+',
+                        'paramount' => 'Paramount+',
+                        default => ucfirst($cleanSlug),
+                    };
+
+                    $mediaType = ($item['type'] ?? $item['media_type'] ?? 'movie') === 'series' ? 'series' : 'movie';
+                    if ($typeFilter !== 'all' && $typeFilter !== $mediaType) {
+                        continue;
+                    }
+
+                    $isDownloaded = !empty($item['is_downloaded']) || !empty($item['is_already_downloaded']) || !empty($item['is_available_locally']);
+
+                    $allRawResults[] = [
+                        'id' => (string) ($item['id'] ?? ('ott_' . $cleanSlug . '_' . ($item['unique_id'] ?? uniqid()))),
+                        'unique_id' => (string) ($item['unique_id'] ?? $item['id']),
+                        'title_id' => $item['title_id'] ?? null,
+                        'provider' => $cleanSlug,
+                        'provider_name' => $pName,
+                        'title' => $item['title'] ?? $item['name'] ?? '',
+                        'name' => $item['title'] ?? $item['name'] ?? '',
+                        'original_title' => $item['original_title'] ?? $item['title'] ?? '',
+                        'type' => $mediaType,
+                        'media_type' => $mediaType,
+                        'release_year' => (int) ($item['release_year'] ?? $item['year'] ?? date('Y')),
+                        'year' => (int) ($item['release_year'] ?? $item['year'] ?? date('Y')),
+                        'genre' => $item['genre'] ?? "Streaming {$pName}",
+                        'overview' => $item['overview'] ?? $item['description'] ?? $item['synopsis'] ?? '',
+                        'description' => $item['description'] ?? $item['overview'] ?? '',
+                        'poster_url' => $item['poster_url'] ?? $item['poster'] ?? '',
+                        'backdrop_url' => $item['backdrop_url'] ?? $item['poster_url'] ?? $item['poster'] ?? '',
+                        'duration_seconds' => (int) ($item['duration_seconds'] ?? 7200),
+                        'playback_type' => $isDownloaded ? 'LOCAL-HLS' : 'PROGRESSIVE-HLS',
+                        'requires_external_app' => false,
+                        'direct_playback' => true,
+                        'is_available' => true,
+                        'is_ott' => true,
+                        'is_downloaded' => $isDownloaded,
+                        'is_already_downloaded' => $isDownloaded,
+                        'is_available_locally' => $isDownloaded,
+                        'stream_url' => $item['stream_url'] ?? null,
+                        'source_platform' => $cleanSlug,
+                        'platform' => $cleanSlug,
+                    ];
+                }
+            } catch (\Throwable $e) {
+                Log::warning("Error en búsqueda remota OttSyncService: " . $e->getMessage());
+            }
+        }
+
+        // 3. Unificar y Desduplicar resultados
         $deduplicated = $this->deduplicateAndNormalize($allRawResults);
 
         return [
             'query' => $cleanQuery,
             'total' => count($deduplicated),
-            'results' => $deduplicated,
+            'results' => array_slice($deduplicated, 0, $limit),
         ];
     }
 
@@ -230,12 +294,18 @@ class OttManager
     {
         // Inferir el proveedor si el contentId viene con prefijo identificador
         if (empty($providerSlug)) {
-            if (str_starts_with($contentId, 'nflx_')) {
+            if (str_starts_with($contentId, 'nflx_') || str_starts_with($contentId, 'ott_netflix_')) {
                 $providerSlug = 'netflix';
-            } elseif (str_starts_with($contentId, 'disney_') || str_starts_with($contentId, 'disneyplus_')) {
+            } elseif (str_starts_with($contentId, 'disney_') || str_starts_with($contentId, 'disneyplus_') || str_starts_with($contentId, 'ott_disney_')) {
                 $providerSlug = 'disney';
-            } elseif (str_starts_with($contentId, 'max_') || str_starts_with($contentId, 'hbo_')) {
+            } elseif (str_starts_with($contentId, 'max_') || str_starts_with($contentId, 'hbo_') || str_starts_with($contentId, 'ott_max_') || str_starts_with($contentId, 'ott_hbo_max_')) {
                 $providerSlug = 'max';
+            } elseif (str_starts_with($contentId, 'prime_') || str_starts_with($contentId, 'ott_amazon_prime_') || str_starts_with($contentId, 'ott_prime_')) {
+                $providerSlug = 'prime';
+            } elseif (str_starts_with($contentId, 'apple_') || str_starts_with($contentId, 'ott_apple_')) {
+                $providerSlug = 'apple';
+            } elseif (str_starts_with($contentId, 'paramount_') || str_starts_with($contentId, 'ott_paramount_')) {
+                $providerSlug = 'paramount';
             } elseif (str_starts_with($contentId, 'hls_')) {
                 $providerSlug = 'partner_hls';
             } else {

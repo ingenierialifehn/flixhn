@@ -89,9 +89,12 @@ class MaxAdapter implements OttProviderInterface
 
     public function getStreamLink(string $contentId, array $context = []): array
     {
-        $cleanId = preg_replace('/^(max_|hbo_)/', '', $contentId);
+        $cleanId = preg_replace('/^(max_|hbo_|ott_hbo_max_|ott_max_)/', '', $contentId);
         $titleRecord = is_numeric($cleanId) ? Title::find((int)$cleanId) : null;
-        $titleName = $titleRecord?->name ?? "Contenido Max ({$cleanId})";
+        if (!$titleRecord && !empty($context['title'])) {
+            $titleRecord = Title::where('name', $context['title'])->first();
+        }
+        $titleName = $titleRecord?->name ?? ($context['title'] ?? "Contenido Max ({$cleanId})");
         $externalId = $titleRecord?->imdb_id ?: ($titleRecord?->tmdb_id ?: $cleanId);
 
         $appScheme = "max://player/{$externalId}";

@@ -206,8 +206,24 @@ class OttSyncService
             }
         } catch (\Throwable $e) {}
 
+        // También incluir proveedores activos en la configuración de la plataforma
+        try {
+            $configs = DB::table('ott_provider_configs')
+                ->where('is_active', true)
+                ->whereNotIn('slug', ['local', 'partner_hls'])
+                ->pluck('slug')
+                ->toArray();
+
+            foreach ($configs as $prov) {
+                $norm = self::normalizePlatformKey($prov) ?: strtolower(trim($prov));
+                if ($norm && !in_array($norm, $connected, true)) {
+                    $connected[] = $norm;
+                }
+            }
+        } catch (\Throwable $e) {}
+
         if (empty($connected)) {
-            $connected = ['netflix', 'amazon_prime', 'disney', 'disney_plus', 'hbo_max', 'apple_tv', 'paramount'];
+            $connected = ['netflix', 'amazon_prime', 'disney_plus', 'hbo_max', 'apple_tv', 'paramount'];
         }
 
         return $connected;

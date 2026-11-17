@@ -83,26 +83,13 @@ export const PlatformMiniBadge = ({ provider }) => {
  */
 export const BrowseSearchCard = ({ item, onPlay, onOpenModal }) => {
   const isSeries = (item.type || item.media_type) === 'series';
-  const isExternal = Boolean(
-    item.playback_type === 'OTT-EXTERNAL' ||
-    item.requires_external_app ||
-    (typeof item.id === 'string' && /^(nflx_|disney_|max_)/.test(item.id))
-  );
   const isHlsAuthorized = item.playback_type === 'OTT-HLS-AUTHORIZED';
-
-  const isCompleted = Boolean(
-    item.playback_type === 'LOCAL-HLS' ||
-    item.is_already_downloaded ||
-    item.is_available_locally ||
-    item.status === 'En Catálogo' ||
-    (!item.is_ott && item.id && !String(item.id).startsWith('ott_'))
-  );
 
   const titleText = item.title || item.name || 'Sin Título';
   const yearText = item.year || item.release_year || '';
   const genreText = item.genre || (isSeries ? 'Serie Original' : 'Largometraje');
   const posterUrl = resolvePosterUrl(item.poster_url || item.image || item.poster);
-  const providerKey = item.provider || item.source_platform || 'local';
+  const providerKey = item.provider || item.source_platform || item.platform || 'local';
 
   const handleClick = (e) => {
     e.stopPropagation();
@@ -141,11 +128,7 @@ export const BrowseSearchCard = ({ item, onPlay, onOpenModal }) => {
 
           {/* Badge de tipo de contenido o tipo de reproducción */}
           <div className="absolute top-2 right-2 z-10 pointer-events-none">
-            {isExternal ? (
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-950/90 text-amber-300 border border-amber-600/50 backdrop-blur-md">
-                <ExternalLink className="w-2.5 h-2.5" /> App Oficial
-              </span>
-            ) : isHlsAuthorized ? (
+            {isHlsAuthorized ? (
               <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-950/90 text-emerald-300 border border-emerald-600/50 backdrop-blur-md">
                 HLS Stream
               </span>
@@ -160,11 +143,7 @@ export const BrowseSearchCard = ({ item, onPlay, onOpenModal }) => {
           {/* Botón flotante central de Reproducir en hover */}
           <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
             <div className="w-11 h-11 rounded-full bg-[#E50914] text-white flex items-center justify-center shadow-xl transform group-hover:scale-110 transition-transform">
-              {isExternal ? (
-                <ExternalLink className="w-5 h-5 text-white" />
-              ) : (
-                <Play className="w-5 h-5 fill-white ml-0.5" />
-              )}
+              <Play className="w-5 h-5 fill-white ml-0.5" />
             </div>
           </div>
 
@@ -192,39 +171,17 @@ export const BrowseSearchCard = ({ item, onPlay, onOpenModal }) => {
         </div>
       </div>
 
-      {/* Botón de Acción Adaptativo */}
+      {/* Botón de Acción Directo: Reproducir y Descargar en segundo plano */}
       <div className="mt-3 pt-2 border-t border-zinc-800/80">
-        {isExternal ? (
-          <button
-            type="button"
-            onClick={handleClick}
-            className="flex items-center justify-center gap-1.5 w-full py-2 px-2.5 rounded-lg text-xs font-bold bg-zinc-800 hover:bg-[#E50914] text-zinc-200 hover:text-white border border-zinc-700/80 hover:border-red-600 transition-all shadow-md active:scale-95 cursor-pointer"
-            title="Abrir en la aplicación o portal oficial autorizado"
-          >
-            <ExternalLink className="w-3.5 h-3.5 shrink-0" />
-            <span>App Oficial</span>
-          </button>
-        ) : isHlsAuthorized ? (
-          <button
-            type="button"
-            onClick={handleClick}
-            className="flex items-center justify-center gap-1.5 w-full py-2 px-2.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white transition-all shadow-md active:scale-95 cursor-pointer"
-            title="Reproducir transmisión HLS autorizada"
-          >
-            <Play className="w-3.5 h-3.5 fill-white text-white shrink-0" />
-            <span>Reproducir HLS</span>
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={handleClick}
-            className="flex items-center justify-center gap-1.5 w-full py-2 px-2.5 rounded-lg text-xs font-bold bg-[#E50914] hover:bg-red-700 text-white transition-all shadow-md active:scale-95 cursor-pointer"
-            title="Reproducir inmediatamente desde el catálogo local On-Net"
-          >
-            <Play className="w-3.5 h-3.5 fill-white text-white shrink-0" />
-            <span>Reproducir</span>
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={handleClick}
+          className="flex items-center justify-center gap-1.5 w-full py-2 px-2.5 rounded-lg text-xs font-bold bg-[#E50914] hover:bg-red-700 text-white transition-all shadow-md active:scale-95 cursor-pointer"
+          title="Reproducir inmediatamente y descargar en segundo plano"
+        >
+          <Play className="w-3.5 h-3.5 fill-white text-white shrink-0" />
+          <span>Reproducir</span>
+        </button>
       </div>
     </div>
   );

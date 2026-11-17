@@ -89,9 +89,12 @@ class DisneyPlusAdapter implements OttProviderInterface
 
     public function getStreamLink(string $contentId, array $context = []): array
     {
-        $cleanId = preg_replace('/^(disney_|disneyplus_)/', '', $contentId);
+        $cleanId = preg_replace('/^(disney_|disneyplus_|ott_disney_plus_|ott_disney_)/', '', $contentId);
         $titleRecord = is_numeric($cleanId) ? Title::find((int)$cleanId) : null;
-        $titleName = $titleRecord?->name ?? "Contenido Disney+ ({$cleanId})";
+        if (!$titleRecord && !empty($context['title'])) {
+            $titleRecord = Title::where('name', $context['title'])->first();
+        }
+        $titleName = $titleRecord?->name ?? ($context['title'] ?? "Contenido Disney+ ({$cleanId})");
         $externalId = $titleRecord?->imdb_id ?: ($titleRecord?->tmdb_id ?: $cleanId);
 
         $appScheme = "disneyplus://play/{$externalId}";
