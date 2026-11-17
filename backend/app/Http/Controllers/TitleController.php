@@ -592,7 +592,7 @@ class TitleController extends Controller
                 },
                 'seasons.episodes' => function ($q) {
                     $q->where('episode_number', '>', 0)
-                      ->where('title', 'NOT REGEXP', '^0+(\\s|$|_|-)|^cap[ií]tulo\\s*0|^episodio\\s*0|^trailer')
+                      ->where('title', 'NOT REGEXP', '^(trailer|tráiler|preview|teaser|especial|cap[ií]tulo 0|episodio 0)')
                       ->orderBy('episode_number', 'asc');
                 }
             ]);
@@ -601,7 +601,7 @@ class TitleController extends Controller
             $trailerEpisode = Episode::where('title_id', $title->id)
                 ->where(function ($q) {
                     $q->where('episode_number', 0)
-                      ->orWhere('title', 'REGEXP', '^0+(\\s|$|_|-)|^cap[ií]tulo\\s*0|^episodio\\s*0|^trailer');
+                      ->orWhere('title', 'REGEXP', '^(trailer|tráiler|preview|teaser|especial|cap[ií]tulo 0|episodio 0)');
                 })
                 ->first();
 

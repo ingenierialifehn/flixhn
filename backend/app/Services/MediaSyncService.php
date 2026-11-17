@@ -429,7 +429,7 @@ class MediaSyncService
             $entryName = pathinfo($entry, PATHINFO_FILENAME);
 
             // Detección de trailers o previas que comiencen con "0" (Punto 4)
-            $isTrailer = preg_match('/^(0+|0\d+|cap[ií]tulo\s*0+|episodio\s*0+|trailer|especial)/i', $entryName);
+            $isTrailer = preg_match('/^(trailer|tráiler|preview|teaser|especial\b|cap[ií]tulo\s*0+\b|episodio\s*0+\b|^0+$)/i', $entryName);
 
             if (is_dir($path)) {
                 // Subcarpeta de temporada o episodio (ej. s01e01/ o Temporada 1/)
@@ -438,7 +438,7 @@ class MediaSyncService
                     $ext = strtolower(pathinfo($sf, PATHINFO_EXTENSION));
                     if (in_array($ext, $this->videoExtensions) && $ext !== 'ts') {
                         $epStream = ltrim(str_replace($storagePath, '', $path . '/' . $sf), '/');
-                        $fileIsTrailer = $isTrailer || preg_match('/^(0+|0\d+|cap[ií]tulo\s*0+|episodio\s*0+|trailer|especial)/i', pathinfo($sf, PATHINFO_FILENAME));
+                        $fileIsTrailer = $isTrailer || preg_match('/^(trailer|tráiler|preview|teaser|especial\b|cap[ií]tulo\s*0+\b|episodio\s*0+\b|^0+$)/i', pathinfo($sf, PATHINFO_FILENAME));
 
                         if ($fileIsTrailer) {
                             $seasonZero = Season::firstOrCreate(

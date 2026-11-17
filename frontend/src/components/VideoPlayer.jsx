@@ -175,11 +175,16 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
     enabled: !!title,
   });
 
-  // Cargar información completa de temporadas y episodios si es una serie
+  // Identificación estricta de Serie vs Película: Si es película NUNCA se trata como serie
+  const isSeries = useMemo(() => {
+    if (title?.type === 'movie' || activeMedia?.type === 'movie') return false;
+    return title?.type === 'series' || Boolean(currentEpisode?.title_id);
+  }, [title?.type, activeMedia?.type, currentEpisode?.title_id]);
+
+  // Cargar información completa de temporadas y episodios exclusivamente si es una serie legítima
   useEffect(() => {
-    const isSeries = title?.type === 'series' || Boolean(currentEpisode) || Boolean(title?.seasons?.length);
     const seriesId = title?.id || currentEpisode?.title_id;
-    if (isSeries && seriesId) {
+    if (isSeries && seriesId && title?.type !== 'movie') {
       api.get(`/titles/${seriesId}`)
         .then((res) => {
           if (res.data?.title) {
@@ -187,8 +192,10 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
           }
         })
         .catch((err) => console.warn('No se pudo cargar la lista completa de episodios:', err));
+    } else {
+      setFullSeriesData(null);
     }
-  }, [title?.id, title?.type, currentEpisode?.title_id]);
+  }, [isSeries, title?.id, title?.type, currentEpisode?.title_id]);
 
   // Cerrar el reproductor y redirigir al catálogo inmediatamente si el contenido fue eliminado
   useEffect(() => {
@@ -232,8 +239,34 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
     }
   }, [apiKey]);
 
-  // Lista plana ordenada de episodios para navegación sencilla, excluyendo trailers o capítulos con 0 (Puntos 3 y 4)
+  // Lista plana ordenada de temporadas válidas
+  const seasonsList = useMemo(() => {
+    if (!isSeries || title?.type === 'movie') return [];
+    const seasonsData = fullSeriesData?.seasons || title?.seasons;
+    if (!seasonsData || !Array.isArray(seasonsData)) return [];
+    return seasonsData
+      .filter((s) => {
+        const sNum = parseInt(s.season_number, 10);
+        return sNum > 0 && !/^(especiales|trailers|temporada\s*0\b)/i.test(s.title || '');
+      })
+      .sort((a, b) => (parseInt(a.season_number, 10) || 1) - (parseInt(b.season_number, 10) || 1));
+  }, [isSeries, fullSeriesData, title]);
+
+  const [selectedSeasonNumber, setSelectedSeasonNumber] = useState(1);
+
+  // Sincronizar automáticamente la temporada seleccionada con el episodio actual
+  useEffect(() => {
+    if (currentEpisode?.season_number) {
+      setSelectedSeasonNumber(Number(currentEpisode.season_number));
+    } else if (seasonsList.length > 0) {
+      setSelectedSeasonNumber(Number(seasonsList[0].season_number));
+    }
+  }, [currentEpisode?.season_number, seasonsList]);
+
+  // Lista plana ordenada de episodios para navegación sencilla
   const allEpisodes = useMemo(() => {
+    if (!isSeries || title?.type === 'movie') return [];
+
     const seasonsData = fullSeriesData?.seasons || title?.seasons;
     if (!seasonsData || !Array.isArray(seasonsData) || seasonsData.length === 0) {
       const directEps = fullSeriesData?.episodes || title?.episodes;
@@ -254,7 +287,7 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
             const epNum = parseInt(ep.episode_number, 10);
             if (!isNaN(epNum) && epNum === 0) return false;
             const epTitle = (ep.title || ep.name || '').trim();
-            if (/^(trailer|tráiler|especial\b|cap[ií]tulo\s*0\b|episodio\s*0\b)/i.test(epTitle)) return false;
+            if (/^(trailer|tráiler|especial\b|cap[ií]tulo\s*0+\b|episodio\s*0+\b)/i.test(epTitle)) return false;
             return true;
           })
           .sort((a, b) => (parseInt(a.episode_number, 10) || 1) - (parseInt(b.episode_number, 10) || 1));
@@ -269,17 +302,39 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
       return [currentEpisode];
     }
     return list;
-  }, [fullSeriesData, title, currentEpisode]);
+  }, [isSeries, fullSeriesData, title, currentEpisode]);
 
-  // Encontrar el siguiente episodio si existe
+  // Episodios de la temporada seleccionada para el selector estilo Netflix
+  const currentSeasonEpisodes = useMemo(() => {
+    if (!isSeries || title?.type === 'movie') return [];
+    if (seasonsList.length === 0) {
+      return allEpisodes;
+    }
+    const targetSeason = seasonsList.find((s) => Number(s.season_number) === Number(selectedSeasonNumber)) || seasonsList[0];
+    if (targetSeason && Array.isArray(targetSeason.episodes)) {
+      return targetSeason.episodes
+        .filter((ep) => {
+          const epNum = parseInt(ep.episode_number, 10);
+          if (!isNaN(epNum) && epNum === 0) return false;
+          const epTitle = (ep.title || ep.name || '').trim();
+          if (/^(trailer|tráiler|especial\b|cap[ií]tulo\s*0+\b|episodio\s*0+\b)/i.test(epTitle)) return false;
+          return true;
+        })
+        .sort((a, b) => (parseInt(a.episode_number, 10) || 1) - (parseInt(b.episode_number, 10) || 1))
+        .map((ep) => ({ ...ep, season_number: targetSeason.season_number || 1 }));
+    }
+    return allEpisodes;
+  }, [isSeries, title?.type, seasonsList, selectedSeasonNumber, allEpisodes]);
+
+  // Encontrar el siguiente episodio si existe (solo en series)
   const nextEpisode = useMemo(() => {
-    if (!currentEpisode || allEpisodes.length <= 1) return null;
+    if (!isSeries || !currentEpisode || allEpisodes.length <= 1) return null;
     const currentIndex = allEpisodes.findIndex((e) => e.id === currentEpisode.id);
     if (currentIndex !== -1 && currentIndex < allEpisodes.length - 1) {
       return allEpisodes[currentIndex + 1];
     }
     return null;
-  }, [allEpisodes, currentEpisode]);
+  }, [isSeries, allEpisodes, currentEpisode]);
 
   // Determinar la ruta base y parámetros del servidor de medios
   const rawStreamPath = currentEpisode
@@ -1814,8 +1869,8 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
               </button>
             )}
 
-            {/* Botón Selector de Episodios (ícono de capas/episodios) */}
-            {title?.type === 'series' && (
+            {/* Botón Selector de Episodios (ícono de capas/episodios) - EXCLUSIVO PARA SERIES */}
+            {isSeries && allEpisodes.length > 1 && (
               <div className="relative">
                 <button
                   onClick={() => {
@@ -1832,9 +1887,9 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
                   <Layers className="w-5 h-5 md:w-6 md:h-6" />
                 </button>
 
-                {/* Panel Flotante Oscuro con Lista de Capítulos */}
+                {/* Panel Flotante Oscuro con Selector de Temporada y Lista de Capítulos Estilo Netflix */}
                 {showEpisodeDrawer && (
-                  <div className="absolute right-0 bottom-12 w-72 sm:w-80 max-h-96 overflow-y-auto bg-zinc-950/95 border border-zinc-800 rounded-xl shadow-2xl p-3 z-50 animate-fadeIn no-scrollbar">
+                  <div className="absolute right-0 bottom-12 w-80 sm:w-96 max-h-[28rem] flex flex-col bg-zinc-950/95 border border-zinc-800 rounded-xl shadow-2xl p-3.5 z-50 animate-fadeIn no-scrollbar backdrop-blur-md">
                     <div className="flex items-center justify-between pb-2 mb-2 border-b border-zinc-800">
                       <span className="font-bold text-xs text-zinc-200 uppercase tracking-wider flex items-center gap-1.5">
                         <Tv className="w-4 h-4 text-[#E50914]" />
@@ -1842,37 +1897,57 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
                       </span>
                       <button
                         onClick={() => setShowEpisodeDrawer(false)}
-                        className="text-zinc-400 hover:text-white"
+                        className="text-zinc-400 hover:text-white p-1 rounded hover:bg-zinc-800"
                         type="button"
                       >
                         <X className="w-4 h-4" />
                       </button>
                     </div>
 
-                    <div className="space-y-1.5">
-                      {allEpisodes.map((ep) => {
+                    {/* Selector de Temporadas estilo Netflix si hay más de 1 temporada */}
+                    {seasonsList.length > 1 && (
+                      <div className="mb-2.5">
+                        <select
+                          value={selectedSeasonNumber}
+                          onChange={(e) => setSelectedSeasonNumber(Number(e.target.value))}
+                          className="w-full bg-zinc-900 border border-zinc-700 hover:border-zinc-500 text-white text-xs font-bold rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-[#E50914] cursor-pointer transition-colors shadow-inner"
+                        >
+                          {seasonsList.map((s) => (
+                            <option key={s.id || s.season_number} value={s.season_number}>
+                              {s.title || `Temporada ${s.season_number}`}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    {/* Lista Vertical de Episodios Filtrados por Temporada */}
+                    <div className="space-y-1.5 overflow-y-auto max-h-72 pr-1 no-scrollbar">
+                      {currentSeasonEpisodes.map((ep) => {
                         const isCurrent = currentEpisode?.id === ep.id;
                         return (
                           <div
-                            key={ep.id}
+                            key={ep.id || `${ep.season_number}-${ep.episode_number}`}
                             onClick={() => handleSwitchEpisode(ep)}
-                            className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-colors text-xs ${
+                            className={`flex items-center gap-3 p-2.5 rounded-lg cursor-pointer transition-all text-xs ${
                               isCurrent
-                                ? 'bg-[#E50914]/20 border border-[#E50914]/50 text-white font-bold'
+                                ? 'bg-[#E50914]/20 border border-[#E50914]/50 text-white font-bold shadow-md'
                                 : 'hover:bg-zinc-800/80 text-zinc-300'
                             }`}
                           >
-                            <span className="w-5 text-center font-mono text-zinc-500">
+                            <span className="w-6 text-center font-mono text-zinc-400 font-bold text-sm">
                               {ep.episode_number}
                             </span>
-                            <div className="flex-1 truncate">
-                              <p className="truncate">{ep.title}</p>
-                              <span className="text-[10px] text-zinc-500">
-                                {formatTime(ep.duration_seconds)}
-                              </span>
+                            <div className="flex-1 min-w-0">
+                              <p className="truncate font-medium text-white">{ep.title || `Episodio ${ep.episode_number}`}</p>
+                              {ep.duration_seconds > 0 && (
+                                <span className="text-[10px] text-zinc-500 font-mono">
+                                  {formatTime(ep.duration_seconds)}
+                                </span>
+                              )}
                             </div>
                             {isCurrent && (
-                              <span className="text-[10px] text-[#E50914] uppercase tracking-wider font-bold">
+                              <span className="text-[10px] text-[#E50914] uppercase tracking-wider font-bold shrink-0">
                                 Reproduciendo
                               </span>
                             )}

@@ -518,7 +518,7 @@ class RemoteMediaConnectorService
                 $epName = trim($item['Name'] ?? "Capítulo {$index}");
 
                 // Detección de trailers o previas con "0" (Punto 4)
-                $isTrailer = ($parentIndex === 0 || $index === 0 || preg_match('/^(0+|0\d+|cap[ií]tulo\s*0+|episodio\s*0+|trailer|especial)/i', $epName));
+                $isTrailer = ($parentIndex === 0 || $index === 0 || preg_match('/^(trailer|tráiler|preview|teaser|especial\b|cap[ií]tulo\s*0+\b|episodio\s*0+\b|^0+$)/i', $epName));
 
                 $mediaSourceId = $item['MediaSources'][0]['Id'] ?? $epId;
                 $container = strtolower($item['Container'] ?? $item['MediaSources'][0]['Container'] ?? '');
