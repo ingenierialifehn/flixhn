@@ -693,7 +693,7 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
           const res = await api.get(`/download/${jobId}/status`);
           if (res.data?.success && res.data.job) {
             const j = res.data.job;
-            const liveStream = res.data.stream_url || initialStreamUrl || (j.hls_playlist_url ? `${API_BASE_URL}${j.hls_playlist_url}` : null) || `${API_BASE_URL}/api/streaming/hls/${jobId}/playlist.m3u8`;
+            const liveStream = (j.hls_playlist_url ? `${API_BASE_URL}${j.hls_playlist_url}` : null) || res.data.stream_url || initialStreamUrl || `${API_BASE_URL}/api/streaming/hls/${jobId}/playlist.m3u8`;
             setProgressiveInfo((prev) => ({
               ...prev,
               active: true,
@@ -703,15 +703,27 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
               downloadSpeed: j.download_speed || '0.0 MB/s',
               eta: j.eta || '--:--',
               segmentsReady: j.segments_ready || 0,
-              canPlayProgressive: Boolean(j.can_play_progressive),
+              canPlayProgressive: Boolean(j.can_play_progressive || j.status === 'READY'),
               streamUrl: liveStream || prev.streamUrl,
             }));
 
-            // Si ya hay suficientes segmentos listos o la descarga está lista y aún no se inició el reproductor:
-            if ((j.can_play_progressive || j.status === 'READY') && liveStream && !hlsRef.current) {
-              setPlaybackMode('hls');
-              setSourceType('PROGRESSIVE-HLS');
-              startHlsPlayback(liveStream);
+            // Iniciar reproducción progresiva en caliente o directa al estar disponible
+            if ((j.can_play_progressive || j.status === 'READY') && liveStream && !hlsRef.current && !video.src) {
+              const isHls = liveStream.includes('.m3u8') || liveStream.includes('/hls/');
+              if (isHls) {
+                setPlaybackMode('hls');
+                setSourceType('PROGRESSIVE-HLS');
+                startHlsPlayback(liveStream);
+              } else {
+                setPlaybackMode('direct');
+                setSourceType('LOCAL-HLS');
+                video.src = liveStream;
+                video.load();
+                video.play().then(() => {
+                  if (!isCancelled) setIsPlaying(true);
+                }).catch(() => {});
+                setIsLoading(false);
+              }
             }
 
             // Si finalizó completamente (READY)
@@ -763,9 +775,10 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
           const availRes = await api.get(`/media/${encodeURIComponent(mediaIdToCheck)}/availability`);
           serverAvailability = availRes.data?.availability;
           if (serverAvailability) {
-            // Contenido en descarga activa o con trabajo existente
-            if (['DOWNLOADING', 'PROCESSING', 'QUEUED'].includes(serverAvailability.status) || serverAvailability.download_job_id) {
+            // Contenido en descarga activa o en cola
+            if (['DOWNLOADING', 'PROCESSING', 'QUEUED'].includes(serverAvailability.status)) {
               const currentJobId = serverAvailability.job_id || serverAvailability.download_job_id;
+              const liveUrl = (serverAvailability.hls_playlist_url ? `${API_BASE_URL}${serverAvailability.hls_playlist_url}` : null) || serverAvailability.stream_url || `${API_BASE_URL}/api/streaming/hls/${currentJobId}/playlist.m3u8`;
               setProgressiveInfo({
                 active: true,
                 jobId: currentJobId,
@@ -775,13 +788,24 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
                 eta: serverAvailability.eta || '--:--',
                 segmentsReady: serverAvailability.segments_ready || 0,
                 canPlayProgressive: Boolean(serverAvailability.can_play_progressive),
-                streamUrl: serverAvailability.stream_url,
+                streamUrl: liveUrl,
               });
 
-              const liveUrl = serverAvailability.stream_url || `${API_BASE_URL}/api/streaming/hls/${currentJobId}/playlist.m3u8`;
               if (serverAvailability.can_play_progressive && liveUrl) {
-                setSourceType('PROGRESSIVE-HLS');
-                startHlsPlayback(liveUrl);
+                const isHls = liveUrl.includes('.m3u8') || liveUrl.includes('/hls/');
+                if (isHls) {
+                  setSourceType('PROGRESSIVE-HLS');
+                  startHlsPlayback(liveUrl);
+                } else {
+                  setPlaybackMode('direct');
+                  setSourceType('LOCAL-HLS');
+                  video.src = liveUrl;
+                  video.load();
+                  video.play().then(() => {
+                    if (!isCancelled) setIsPlaying(true);
+                  }).catch(() => {});
+                  setIsLoading(false);
+                }
                 startProgressivePolling(currentJobId, liveUrl);
                 return;
               }
@@ -793,15 +817,20 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
             }
 
             // Contenido ya completado y listo en almacenamiento FlixGrab
-            if (serverAvailability.status === 'READY' && serverAvailability.stream_url) {
-              setSourceType('PROGRESSIVE-HLS');
-              if (serverAvailability.stream_url.includes('.m3u8')) {
-                startHlsPlayback(serverAvailability.stream_url);
+            if (serverAvailability.status === 'READY' && (serverAvailability.stream_url || serverAvailability.hls_playlist_url)) {
+              const readyUrl = (serverAvailability.hls_playlist_url ? `${API_BASE_URL}${serverAvailability.hls_playlist_url}` : null) || serverAvailability.stream_url;
+              const isHls = readyUrl.includes('.m3u8') || readyUrl.includes('/hls/');
+              if (isHls) {
+                setSourceType('PROGRESSIVE-HLS');
+                startHlsPlayback(readyUrl);
               } else {
                 setPlaybackMode('direct');
-                video.src = serverAvailability.stream_url;
+                setSourceType('LOCAL-HLS');
+                video.src = readyUrl;
                 video.load();
-                video.play().catch(() => {});
+                video.play().then(() => {
+                  if (!isCancelled) setIsPlaying(true);
+                }).catch(() => {});
               }
               setIsLoading(false);
               return;

@@ -102,7 +102,7 @@ class DownloadController extends Controller
             'downloaded_bytes' => $job->downloaded_bytes,
             'segments_ready' => $job->segments_ready,
             'can_play_progressive' => (bool) $job->can_play_progressive,
-            'stream_url' => $job->can_play_progressive ? url($job->hls_playlist_url) : ($job->status === 'READY' ? url("/api/streaming/progressive/{$job->id}") : null),
+            'stream_url' => $job->hls_playlist_url ? url($job->hls_playlist_url) : ($job->can_play_progressive ? url("/api/streaming/hls/{$job->job_id}/playlist.m3u8") : ($job->status === 'READY' ? url("/api/streaming/progressive/{$job->id}") : null)),
         ]);
     }
 

@@ -376,10 +376,12 @@ class DownloadService
             $this->syncHlsProgressiveAvailability($job);
 
             $streamUrl = null;
-            if ($job->status === 'READY') {
-                $streamUrl = url("/api/streaming/progressive/{$job->id}");
+            if (!empty($job->hls_playlist_url)) {
+                $streamUrl = url($job->hls_playlist_url);
             } elseif ($job->can_play_progressive) {
-                $streamUrl = url($job->hls_playlist_url ?: "/api/streaming/hls/{$job->job_id}/playlist.m3u8");
+                $streamUrl = url("/api/streaming/hls/{$job->job_id}/playlist.m3u8");
+            } elseif ($job->status === 'READY') {
+                $streamUrl = url("/api/streaming/progressive/{$job->id}");
             }
 
             return [
@@ -393,6 +395,7 @@ class DownloadService
                 'download_speed' => $job->download_speed,
                 'eta' => $job->eta,
                 'stream_url' => $streamUrl,
+                'hls_playlist_url' => $job->hls_playlist_url,
                 'is_local' => $job->status === 'READY',
                 'title' => $job->title,
                 'error_message' => $job->error_message,
