@@ -278,12 +278,19 @@ class DownloadService
      */
     public function syncHlsProgressiveAvailability(DownloadJob $job): void
     {
-        if (empty($job->hls_path) || !File::isDirectory($job->hls_path)) {
-            return;
+        $hlsPath = $job->hls_path;
+        if (!File::isDirectory($hlsPath)) {
+            $sub = preg_replace('#^.*?storage/media/hls_live/#', '', str_replace('\\', '/', (string)$hlsPath));
+            $mapped = rtrim(storage_path('media/hls_live'), '/\\') . '/' . ltrim($sub, '/\\');
+            if (File::isDirectory($mapped)) {
+                $hlsPath = $mapped;
+            } else {
+                return;
+            }
         }
 
-        $playlistFile = rtrim($job->hls_path, '/\\') . DIRECTORY_SEPARATOR . 'playlist.m3u8';
-        $tsFiles = File::glob(rtrim($job->hls_path, '/\\') . DIRECTORY_SEPARATOR . '*.ts');
+        $playlistFile = rtrim($hlsPath, '/\\') . DIRECTORY_SEPARATOR . 'playlist.m3u8';
+        $tsFiles = File::glob(rtrim($hlsPath, '/\\') . DIRECTORY_SEPARATOR . '*.ts');
         $segmentCount = is_array($tsFiles) ? count($tsFiles) : 0;
 
         $hasPlaylist = File::exists($playlistFile) && File::size($playlistFile) > 20;

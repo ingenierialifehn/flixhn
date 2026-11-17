@@ -216,8 +216,30 @@ class DownloadTask:
         self.title: str = str(data.get("title") or "Contenido Desconocido")
         self.source_url: str = str(data.get("source_url") or "")
         self.provider: str = str(data.get("provider") or "flixgrab")
-        self.storage_path: Path = Path(data.get("storage_path") or (MEDIA_DIR / f"{self.job_id}.mp4"))
-        self.hls_path: Path = Path(data.get("hls_path") or (HLS_DIR / self.job_id))
+        raw_storage = data.get("storage_path")
+        if raw_storage:
+            s_str = str(raw_storage).replace('\\', '/')
+            if '/var/www/html/storage/media' in s_str:
+                sub = s_str.split('/var/www/html/storage/media', 1)[1].lstrip('/')
+                self.storage_path = MEDIA_DIR / sub
+            else:
+                self.storage_path = Path(raw_storage)
+        else:
+            self.storage_path = MEDIA_DIR / f"{self.job_id}.mp4"
+
+        raw_hls = data.get("hls_path")
+        if raw_hls:
+            h_str = str(raw_hls).replace('\\', '/')
+            if '/var/www/html/storage/media/hls_live' in h_str:
+                sub = h_str.split('/var/www/html/storage/media/hls_live', 1)[1].lstrip('/')
+                self.hls_path = HLS_DIR / sub
+            elif '/var/www/html/storage/media' in h_str:
+                sub = h_str.split('/var/www/html/storage/media', 1)[1].lstrip('/')
+                self.hls_path = MEDIA_DIR / sub
+            else:
+                self.hls_path = Path(raw_hls)
+        else:
+            self.hls_path = HLS_DIR / self.job_id
         self.priority: int = int(data.get("priority", 5))
         self.quality: str = str(data.get("quality", "1080p"))
         

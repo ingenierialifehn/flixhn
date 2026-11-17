@@ -165,9 +165,15 @@ class StreamingController extends Controller
                 ->orWhere('hls_playlist_url', 'LIKE', "%{$jobId}%")
                 ->first();
             if ($job && !empty($job->hls_path)) {
-                $customPath = rtrim($job->hls_path, '/\\') . DIRECTORY_SEPARATOR . $file;
-                if (File::exists($customPath)) {
-                    $targetFile = $customPath;
+                $sub = preg_replace('#^.*?storage/media/hls_live/#', '', str_replace('\\', '/', $job->hls_path));
+                $mapped = rtrim(storage_path('media/hls_live'), '/\\') . '/' . ltrim($sub, '/\\') . '/' . $file;
+                if (File::exists($mapped)) {
+                    $targetFile = $mapped;
+                } else {
+                    $customPath = rtrim($job->hls_path, '/\\') . DIRECTORY_SEPARATOR . $file;
+                    if (File::exists($customPath)) {
+                        $targetFile = $customPath;
+                    }
                 }
             }
         }
@@ -218,12 +224,22 @@ class StreamingController extends Controller
 
         $filePath = $job->storage_path;
         if (!File::exists($filePath)) {
-            // Verificar si aún está en .part
-            $partFile = $filePath . '.part';
-            if (File::exists($partFile) && File::size($partFile) > 2 * 1024 * 1024) {
-                $filePath = $partFile;
+            $sub = preg_replace('#^.*?storage/media/#', '', str_replace('\\', '/', $filePath));
+            $mapped = rtrim(storage_path('media'), '/\\') . '/' . ltrim($sub, '/\\');
+            if (File::exists($mapped)) {
+                $filePath = $mapped;
             } else {
-                return response()->json(['error' => 'Archivo de video no disponible en disco.'], 404);
+                $partFile = $mapped . '.part';
+                if (File::exists($partFile) && File::size($partFile) > 1 * 1024 * 1024) {
+                    $filePath = $partFile;
+                } else {
+                    $origPart = $filePath . '.part';
+                    if (File::exists($origPart) && File::size($origPart) > 1 * 1024 * 1024) {
+                        $filePath = $origPart;
+                    } else {
+                        return response()->json(['error' => 'Archivo de video no disponible en disco.'], 404);
+                    }
+                }
             }
         }
 
