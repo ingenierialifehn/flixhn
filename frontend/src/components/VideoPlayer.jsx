@@ -146,24 +146,31 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
     setSourceType('LOCAL-DIRECT');
 
     const video = videoRef.current;
+
+    const startPlay = () => {
+      video.removeEventListener('loadedmetadata', startPlay);
+      video.removeEventListener('canplay', startPlay);
+      const promise = video.play();
+      if (promise !== undefined) {
+        promise
+          .then(() => {
+            setIsPlaying(true);
+            setIsLoading(false);
+            setPlaybackError(null);
+          })
+          .catch((err) => {
+            console.warn('[VideoPlayer] Autoplay esperando interacción del usuario:', err.name);
+            setIsLoading(false);
+            setIsPlaying(false);
+          });
+      }
+    };
+
+    video.addEventListener('loadedmetadata', startPlay, { once: true });
+    video.addEventListener('canplay', startPlay, { once: true });
+
     video.src = fallbackUrl;
     video.load();
-    const playPromise = video.play();
-    if (playPromise !== undefined) {
-      playPromise
-        .then(() => {
-          setIsPlaying(true);
-          setIsLoading(false);
-          setPlaybackError(null);
-        })
-        .catch((e) => {
-          console.warn('[VideoPlayer] Autoplay en fallback progresivo:', e);
-          if (e.name === 'NotAllowedError') {
-            setIsPlaying(false);
-            setIsLoading(false);
-          }
-        });
-    }
   }, [cleanupHls]);
 
   useEffect(() => {
@@ -1792,6 +1799,14 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
         ref={videoRef}
         onClick={togglePlay}
         onTimeUpdate={handleTimeUpdate}
+        onPlay={() => setIsPlaying(true)}
+        onPause={() => setIsPlaying(false)}
+        onWaiting={() => setIsLoading(true)}
+        onPlaying={() => {
+          setIsPlaying(true);
+          setIsLoading(false);
+        }}
+        onCanPlay={() => setIsLoading(false)}
         onError={() => {
           const err = videoRef.current?.error;
           const errCode = err?.code;
@@ -1817,8 +1832,23 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
           }
         }}
         className="w-full h-full object-contain cursor-pointer"
+        autoPlay
         playsInline
       />
+
+      {/* Botón Central de Reproducción si el navegador pausó o espera interacción */}
+      {!isPlaying && !isLoading && !playbackError && (
+        <button
+          onClick={togglePlay}
+          className="absolute inset-0 flex items-center justify-center bg-black/20 hover:bg-black/35 transition-colors z-20 cursor-pointer group"
+          title="Reproducir"
+          type="button"
+        >
+          <div className="w-20 h-20 rounded-full bg-[#E50914] flex items-center justify-center shadow-2xl group-hover:scale-110 transition-transform">
+            <Play className="w-10 h-10 fill-white text-white ml-1.5" />
+          </div>
+        </button>
+      )}
 
       {/* Indicador de Carga */}
       {isLoading && !playbackError && (
