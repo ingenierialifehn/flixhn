@@ -375,16 +375,17 @@ class DownloadService
             }
             $this->syncHlsProgressiveAvailability($job);
 
+            $progUrl = url("/api/streaming/progressive/{$job->id}");
             $streamUrl = null;
-            if (!empty($job->hls_playlist_url)) {
+            if ($job->status === 'READY') {
+                $streamUrl = $progUrl;
+            } elseif (!empty($job->hls_playlist_url)) {
                 $streamUrl = url($job->hls_playlist_url);
             } elseif ($job->can_play_progressive) {
                 $streamUrl = url("/api/streaming/hls/{$job->job_id}/playlist.m3u8");
-            } elseif ($job->status === 'READY') {
-                $streamUrl = url("/api/streaming/progressive/{$job->id}");
+            } else {
+                $streamUrl = $progUrl;
             }
-
-            $progUrl = url("/api/streaming/progressive/{$job->id}");
             return [
                 'status' => $job->status,
                 'job_id' => $job->job_id,

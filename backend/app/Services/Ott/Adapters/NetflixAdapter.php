@@ -133,6 +133,7 @@ class NetflixAdapter implements OttProviderInterface
                 'priority' => 1,
             ]);
 
+            $directProgUrl = url("/api/streaming/progressive/{$job->id}");
             return [
                 'success' => true,
                 'content_id' => $contentId,
@@ -140,12 +141,15 @@ class NetflixAdapter implements OttProviderInterface
                 'title' => $titleName,
                 'provider' => 'netflix',
                 'provider_name' => 'Netflix',
-                'playback_type' => 'PROGRESSIVE-HLS',
+                'playback_type' => $job->status === 'READY' ? 'LOCAL-DIRECT' : 'PROGRESSIVE-HLS',
                 'direct_playback' => true,
                 'requires_external_app' => false,
                 'status' => $job->status,
                 'job_id' => $job->job_id,
-                'stream_url' => url("/api/streaming/hls/{$job->job_id}/playlist.m3u8"),
+                'download_job_id' => $job->id,
+                'stream_url' => $job->status === 'READY' ? $directProgUrl : url("/api/streaming/hls/{$job->job_id}/playlist.m3u8"),
+                'progressive_url' => $directProgUrl,
+                'direct_url' => $directProgUrl,
                 'can_play_progressive' => (bool) $job->can_play_progressive,
                 'progress' => (float) $job->progress,
                 'download_speed' => $job->download_speed,

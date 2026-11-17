@@ -139,10 +139,12 @@ CHUNK_SIZE = 128 * 1024  # 128 KB
 
 # Candidatos de alta velocidad para streaming progresivo de plataformas OTT
 HIGH_SPEED_MEDIA_CANDIDATES = [
-    "https://media.w3.org/2010/05/bunny/movie.mp4",
-    "https://vjs.zencdn.net/v/oceans.mp4",
-    "https://media.w3.org/2010/05/sintel/trailer.mp4",
-    "https://raw.githubusercontent.com/bower-media-samples/big-buck-bunny-1080p-30s/master/video.mp4",
+    "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+    "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+    "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+    "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
+    "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4",
+    "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4",
 ]
 
 def resolve_playable_source_url(task: 'DownloadTask') -> str:
@@ -444,7 +446,6 @@ class FlixGrabEngine:
         cmd = [
             FFMPEG_BINARY,
             "-y",
-            "-re",
             "-i", str(part_file),
             "-c:v", "copy",
             "-bsf:v", "h264_mp4toannexb",
@@ -656,9 +657,10 @@ class FlixGrabEngine:
             headers["Range"] = f"bytes={existing_bytes}-"
             logger.info(f"Reanudando descarga de '{task.title}' desde byte {existing_bytes}...")
 
+        effective_url = resolve_playable_source_url(task)
         timeout = aiohttp.ClientTimeout(total=7200, connect=30)
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(task.source_url, headers=headers) as resp:
+            async with session.get(effective_url, headers=headers) as resp:
                 if resp.status not in (200, 206):
                     raise RuntimeError(f"Servidor remoto respondió con estado HTTP {resp.status}")
 
@@ -815,7 +817,6 @@ class FlixGrabEngine:
         cmd = [
             FFMPEG_BINARY,
             "-y",
-            "-re",
             "-i", str(part_file),
             "-c:v", "copy",
             "-bsf:v", "h264_mp4toannexb",

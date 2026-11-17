@@ -88,6 +88,8 @@ class StreamingController extends Controller
 
             // Si ya terminó completamente la descarga o ya tiene segmentos progresivos
             if ($job->status === 'READY') {
+                $sub = preg_replace('#^.*?storage/media/#', '', str_replace('\\', '/', (string)$job->storage_path));
+                $nginxDirectUrl = '/media/' . ltrim($sub, '/');
                 $playlistUrl = url($job->hls_playlist_url ?: "/api/streaming/hls/{$job->job_id}/playlist.m3u8");
                 $progressiveUrl = url("/api/streaming/progressive/{$job->id}");
                 return response()->json([
@@ -95,11 +97,12 @@ class StreamingController extends Controller
                     'status' => 'READY',
                     'title' => $job->title,
                     'job_id' => $job->job_id,
-                    'mode' => 'hls',
-                    'stream_url' => $playlistUrl,
-                    'hls_playlist_url' => $job->hls_playlist_url ?: "/api/streaming/hls/{$job->job_id}/playlist.m3u8",
-                    'progressive_url' => $progressiveUrl,
+                    'mode' => 'direct',
+                    'stream_url' => $progressiveUrl,
                     'direct_url' => $progressiveUrl,
+                    'progressive_url' => $progressiveUrl,
+                    'nginx_url' => $nginxDirectUrl,
+                    'hls_playlist_url' => $playlistUrl,
                     'is_progressive' => false,
                     'duration_seconds' => $job->duration_seconds,
                 ]);
@@ -248,15 +251,6 @@ class StreamingController extends Controller
             }
         }
 
-        $fileSize = File::size($filePath);
-        $fp = @fopen($filePath, 'rb');
-        if (!$fp) {
-            return response()->json(['error' => 'No es posible abrir el archivo multimedia.'], 500);
-        }
-
-        $start = 0;
-        $end = $fileSize - 1;
-        $status = 200;
         $headers = [
             'Content-Type' => 'video/mp4',
             'Accept-Ranges' => 'bytes',
@@ -264,34 +258,6 @@ class StreamingController extends Controller
             'Access-Control-Expose-Headers' => 'Content-Range, Content-Length, Accept-Ranges',
         ];
 
-        if ($request->server('HTTP_RANGE')) {
-            $range = $request->server('HTTP_RANGE');
-            if (preg_match('/bytes=\h*(\d+)-(\d*)[\D.*]?/i', $range, $matches)) {
-                $start = (float) $matches[1];
-                if (!empty($matches[2])) {
-                    $end = (float) $matches[2];
-                }
-                $status = 206;
-                $headers['Content-Range'] = sprintf('bytes %.0f-%.0f/%.0f', $start, $end, $fileSize);
-            }
-        }
-
-        $length = $end - $start + 1;
-        $headers['Content-Length'] = (string) $length;
-
-        fseek($fp, $start);
-
-        return new StreamedResponse(function () use ($fp, $length) {
-            $buffer = 256 * 1024; // 256 KB
-            $bytesSent = 0;
-            while (!feof($fp) && $bytesSent < $length && connection_status() === CONNECTION_NORMAL) {
-                $readLength = min($buffer, $length - $bytesSent);
-                $data = fread($fp, $readLength);
-                echo $data;
-                flush();
-                $bytesSent += strlen($data);
-            }
-            fclose($fp);
-        }, $status, $headers);
+        return response()->file($filePath, $headers);
     }
 }
