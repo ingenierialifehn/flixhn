@@ -59,6 +59,9 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
   const [currentEpisode, setCurrentEpisode] = useState(initialEpisode);
   const [fullSeriesData, setFullSeriesData] = useState(null);
 
+  // Medio activo evaluado al inicio para evitar ReferenceError por Temporal Dead Zone
+  const activeMedia = currentEpisode || title;
+
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -342,8 +345,6 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
     : (title?.stream_url || title?.stream_path);
   const defaultMediaBase = `${window.location.protocol}//${window.location.hostname}:7000/media`;
   const streamBase = import.meta.env.VITE_STREAM_URL || defaultMediaBase;
-
-  const activeMedia = currentEpisode || title;
 
   const isDownloadedOtt = Boolean(
     (title?.provider && title.provider !== 'local' && title.provider !== 'emby') ||

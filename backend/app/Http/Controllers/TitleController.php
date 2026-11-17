@@ -494,13 +494,20 @@ class TitleController extends Controller
         // REGLA: El título SOLO debe agregarse si el usuario reprodujo al menos 10 minutos (>= 600s)
         // y aún no ha llegado al 95% de la duración total.
         if ($profileId) {
-            $continueWatching = PlaybackProgress::with(['title', 'episode'])
+            $rawProgress = PlaybackProgress::with(['title', 'episode'])
                 ->where('profile_id', $profileId)
                 ->where('current_seconds', '>=', 600)
                 ->whereRaw('current_seconds < (duration_seconds * 0.95)')
                 ->orderBy('last_watched_at', 'desc')
-                ->take(15)
+                ->take(30)
                 ->get();
+
+            // Desduplicar por title_id para que cada título aparezca solo una vez con su progreso más reciente
+            $continueWatching = $rawProgress->filter(function ($p) {
+                return !empty($p->title);
+            })->unique(function ($p) {
+                return $p->title_id ?: ('item_' . $p->id);
+            })->values()->take(15);
 
             if ($continueWatching->isNotEmpty()) {
                 array_unshift($finalRows, [
