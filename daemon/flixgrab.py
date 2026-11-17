@@ -447,11 +447,12 @@ class FlixGrabEngine:
             "-re",
             "-i", str(part_file),
             "-c:v", "copy",
+            "-bsf:v", "h264_mp4toannexb",
             "-c:a", "copy",
             "-f", "hls",
             "-hls_time", str(HLS_SEGMENT_DURATION),
             "-hls_list_size", "0",
-            "-hls_flags", "append_list+temp_file",
+            "-hls_flags", "append_list+temp_file+independent_segments",
             "-hls_segment_filename", str(task.hls_path / "segment_%03d.ts"),
             str(playlist_file)
         ]
@@ -499,15 +500,28 @@ class FlixGrabEngine:
             "-y",
             "-i", str(final_file),
             "-c:v", "copy",
+            "-bsf:v", "h264_mp4toannexb",
             "-c:a", "copy",
             "-f", "hls",
             "-hls_time", str(HLS_SEGMENT_DURATION),
             "-hls_list_size", "0",
+            "-hls_flags", "independent_segments",
             "-hls_segment_filename", str(task.hls_path / "segment_%03d.ts"),
             str(playlist_file)
         ]
         try:
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
+            res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
+            if res.returncode != 0:
+                logger.warning("Aviso en HLS definitivo con h264_mp4toannexb; reintentando sin filtro...")
+                cmd_fallback = [
+                    FFMPEG_BINARY, "-y", "-i", str(final_file),
+                    "-c:v", "copy", "-c:a", "copy",
+                    "-f", "hls", "-hls_time", str(HLS_SEGMENT_DURATION),
+                    "-hls_list_size", "0", "-hls_flags", "independent_segments",
+                    "-hls_segment_filename", str(task.hls_path / "segment_%03d.ts"),
+                    str(playlist_file)
+                ]
+                subprocess.run(cmd_fallback, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
             ts_files = list(task.hls_path.glob("*.ts"))
             task.segments_ready = len(ts_files)
             task.can_play_progressive = True
@@ -804,11 +818,12 @@ class FlixGrabEngine:
             "-re",
             "-i", str(part_file),
             "-c:v", "copy",
+            "-bsf:v", "h264_mp4toannexb",
             "-c:a", "copy",
             "-f", "hls",
             "-hls_time", str(HLS_SEGMENT_DURATION),
             "-hls_list_size", "0",
-            "-hls_flags", "append_list+temp_file",
+            "-hls_flags", "append_list+temp_file+independent_segments",
             "-hls_segment_filename", str(task.hls_path / "segment_%03d.ts"),
             str(playlist_file)
         ]

@@ -78,6 +78,9 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
   const [ottPlaybackInfo, setOttPlaybackInfo] = useState(null);
 
   // Estado y telemetría para streaming progresivo inteligente FlixGrab
+  const fallbackProgressiveUrlRef = useRef(null);
+  const hasFallenBackToProgressiveRef = useRef(false);
+
   const [progressiveInfo, setProgressiveInfo] = useState({
     active: false,
     jobId: null,
@@ -647,6 +650,7 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
           }
         });
 
+        let mediaRecoveryCount = 0;
         hls.on(Hls.Events.ERROR, (event, data) => {
           if (data.fatal) {
             switch (data.type) {
@@ -655,13 +659,50 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
                 hls.startLoad();
                 break;
               case Hls.ErrorTypes.MEDIA_ERROR:
-                console.warn('Error de medios HLS fatal, recuperando...', data);
-                hls.recoverMediaError();
+                mediaRecoveryCount++;
+                if (mediaRecoveryCount === 1) {
+                  console.warn('Error de medios HLS (intento 1/2), recuperando...');
+                  hls.recoverMediaError();
+                } else if (mediaRecoveryCount === 2) {
+                  console.warn('Error de medios HLS (intento 2/2), intercambiando audio codec...');
+                  hls.swapAudioCodec();
+                  hls.recoverMediaError();
+                } else {
+                  console.warn('Falla irrecuperable en HLS MSE. Conmutando automáticamente a stream progresivo MP4 directo...');
+                  cleanupMediaInstance();
+                  const fallbackUrl = fallbackProgressiveUrlRef.current || (progressiveInfo.jobId ? `${API_BASE_URL}/api/streaming/progressive/${progressiveInfo.jobId}` : null);
+                  if (fallbackUrl && videoRef.current) {
+                    setPlaybackMode('direct');
+                    setSourceType('LOCAL-DIRECT');
+                    videoRef.current.src = fallbackUrl;
+                    videoRef.current.load();
+                    videoRef.current.play().then(() => {
+                      if (!isCancelled) setIsPlaying(true);
+                      setIsLoading(false);
+                    }).catch(() => {});
+                  } else {
+                    setIsLoading(false);
+                    setPlaybackError('Error de decodificación en el flujo HLS.');
+                  }
+                }
                 break;
               default:
+                console.warn('Error HLS fatal no recuperable:', data);
                 cleanupMediaInstance();
-                setIsLoading(false);
-                setPlaybackError('No se pudo procesar la transmisión HLS desde el servidor de medios.');
+                const fallbackUrl = fallbackProgressiveUrlRef.current || (progressiveInfo.jobId ? `${API_BASE_URL}/api/streaming/progressive/${progressiveInfo.jobId}` : null);
+                if (fallbackUrl && videoRef.current) {
+                  setPlaybackMode('direct');
+                  setSourceType('LOCAL-DIRECT');
+                  videoRef.current.src = fallbackUrl;
+                  videoRef.current.load();
+                  videoRef.current.play().then(() => {
+                    if (!isCancelled) setIsPlaying(true);
+                    setIsLoading(false);
+                  }).catch(() => {});
+                } else {
+                  setIsLoading(false);
+                  setPlaybackError('No se pudo procesar la transmisión desde el servidor de medios.');
+                }
                 break;
             }
           }
@@ -694,6 +735,8 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
           if (res.data?.success && res.data.job) {
             const j = res.data.job;
             const liveStream = (j.hls_playlist_url ? `${API_BASE_URL}${j.hls_playlist_url}` : null) || res.data.stream_url || initialStreamUrl || `${API_BASE_URL}/api/streaming/hls/${jobId}/playlist.m3u8`;
+            const progFallback = res.data?.progressive_url || res.data?.direct_url || (j.id ? `${API_BASE_URL}/api/streaming/progressive/${j.id}` : `${API_BASE_URL}/api/streaming/progressive/${jobId}`);
+            fallbackProgressiveUrlRef.current = progFallback;
             setProgressiveInfo((prev) => ({
               ...prev,
               active: true,
@@ -819,6 +862,10 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
             // Contenido ya completado y listo en almacenamiento FlixGrab
             if (serverAvailability.status === 'READY' && (serverAvailability.stream_url || serverAvailability.hls_playlist_url)) {
               const readyUrl = (serverAvailability.hls_playlist_url ? `${API_BASE_URL}${serverAvailability.hls_playlist_url}` : null) || serverAvailability.stream_url;
+              if (serverAvailability.download_job_id || serverAvailability.job_id) {
+                const jId = serverAvailability.download_job_id || serverAvailability.job_id;
+                fallbackProgressiveUrlRef.current = `${API_BASE_URL}/api/streaming/progressive/${jId}`;
+              }
               const isHls = readyUrl.includes('.m3u8') || readyUrl.includes('/hls/');
               if (isHls) {
                 setSourceType('PROGRESSIVE-HLS');
@@ -1712,6 +1759,24 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
         onError={() => {
           if (!playbackError) {
             const errCode = videoRef.current?.error?.code;
+            console.warn('[VideoPlayer] Video element error caught, code:', errCode);
+
+            const fallback = fallbackProgressiveUrlRef.current || (progressiveInfo.jobId ? `${API_BASE_URL}/api/streaming/progressive/${progressiveInfo.jobId}` : null);
+            if (fallback && !hasFallenBackToProgressiveRef.current && videoRef.current) {
+              hasFallenBackToProgressiveRef.current = true;
+              console.info('[VideoPlayer] Conmutando a reproducción progresiva MP4 directa por error de decodificador:', fallback);
+              cleanupMediaInstance();
+              setPlaybackMode('direct');
+              setSourceType('LOCAL-DIRECT');
+              videoRef.current.src = fallback;
+              videoRef.current.load();
+              videoRef.current.play().then(() => {
+                setIsPlaying(true);
+                setIsLoading(false);
+              }).catch((e) => console.warn('Autoplay error on fallback:', e));
+              return;
+            }
+
             let msg = 'Error al reproducir el flujo de video.';
             if (errCode === 4) {
               msg = 'El formato de video no es compatible con el navegador o el archivo físico no fue encontrado (404).';

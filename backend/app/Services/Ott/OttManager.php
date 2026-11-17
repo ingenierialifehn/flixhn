@@ -193,8 +193,9 @@ class OttManager
 
                     $isDownloaded = !empty($item['is_downloaded']) || !empty($item['is_already_downloaded']) || !empty($item['is_available_locally']);
 
-                    $allRawResults[] = [
-                        'id' => (string) ($item['id'] ?? ('ott_' . $cleanSlug . '_' . ($item['unique_id'] ?? uniqid()))),
+                    $ottItemId = (string) ($item['id'] ?? ('ott_' . $cleanSlug . '_' . ($item['unique_id'] ?? uniqid())));
+                    $normalizedOttItem = [
+                        'id' => $ottItemId,
                         'unique_id' => (string) ($item['unique_id'] ?? $item['id']),
                         'title_id' => $item['title_id'] ?? null,
                         'provider' => $cleanSlug,
@@ -224,6 +225,8 @@ class OttManager
                         'source_platform' => $cleanSlug,
                         'platform' => $cleanSlug,
                     ];
+                    \Illuminate\Support\Facades\Cache::put('ott_item_' . $ottItemId, $normalizedOttItem, 86400);
+                    $allRawResults[] = $normalizedOttItem;
                 }
             } catch (\Throwable $e) {
                 Log::warning("Error en búsqueda remota OttSyncService: " . $e->getMessage());

@@ -384,6 +384,7 @@ class DownloadService
                 $streamUrl = url("/api/streaming/progressive/{$job->id}");
             }
 
+            $progUrl = url("/api/streaming/progressive/{$job->id}");
             return [
                 'status' => $job->status,
                 'job_id' => $job->job_id,
@@ -395,7 +396,9 @@ class DownloadService
                 'download_speed' => $job->download_speed,
                 'eta' => $job->eta,
                 'stream_url' => $streamUrl,
-                'hls_playlist_url' => $job->hls_playlist_url,
+                'progressive_url' => $progUrl,
+                'direct_url' => $progUrl,
+                'hls_playlist_url' => $job->hls_playlist_url ?: "/api/streaming/hls/{$job->job_id}/playlist.m3u8",
                 'is_local' => $job->status === 'READY',
                 'title' => $job->title,
                 'error_message' => $job->error_message,

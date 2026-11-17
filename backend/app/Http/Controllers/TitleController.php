@@ -566,6 +566,39 @@ class TitleController extends Controller
                     'progress' => null,
                 ]);
             }
+
+            // Buscar si ya existe un trabajo de descarga para este contenido
+            $job = \App\Models\DownloadJob::where('content_id', $id)->latest()->first();
+            if ($job) {
+                return response()->json([
+                    'status' => 'success',
+                    'title' => (object) [
+                        'id' => $id,
+                        'name' => $job->title,
+                        'title' => $job->title,
+                        'type' => $job->media_type ?: 'movie',
+                        'provider' => $job->provider ?: 'netflix',
+                        'poster_url' => $job->poster_url,
+                        'backdrop_url' => $job->backdrop_url,
+                        'stream_path' => $job->hls_playlist_url ?: "/api/streaming/hls/{$job->job_id}/playlist.m3u8",
+                    ],
+                    'progress' => null,
+                ]);
+            }
+
+            // Fallback sintético para cualquier ID ott_ sin responder 410 Gone
+            return response()->json([
+                'status' => 'success',
+                'title' => (object) [
+                    'id' => $id,
+                    'name' => ucwords(str_replace(['ott_', '_', '-'], ' ', $id)),
+                    'title' => ucwords(str_replace(['ott_', '_', '-'], ' ', $id)),
+                    'type' => 'movie',
+                    'provider' => 'netflix',
+                    'is_ott' => true,
+                ],
+                'progress' => null,
+            ]);
         }
 
         $title = Title::with(['category'])->find($id);

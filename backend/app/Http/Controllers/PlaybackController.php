@@ -281,6 +281,14 @@ class PlaybackController extends Controller
             }
         }
 
+        $titleId = $request->input('title_id');
+        if (!is_numeric($titleId) || str_starts_with((string)$titleId, 'ott_')) {
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Progreso omitido para título OTT remoto.',
+            ]);
+        }
+
         $validated = $request->validate([
             'profile_id' => 'required|exists:user_profiles,id',
             'title_id' => 'required|exists:titles,id',
@@ -321,6 +329,14 @@ class PlaybackController extends Controller
             if ($resolvedProfileId) {
                 $request->merge(['profile_id' => $resolvedProfileId]);
             }
+        }
+
+        $titleId = $request->input('title_id') ?? $request->query('title_id');
+        if (!is_numeric($titleId) || str_starts_with((string)$titleId, 'ott_')) {
+            return response()->json([
+                'status' => 'success',
+                'progress' => null,
+            ]);
         }
 
         $validated = $request->validate([

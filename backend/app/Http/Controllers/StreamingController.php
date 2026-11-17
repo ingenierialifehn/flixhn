@@ -89,6 +89,7 @@ class StreamingController extends Controller
             // Si ya terminó completamente la descarga o ya tiene segmentos progresivos
             if ($job->status === 'READY') {
                 $playlistUrl = url($job->hls_playlist_url ?: "/api/streaming/hls/{$job->job_id}/playlist.m3u8");
+                $progressiveUrl = url("/api/streaming/progressive/{$job->id}");
                 return response()->json([
                     'success' => true,
                     'status' => 'READY',
@@ -96,6 +97,9 @@ class StreamingController extends Controller
                     'job_id' => $job->job_id,
                     'mode' => 'hls',
                     'stream_url' => $playlistUrl,
+                    'hls_playlist_url' => $job->hls_playlist_url ?: "/api/streaming/hls/{$job->job_id}/playlist.m3u8",
+                    'progressive_url' => $progressiveUrl,
+                    'direct_url' => $progressiveUrl,
                     'is_progressive' => false,
                     'duration_seconds' => $job->duration_seconds,
                 ]);
