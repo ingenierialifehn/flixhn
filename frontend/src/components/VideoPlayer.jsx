@@ -111,6 +111,24 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
     }
   }, [progressiveInfo.jobId, onBack, onClose]);
 
+  // Limpieza unificada de instancia de medios (HLS y Video) accesible en todo el componente
+  const cleanupMediaInstance = useCallback(() => {
+    if (hlsRef.current) {
+      try {
+        hlsRef.current.stopLoad();
+        hlsRef.current.destroy();
+      } catch (e) {}
+      hlsRef.current = null;
+    }
+    if (videoRef.current) {
+      try {
+        videoRef.current.pause();
+        videoRef.current.removeAttribute('src');
+        videoRef.current.load();
+      } catch (e) {}
+    }
+  }, []);
+
   useEffect(() => {
     return () => {
       if (progressiveTimerRef.current) {
@@ -525,24 +543,6 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
 
     setIsLoading(true);
 
-    // Función para limpiar la instancia previa de video y evitar peticiones duplicadas en conflicto
-    const cleanupMediaInstance = () => {
-      if (hlsRef.current) {
-        try {
-          hlsRef.current.stopLoad();
-          hlsRef.current.destroy();
-        } catch (e) {}
-        hlsRef.current = null;
-      }
-      if (video) {
-        try {
-          video.pause();
-          video.removeAttribute('src');
-          video.load();
-        } catch (e) {}
-      }
-    };
-
     cleanupMediaInstance();
 
     // Inicializador de HLS.js con loader autenticado e inyección de token en cada fragmento .ts
@@ -669,7 +669,10 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
                   hls.recoverMediaError();
                 } else {
                   console.warn('Falla irrecuperable en HLS MSE. Conmutando automáticamente a stream progresivo MP4 directo...');
-                  cleanupMediaInstance();
+                  try {
+                    cleanupMediaInstance();
+                  } catch (e) {}
+                  setPlaybackError(null);
                   const fallbackUrl = fallbackProgressiveUrlRef.current || (progressiveInfo.jobId ? `${API_BASE_URL}/api/streaming/progressive/${progressiveInfo.jobId}` : null);
                   if (fallbackUrl && videoRef.current) {
                     setPlaybackMode('direct');
@@ -1765,7 +1768,10 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
             if (fallback && !hasFallenBackToProgressiveRef.current && videoRef.current) {
               hasFallenBackToProgressiveRef.current = true;
               console.info('[VideoPlayer] Conmutando a reproducción progresiva MP4 directa por error de decodificador:', fallback);
-              cleanupMediaInstance();
+              try {
+                cleanupMediaInstance();
+              } catch (e) {}
+              setPlaybackError(null);
               setPlaybackMode('direct');
               setSourceType('LOCAL-DIRECT');
               videoRef.current.src = fallback;
