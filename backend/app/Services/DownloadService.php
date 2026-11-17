@@ -132,7 +132,10 @@ class DownloadService
                 return $existingJob; // Contenido ya descargado y listo
             }
             if ($existingJob->isActive()) {
-                return $existingJob; // Ya está descargándose o en cola
+                if ($existingJob->status === 'QUEUED') {
+                    $this->notifyDaemonNewJob($existingJob);
+                }
+                return $existingJob;
             }
         }
 
@@ -527,18 +530,27 @@ class DownloadService
      * Resuelve dinámicamente la URL activa del daemon FlixGrab.
      * Compatible tanto con host local nativo como con contenedores Docker (host.docker.internal / bridge gateway).
      */
+    protected static ?string $resolvedDaemonUrl = null;
+
     public function getActiveDaemonUrl(): string
     {
-        $urls = [$this->daemonUrl];
-        if (str_contains($this->daemonUrl, '127.0.0.1') || str_contains($this->daemonUrl, 'localhost')) {
-            $urls[] = 'http://172.17.0.1:8001';
-            $urls[] = 'http://host.docker.internal:8001';
+        if (self::$resolvedDaemonUrl !== null) {
+            return self::$resolvedDaemonUrl;
         }
+
+        $urls = array_unique(array_filter([
+            env('FLIXGRAB_DAEMON_URL'),
+            'http://host.docker.internal:8001',
+            'http://172.17.0.1:8001',
+            $this->daemonUrl,
+            'http://127.0.0.1:8001',
+        ]));
 
         foreach ($urls as $url) {
             try {
                 $check = Http::timeout(1)->get("{$url}/health");
                 if ($check->successful()) {
+                    self::$resolvedDaemonUrl = $url;
                     return $url;
                 }
             } catch (\Throwable) {

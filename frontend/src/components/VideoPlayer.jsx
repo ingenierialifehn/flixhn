@@ -45,7 +45,8 @@ class EmbyHlsLoader extends (Hls.DefaultConfig?.loader || class {}) {
 }
 
 const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime = 0, onBack, onClose }) => {
-  const { activeProfile } = useAuth();
+  const { user, activeProfile } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const videoRef = useRef(null);
   const playerContainerRef = useRef(null);
   const hlsRef = useRef(null);
@@ -187,7 +188,8 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
   // Cargar información completa de temporadas y episodios exclusivamente si es una serie legítima
   useEffect(() => {
     const seriesId = title?.id || currentEpisode?.title_id;
-    if (isSeries && seriesId && title?.type !== 'movie') {
+    const isNumericSeriesId = seriesId && !String(seriesId).startsWith('ott_') && !isNaN(Number(seriesId));
+    if (isSeries && isNumericSeriesId && title?.type !== 'movie') {
       api.get(`/titles/${seriesId}`)
         .then((res) => {
           if (res.data?.title) {
@@ -246,13 +248,32 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
   const seasonsList = useMemo(() => {
     if (!isSeries || title?.type === 'movie') return [];
     const seasonsData = fullSeriesData?.seasons || title?.seasons;
-    if (!seasonsData || !Array.isArray(seasonsData)) return [];
-    return seasonsData
-      .filter((s) => {
-        const sNum = parseInt(s.season_number, 10);
-        return sNum > 0 && !/^(especiales|trailers|temporada\s*0\b)/i.test(s.title || '');
-      })
-      .sort((a, b) => (parseInt(a.season_number, 10) || 1) - (parseInt(b.season_number, 10) || 1));
+    if (Array.isArray(seasonsData) && seasonsData.length > 0) {
+      return seasonsData
+        .filter((s) => {
+          const sNum = parseInt(s.season_number, 10);
+          return sNum > 0 && !/^(especiales|trailers|temporada\s*0\b)/i.test(s.title || '');
+        })
+        .sort((a, b) => (parseInt(a.season_number, 10) || 1) - (parseInt(b.season_number, 10) || 1));
+    }
+    const directEps = fullSeriesData?.episodes || title?.episodes;
+    if (Array.isArray(directEps) && directEps.length > 0) {
+      const seasonMap = new Map();
+      directEps.forEach((ep) => {
+        const sNum = parseInt(ep.season_number, 10) || 1;
+        if (!seasonMap.has(sNum)) {
+          seasonMap.set(sNum, {
+            id: sNum,
+            season_number: sNum,
+            title: `Temporada ${sNum}`,
+            episodes: [],
+          });
+        }
+        seasonMap.get(sNum).episodes.push(ep);
+      });
+      return Array.from(seasonMap.values()).sort((a, b) => a.season_number - b.season_number);
+    }
+    return [];
   }, [isSeries, fullSeriesData, title]);
 
   const [selectedSeasonNumber, setSelectedSeasonNumber] = useState(1);
@@ -713,7 +734,8 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
 
     const initPlayerSession = async () => {
       // 1. Reanudar progreso previo
-      if (resumeSeconds <= 0 && activeProfile && title) {
+      const isNumericTitleId = title?.id && !String(title.id).startsWith('ott_') && !isNaN(Number(title.id));
+      if (resumeSeconds <= 0 && activeProfile && isNumericTitleId) {
         try {
           const res = await api.get('/playback/progress', {
             params: {
@@ -763,8 +785,8 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
                 return;
               }
 
-              // Esperando que se generen segmentos suficientes
-              setIsLoading(false);
+              // Esperando que se generen segmentos suficientes en segundo plano
+              setIsLoading(true);
               startProgressivePolling(currentJobId, serverAvailability.stream_url);
               return;
             }
@@ -870,7 +892,7 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
               setPlaybackMode('hls');
               startHlsPlayback(hlsUrl);
             } else {
-              setIsLoading(false);
+              setIsLoading(true);
             }
 
             if (currentJobId) {
@@ -1684,80 +1706,29 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
       )}
 
       
-      {/* Overlay de Búfer Progresivo FlixGrab (Esperando segmentos reproducibles) */}
-      {progressiveInfo.active && !progressiveInfo.canPlayProgressive && !playbackError && (
-        <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/95 p-6 text-center select-none backdrop-blur-xl">
-          <div className="relative z-10 max-w-md w-full space-y-5 animate-scaleUp">
-            <div className="inline-flex p-4 rounded-2xl bg-red-600/20 text-[#E50914] border border-red-500/30 shadow-2xl">
-              <DownloadCloud className="w-12 h-12 animate-bounce" />
-            </div>
-
-            <div>
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-bold uppercase tracking-wider bg-red-950/80 text-red-400 border border-red-500/40 mb-2">
-                <span className="w-2 h-2 rounded-full bg-[#E50914] animate-ping" />
-                FlixGrab Streaming Progresivo
-              </span>
-              <h2 className="text-xl md:text-2xl font-black text-white tracking-tight">
-                {title?.name || title?.title || 'Descargando Contenido'}
-              </h2>
-              <p className="text-xs text-zinc-400 mt-1">
-                Descargando en segundo plano y generando segmentos HLS para reproducción inmediata.
-              </p>
-            </div>
-
-            {/* Barra de Progreso */}
-            <div className="bg-zinc-900/90 border border-zinc-800 p-4 rounded-2xl space-y-2 shadow-2xl">
-              <div className="flex justify-between items-center text-xs font-mono">
-                <span className="text-zinc-400">Progreso de descarga</span>
-                <span className="text-[#E50914] font-black">{Math.round(progressiveInfo.progress)}%</span>
-              </div>
-              <div className="w-full bg-zinc-800 h-2.5 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-gradient-to-r from-red-700 via-[#E50914] to-red-500 transition-all duration-300 rounded-full"
-                  style={{ width: `${Math.max(5, progressiveInfo.progress)}%` }}
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2 pt-2 text-[11px] text-zinc-400 border-t border-zinc-800/60 font-mono">
-                <div className="text-left flex items-center gap-1">
-                  <Zap className="w-3.5 h-3.5 text-amber-400" />
-                  <span>{progressiveInfo.downloadSpeed || '0.0 MB/s'}</span>
-                </div>
-                <div className="text-right flex items-center justify-end gap-1">
-                  <Clock className="w-3.5 h-3.5 text-blue-400" />
-                  <span>ETA: {progressiveInfo.eta || '--:--'}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Estado del Búfer */}
-            <div className="p-3 bg-zinc-900/60 rounded-xl border border-zinc-800 text-[11px] text-zinc-300 flex items-center justify-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-              <span>
-                Búfer de reproducción: {progressiveInfo.segmentsReady} de 2 segmentos listos. La reproducción iniciará automáticamente.
-              </span>
-            </div>
-
-            {/* Botón Cancelar */}
-            <button
-              onClick={handleCancelDownload}
-              className="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white text-xs font-semibold rounded-xl border border-zinc-700 transition-all cursor-pointer shadow-lg"
-            >
-              Cancelar Descarga y Salir
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Pill Flotante Discreto durante Reproducción Progresiva Activa */}
-      {progressiveInfo.active && progressiveInfo.canPlayProgressive && (
-        <div className="absolute top-16 right-6 z-40 pointer-events-none animate-fadeIn">
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/85 border border-red-500/40 text-xs font-mono text-zinc-200 backdrop-blur-md shadow-2xl">
+      {/* Indicador Flotante Exclusivo para Administradores (Streaming Progresivo FlixGrab) */}
+      {isAdmin && progressiveInfo.active && (
+        <div className="absolute top-16 right-6 z-40 animate-fadeIn pointer-events-auto select-none">
+          <div className="flex items-center gap-2.5 px-3.5 py-2 rounded-xl bg-black/85 border border-red-500/40 text-xs font-mono text-zinc-200 backdrop-blur-md shadow-2xl">
             <span className="w-2 h-2 rounded-full bg-[#E50914] animate-ping" />
-            <span className="text-[#E50914] font-bold">FlixGrab On-Net:</span>
+            <span className="text-[#E50914] font-bold">FlixGrab Admin:</span>
             <span>{Math.round(progressiveInfo.progress)}%</span>
             <span className="text-zinc-500">•</span>
-            <span className="text-emerald-400 font-semibold">{progressiveInfo.downloadSpeed}</span>
+            <span className="text-emerald-400 font-semibold">{progressiveInfo.downloadSpeed || '0.0 MB/s'}</span>
+            {progressiveInfo.eta && progressiveInfo.eta !== '--:--' && (
+              <>
+                <span className="text-zinc-500">•</span>
+                <span className="text-blue-400">ETA {progressiveInfo.eta}</span>
+              </>
+            )}
+            <button
+              onClick={handleCancelDownload}
+              title="Cancelar descarga en segundo plano"
+              className="ml-1 text-zinc-400 hover:text-red-400 transition-colors p-1 cursor-pointer"
+              type="button"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
           </div>
         </div>
       )}
@@ -2021,8 +1992,8 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
                                 : 'hover:bg-zinc-800/80 text-zinc-300'
                             }`}
                           >
-                            <span className="w-6 text-center font-mono text-zinc-400 font-bold text-sm">
-                              {ep.episode_number}
+                            <span className="w-11 text-center font-mono text-zinc-400 font-bold text-xs shrink-0">
+                              T{ep.season_number || selectedSeasonNumber || 1}:E{ep.episode_number}
                             </span>
                             <div className="flex-1 min-w-0">
                               <p className="truncate font-medium text-white">{ep.title || `Episodio ${ep.episode_number}`}</p>

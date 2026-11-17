@@ -7,13 +7,27 @@ if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
   }).catch(() => {});
 }
 
-if (typeof window !== 'undefined' && (!window.crypto || !window.crypto.randomUUID)) {
-    if (!window.crypto) window.crypto = {};
-    window.crypto.randomUUID = () =>
-        '10000000-1000-4000-8000-100000000000'.replace(/[018]/g, c =>
-            (+c ^ (Math.random() * 16 >> (+c / 4))).toString(16)
-        );
-}
+try {
+  if (typeof window !== 'undefined') {
+    const polyfillUUID = () =>
+      '10000000-1000-4000-8000-100000000000'.replace(/[018]/g, (c) =>
+        (+c ^ ((Math.random() * 16) >> (+c / 4))).toString(16)
+      );
+    if (!window.crypto) {
+      try {
+        Object.defineProperty(window, 'crypto', { value: { randomUUID: polyfillUUID }, configurable: true });
+      } catch (e) {
+        window.crypto = { randomUUID: polyfillUUID };
+      }
+    } else if (typeof window.crypto.randomUUID !== 'function') {
+      try {
+        Object.defineProperty(window.crypto, 'randomUUID', { value: polyfillUUID, configurable: true });
+      } catch (e) {
+        window.crypto.randomUUID = polyfillUUID;
+      }
+    }
+  }
+} catch (e) {}
 
 import React from 'react';
 import { createRoot } from 'react-dom/client';
