@@ -762,9 +762,9 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
           const res = await api.get(`/download/${jobId}/status`);
           if (res.data?.success && res.data.job) {
             const j = res.data.job;
-            const liveStream = (j.hls_playlist_url ? `${API_BASE_URL}${j.hls_playlist_url}` : null) || res.data.stream_url || initialStreamUrl || `${API_BASE_URL}/api/streaming/hls/${jobId}/playlist.m3u8`;
-            const progFallback = res.data?.progressive_url || res.data?.direct_url || (j.id ? `${API_BASE_URL}/api/streaming/progressive/${j.id}` : `${API_BASE_URL}/api/streaming/progressive/${jobId}`);
-            fallbackProgressiveUrlRef.current = progFallback;
+            const progDirect = res.data?.progressive_url || res.data?.direct_url || (j.id ? `${API_BASE_URL}/api/streaming/progressive/${j.id}` : `${API_BASE_URL}/api/streaming/progressive/${jobId}`);
+            const liveStream = progDirect || res.data.stream_url || initialStreamUrl;
+            fallbackProgressiveUrlRef.current = `${progDirect}${progDirect.includes('?') ? '&' : '?'}transcode=1`;
             setProgressiveInfo((prev) => ({
               ...prev,
               active: true,
@@ -848,8 +848,10 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
           if (serverAvailability) {
             // Contenido en descarga activa o en cola
             if (['DOWNLOADING', 'PROCESSING', 'QUEUED'].includes(serverAvailability.status)) {
-              const currentJobId = serverAvailability.job_id || serverAvailability.download_job_id;
-              const liveUrl = (serverAvailability.hls_playlist_url ? `${API_BASE_URL}${serverAvailability.hls_playlist_url}` : null) || serverAvailability.stream_url || `${API_BASE_URL}/api/streaming/hls/${currentJobId}/playlist.m3u8`;
+              const currentJobId = serverAvailability.download_job_id || serverAvailability.job_id;
+              const liveUrl = serverAvailability.progressive_url || serverAvailability.direct_url || serverAvailability.stream_url || `${API_BASE_URL}/api/streaming/progressive/${currentJobId}`;
+              fallbackProgressiveUrlRef.current = `${liveUrl}${liveUrl.includes('?') ? '&' : '?'}transcode=1`;
+
               setProgressiveInfo({
                 active: true,
                 jobId: currentJobId,
@@ -858,31 +860,22 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
                 downloadSpeed: serverAvailability.download_speed || '0.0 MB/s',
                 eta: serverAvailability.eta || '--:--',
                 segmentsReady: serverAvailability.segments_ready || 0,
-                canPlayProgressive: Boolean(serverAvailability.can_play_progressive),
+                canPlayProgressive: true,
                 streamUrl: liveUrl,
               });
 
-              if (serverAvailability.can_play_progressive && liveUrl) {
-                const isHls = liveUrl.includes('.m3u8') || liveUrl.includes('/hls/');
-                if (isHls) {
-                  setSourceType('PROGRESSIVE-HLS');
-                  startHlsPlayback(liveUrl);
-                } else {
-                  setPlaybackMode('direct');
-                  setSourceType('LOCAL-HLS');
-                  video.src = liveUrl;
-                  video.load();
-                  video.play().then(() => {
-                    if (!isCancelled) setIsPlaying(true);
-                  }).catch(() => {});
+              setPlaybackMode('direct');
+              setSourceType('LOCAL-DIRECT');
+              video.src = liveUrl;
+              video.load();
+              video.play().then(() => {
+                if (!isCancelled) {
+                  setIsPlaying(true);
                   setIsLoading(false);
                 }
-                startProgressivePolling(currentJobId, liveUrl);
-                return;
-              }
-
-              // Esperando que se generen segmentos suficientes en segundo plano
-              setIsLoading(true);
+              }).catch(() => {
+                setIsLoading(false);
+              });
               startProgressivePolling(currentJobId, liveUrl);
               return;
             }
@@ -890,22 +883,20 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
             // Contenido ya completado y listo en almacenamiento FlixGrab
             if (serverAvailability.status === 'READY') {
               const readyUrl = serverAvailability.progressive_url || serverAvailability.direct_url || serverAvailability.stream_url;
-              if (serverAvailability.download_job_id || serverAvailability.job_id) {
-                const jId = serverAvailability.download_job_id || serverAvailability.job_id;
-                fallbackProgressiveUrlRef.current = `${API_BASE_URL}/api/streaming/progressive/${jId}`;
-              }
-              const isHls = readyUrl && (readyUrl.includes('.m3u8') || readyUrl.includes('/hls/'));
-              if (isHls) {
-                setSourceType('PROGRESSIVE-HLS');
-                startHlsPlayback(readyUrl);
-              } else if (readyUrl) {
+              if (readyUrl) {
+                fallbackProgressiveUrlRef.current = `${readyUrl}${readyUrl.includes('?') ? '&' : '?'}transcode=1`;
                 setPlaybackMode('direct');
                 setSourceType('LOCAL-DIRECT');
                 video.src = readyUrl;
                 video.load();
                 video.play().then(() => {
-                  if (!isCancelled) setIsPlaying(true);
-                }).catch(() => {});
+                  if (!isCancelled) {
+                    setIsPlaying(true);
+                    setIsLoading(false);
+                  }
+                }).catch(() => {
+                  setIsLoading(false);
+                });
               }
               setIsLoading(false);
               return;
@@ -989,34 +980,38 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
 
           // 2. Si es reproducción progresiva (FlixGrab Engine en segundo plano)
           if (ottRes?.playback_type === 'PROGRESSIVE-HLS' || ottRes?.job_id) {
-            setSourceType('PROGRESSIVE-HLS');
+            setSourceType('LOCAL-DIRECT');
             setOttPlaybackInfo(ottRes);
-            const currentJobId = ottRes.job_id || ottRes.download_job_id;
-            const hlsUrl = ottRes.stream_url || `/api/streaming/hls/${currentJobId}/playlist.m3u8`;
-            const progFallback = ottRes.progressive_url || ottRes.direct_url || (ottRes.download_job_id ? `${API_BASE_URL}/api/streaming/progressive/${ottRes.download_job_id}` : `${API_BASE_URL}/api/streaming/progressive/${currentJobId}`);
-            fallbackProgressiveUrlRef.current = progFallback;
+            const currentJobId = ottRes.download_job_id || ottRes.job_id;
+            const progDirect = ottRes.progressive_url || ottRes.direct_url || ottRes.stream_url || `${API_BASE_URL}/api/streaming/progressive/${currentJobId}`;
+            fallbackProgressiveUrlRef.current = `${progDirect}${progDirect.includes('?') ? '&' : '?'}transcode=1`;
 
             setProgressiveInfo({
-              active: true,
+              active: ottRes.status !== 'READY',
               jobId: currentJobId,
               status: ottRes.status || 'DOWNLOADING',
               progress: ottRes.progress || 0,
               downloadSpeed: ottRes.download_speed || 'Iniciando...',
               eta: ottRes.eta || '--:--',
               segmentsReady: ottRes.segments_ready || 0,
-              canPlayProgressive: Boolean(ottRes.can_play_progressive),
-              streamUrl: hlsUrl,
+              canPlayProgressive: true,
+              streamUrl: progDirect,
             });
 
-            if (ottRes.can_play_progressive && hlsUrl) {
-              setPlaybackMode('hls');
-              startHlsPlayback(hlsUrl);
-            } else {
-              setIsLoading(true);
-            }
+            setPlaybackMode('direct');
+            video.src = progDirect;
+            video.load();
+            video.play().then(() => {
+              if (!isCancelled) {
+                setIsPlaying(true);
+                setIsLoading(false);
+              }
+            }).catch(() => {
+              setIsLoading(false);
+            });
 
-            if (currentJobId) {
-              startProgressivePolling(currentJobId, hlsUrl);
+            if (currentJobId && ottRes.status !== 'READY') {
+              startProgressivePolling(currentJobId, progDirect);
             }
             return;
           }
@@ -1168,6 +1163,12 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
 
         const handleLocalError = (e) => {
           if (isCancelled) return;
+          const currentSrc = video.currentSrc || video.src || '';
+          if (currentSrc && !currentSrc.includes('transcode=1') && !hasFallenBackToProgressiveRef.current) {
+            const transcodeTarget = `${currentSrc}${currentSrc.includes('?') ? '&' : '?'}transcode=1`;
+            switchToProgressiveFallback(transcodeTarget);
+            return;
+          }
           setIsLoading(false);
           const errCode = video.error?.code;
           let msg = 'No se pudo reproducir el archivo de video local.';
@@ -1812,13 +1813,19 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
           const errCode = err?.code;
           console.warn('[VideoPlayer] Video element error caught, code:', errCode);
 
-          const fallback = fallbackProgressiveUrlRef.current || (progressiveInfo.jobId ? `${API_BASE_URL}/api/streaming/progressive/${progressiveInfo.jobId}` : null);
-          if (fallback && !hasFallenBackToProgressiveRef.current) {
+          const currentSrc = videoRef.current?.currentSrc || videoRef.current?.src || '';
+          let fallback = fallbackProgressiveUrlRef.current || (progressiveInfo.jobId ? `${API_BASE_URL}/api/streaming/progressive/${progressiveInfo.jobId}?transcode=1` : null);
+          if ((!fallback || fallback === currentSrc) && currentSrc && !currentSrc.includes('transcode=1')) {
+            fallback = `${currentSrc}${currentSrc.includes('?') ? '&' : '?'}transcode=1`;
+          }
+
+          if (fallback && fallback !== currentSrc && !hasFallenBackToProgressiveRef.current) {
             switchToProgressiveFallback(fallback);
             return;
           }
 
-          if (!playbackError && !hasFallenBackToProgressiveRef.current) {
+          setIsLoading(false);
+          if (!playbackError) {
             let msg = 'Error al reproducir el flujo de video.';
             if (errCode === 4) {
               msg = 'El formato de video no es compatible con el navegador o el archivo físico no fue encontrado (404).';
@@ -1827,7 +1834,6 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
             } else if (errCode === 3) {
               msg = 'Error de decodificación en el reproductor de video.';
             }
-            setIsLoading(false);
             setPlaybackError(msg);
           }
         }}

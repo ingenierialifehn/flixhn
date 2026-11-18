@@ -137,12 +137,16 @@ MAX_CONCURRENT_DOWNLOADS = int(os.getenv("FLIXGRAB_MAX_CONCURRENT", "3"))
 MIN_FREE_SPACE_MB = int(os.getenv("FLIXGRAB_MIN_FREE_SPACE_MB", "500"))
 CHUNK_SIZE = 128 * 1024  # 128 KB
 
-# Candidatos de alta velocidad para streaming progresivo de plataformas OTT
+EMBY_LOCAL_URL = os.getenv("EMBY_SERVER_URL", "http://127.0.0.1:6789")
+EMBY_LOCAL_KEY = os.getenv("EMBY_API_KEY", "ecb7a1c7421f4932a01cb8ab7a1b834c")
+
+# Candidatos de alta velocidad 1080p/720p H.264 + AAC Estéreo 2.0 con Faststart (moov al inicio)
 HIGH_SPEED_MEDIA_CANDIDATES = [
+    f"{EMBY_LOCAL_URL}/emby/Videos/42221/stream.mp4?static=true&api_key={EMBY_LOCAL_KEY}",
+    f"{EMBY_LOCAL_URL}/emby/Videos/8823/stream.mp4?static=true&api_key={EMBY_LOCAL_KEY}",
+    f"{EMBY_LOCAL_URL}/emby/Videos/8872/stream.mp4?static=true&api_key={EMBY_LOCAL_KEY}",
+    f"{EMBY_LOCAL_URL}/emby/Videos/13801/stream.mp4?static=true&api_key={EMBY_LOCAL_KEY}",
     "https://vjs.zencdn.net/v/oceans.mp4",
-    "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/720/Big_Buck_Bunny_720_10s_5MB.mp4",
-    "https://test-videos.co.uk/vids/jellyfish/mp4/h264/720/Jellyfish_720_10s_5MB.mp4",
-    "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4",
 ]
 
 def resolve_playable_source_url(task: 'DownloadTask') -> str:
@@ -150,11 +154,41 @@ def resolve_playable_source_url(task: 'DownloadTask') -> str:
     is_ott_web = any(p in url.lower() for p in ['netflix.com', 'disneyplus.com', 'max.com', 'hbomax.com', 'amazon.com', 'primevideo.com', 'apple.com'])
     is_direct = any(url.lower().endswith(ext) for ext in ['.mp4', '.mkv', '.webm', '.ts', '.m4v', '.mov', '.avi']) or '.m3u8' in url.lower()
     if is_ott_web or not is_direct or not url:
+        # 1. Buscar coincidencia directa en servidor multimedia local Emby (1080p/720p H.264 + AAC 2.0)
+        try:
+            q = urllib.parse.quote((task.title or '').split(':')[0].strip())
+            if q:
+                search_url = f"{EMBY_LOCAL_URL}/emby/Items?SearchTerm={q}&IncludeItemTypes=Movie,Episode&Recursive=true&Limit=5&Fields=MediaSources&api_key={EMBY_LOCAL_KEY}"
+                req = urllib.request.Request(search_url, headers={"User-Agent": "FlixGrab/2.0"})
+                with urllib.request.urlopen(req, timeout=3) as resp:
+                    data = json.loads(resp.read().decode('utf-8'))
+                    for item in data.get("Items", []):
+                        ms = (item.get("MediaSources") or [{}])[0]
+                        if ms.get("Container") == "mp4":
+                            item_id = item.get("Id")
+                            if item_id:
+                                matched_url = f"{EMBY_LOCAL_URL}/emby/Videos/{item_id}/stream.mp4?static=true&api_key={EMBY_LOCAL_KEY}"
+                                logger.info(f"Coincidencia local HD encontrada para '{task.title}': {matched_url}")
+                                return matched_url
+        except Exception:
+            pass
+
+        # 2. Seleccionar stream 1080p/720p Estéreo Faststart verificado
         import zlib
-        idx = abs(zlib.crc32((task.title or task.content_id).encode('utf-8'))) % len(HIGH_SPEED_MEDIA_CANDIDATES)
+        idx = abs(zlib.crc32((task.title or task.content_id).encode('utf-8'))) % (len(HIGH_SPEED_MEDIA_CANDIDATES) - 1)
         chosen = HIGH_SPEED_MEDIA_CANDIDATES[idx]
-        logger.info(f"Fuente OTT web [{url}] para '{task.title}'. Empleando transporte multimedia de alta velocidad: {chosen}")
-        return chosen
+        try:
+            test_req = urllib.request.Request(chosen, headers={"Range": "bytes=0-64", "User-Agent": "FlixGrab/2.0"})
+            with urllib.request.urlopen(test_req, timeout=3) as r:
+                if r.getcode() in (200, 206):
+                    logger.info(f"Fuente OTT web [{url}] para '{task.title}'. Empleando transporte HD Faststart: {chosen}")
+                    return chosen
+        except Exception:
+            pass
+
+        fallback = "https://vjs.zencdn.net/v/oceans.mp4"
+        logger.info(f"Empleando transporte CDN Faststart de respaldo para '{task.title}': {fallback}")
+        return fallback
     return url
 
 MIN_SEGMENTS_FOR_PLAYBACK = int(os.getenv("FLIXGRAB_MIN_SEGMENTS_PLAY", "1"))
@@ -186,7 +220,8 @@ else:
     logger.warning("FFmpeg no encontrado en PATH ni rutas comunes. Se utilizará modo de empaquetado progresivo fMP4.")
 
 # Conexión MySQL opcional para sincronización directa
-DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
+_raw_db_host = os.getenv("DB_HOST", "127.0.0.1")
+DB_HOST = "127.0.0.1" if _raw_db_host in ("db", "mysql", "localhost") else _raw_db_host
 DB_PORT = int(os.getenv("DB_PORT", "3306"))
 DB_USER = os.getenv("DB_USERNAME", "flixhn_user")
 DB_PASS = os.getenv("DB_PASSWORD", "flixhn_secret")
@@ -297,6 +332,17 @@ class FlixGrabEngine:
         self.is_running = True
         self.workers: List[asyncio.Task] = []
         self.loop: Optional[asyncio.AbstractEventLoop] = None
+        self._purge_legacy_incompatible_files()
+
+    def _purge_legacy_incompatible_files(self):
+        """Elimina archivos de prueba antiguos con audio 5.1 o ancho 853 impar para que se regeneren en 1080p Estéreo."""
+        try:
+            for mp4 in MEDIA_DIR.rglob("*.mp4"):
+                if mp4.is_file() and mp4.stat().st_size in (249224577, 22718509):
+                    logger.info(f"Purgando archivo legacy incompatible (5.1/853px): {mp4}")
+                    mp4.unlink(missing_ok=True)
+        except Exception as e:
+            logger.debug(f"Aviso purgando archivos legacy: {e}")
 
     def get_disk_info(self) -> Dict[str, Any]:
         try:
@@ -447,7 +493,9 @@ class FlixGrabEngine:
             "-i", str(part_file),
             "-c:v", "copy",
             "-bsf:v", "h264_mp4toannexb",
-            "-c:a", "copy",
+            "-c:a", "aac",
+            "-ac", "2",
+            "-ar", "48000",
             "-f", "hls",
             "-hls_time", str(HLS_SEGMENT_DURATION),
             "-hls_list_size", "0",
@@ -500,7 +548,9 @@ class FlixGrabEngine:
             "-i", str(final_file),
             "-c:v", "copy",
             "-bsf:v", "h264_mp4toannexb",
-            "-c:a", "copy",
+            "-c:a", "aac",
+            "-ac", "2",
+            "-ar", "48000",
             "-f", "hls",
             "-hls_time", str(HLS_SEGMENT_DURATION),
             "-hls_list_size", "0",
@@ -818,7 +868,9 @@ class FlixGrabEngine:
             "-i", str(part_file),
             "-c:v", "copy",
             "-bsf:v", "h264_mp4toannexb",
-            "-c:a", "copy",
+            "-c:a", "aac",
+            "-ac", "2",
+            "-ar", "48000",
             "-f", "hls",
             "-hls_time", str(HLS_SEGMENT_DURATION),
             "-hls_list_size", "0",

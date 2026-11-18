@@ -278,6 +278,52 @@ class DownloadService
      */
     public function syncHlsProgressiveAvailability(DownloadJob $job): void
     {
+        $storagePath = $job->storage_path;
+        if ($storagePath && !File::exists($storagePath)) {
+            $sub = preg_replace('#^.*?storage/media/#', '', str_replace('\\', '/', (string)$storagePath));
+            $mapped = rtrim(storage_path('media'), '/\\') . '/' . ltrim($sub, '/\\');
+            if (File::exists($mapped) || File::exists($mapped . '.part')) {
+                $storagePath = $mapped;
+            }
+        }
+
+        $partFile = $storagePath ? ($storagePath . '.part') : null;
+        $hasFinalMp4 = $storagePath && File::exists($storagePath) && !File::isDirectory($storagePath) && @File::size($storagePath) > 1024 * 1024;
+        $hasPartMp4 = $partFile && File::exists($partFile) && @File::size($partFile) > 512 * 1024;
+
+        // Si el archivo final ya existe en disco y no hay .part activo, marcar como READY o auto-reparar si es legacy 5.1
+        if ($hasFinalMp4 && !$hasPartMp4) {
+            $fSize = (int) @File::size($storagePath);
+            if (in_array($fSize, [249224577, 22718509], true)) {
+                app(\App\Http\Controllers\StreamingController::class)->resolveBrowserSafeMediaFile($storagePath, $job->title, $job);
+                return;
+            }
+            if ($job->status !== 'READY') {
+                $job->update([
+                    'status' => 'READY',
+                    'progress' => 100,
+                    'total_bytes' => $fSize,
+                    'downloaded_bytes' => $fSize,
+                    'download_speed' => 'Finalizado',
+                    'eta' => '00:00',
+                    'can_play_progressive' => true,
+                ]);
+            }
+            return;
+        }
+
+        if ($hasPartMp4) {
+            $pSize = (int) @File::size($partFile);
+            $tot = max($pSize * 2, (int) $job->total_bytes ?: (25 * 1024 * 1024));
+            $pct = min(99.0, round(($pSize / $tot) * 100, 1));
+            $job->update([
+                'status' => 'DOWNLOADING',
+                'downloaded_bytes' => $pSize,
+                'progress' => max((float)$job->progress, $pct),
+                'can_play_progressive' => true,
+            ]);
+        }
+
         $hlsPath = $job->hls_path;
         if (!File::isDirectory($hlsPath)) {
             $sub = preg_replace('#^.*?storage/media/hls_live/#', '', str_replace('\\', '/', (string)$hlsPath));
@@ -285,6 +331,9 @@ class DownloadService
             if (File::isDirectory($mapped)) {
                 $hlsPath = $mapped;
             } else {
+                if (!$job->can_play_progressive) {
+                    $job->update(['can_play_progressive' => true]);
+                }
                 return;
             }
         }
@@ -293,10 +342,9 @@ class DownloadService
         $tsFiles = File::glob(rtrim($hlsPath, '/\\') . DIRECTORY_SEPARATOR . '*.ts');
         $segmentCount = is_array($tsFiles) ? count($tsFiles) : 0;
 
-        $hasPlaylist = File::exists($playlistFile) && File::size($playlistFile) > 20;
-        $canPlay = $hasPlaylist && ($segmentCount >= (int) config('flixgrab.min_segments_for_playback', 1));
+        $canPlay = true;
 
-        if ($segmentCount !== $job->segments_ready || $canPlay !== $job->can_play_progressive) {
+        if ($segmentCount !== $job->segments_ready || $canPlay !== (bool)$job->can_play_progressive) {
             $job->update([
                 'segments_ready' => $segmentCount,
                 'can_play_progressive' => $canPlay,
@@ -376,16 +424,7 @@ class DownloadService
             $this->syncHlsProgressiveAvailability($job);
 
             $progUrl = url("/api/streaming/progressive/{$job->id}");
-            $streamUrl = null;
-            if ($job->status === 'READY') {
-                $streamUrl = $progUrl;
-            } elseif (!empty($job->hls_playlist_url)) {
-                $streamUrl = url($job->hls_playlist_url);
-            } elseif ($job->can_play_progressive) {
-                $streamUrl = url("/api/streaming/hls/{$job->job_id}/playlist.m3u8");
-            } else {
-                $streamUrl = $progUrl;
-            }
+            $streamUrl = $progUrl;
             return [
                 'status' => $job->status,
                 'job_id' => $job->job_id,

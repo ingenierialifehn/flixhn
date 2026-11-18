@@ -858,15 +858,20 @@ class MediaStreamController extends Controller
             ]);
         }
 
+        // Auto-reparar si apunta a una muestra antigua con audio 5.1 o ancho 853 impar
+        $safePath = app(StreamingController::class)->resolveBrowserSafeMediaFile($filePath);
+        if ($safePath && file_exists($safePath) && !is_dir($safePath)) {
+            $filePath = $safePath;
+        }
+
         if (!file_exists($filePath) || is_dir($filePath)) {
             return response()->json(['error' => 'Archivo físico no encontrado en el servidor.'], 404);
         }
 
         $extension = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
 
-        // 4. Si el archivo es .avi (que ningún navegador reproduce nativamente) y ffmpeg está disponible en el contenedor,
-        // haz streaming al vuelo con ffmpeg -i "$filePath" -c:v libx264 -preset ultrafast -c:a aac -f mp4 -movflags frag_keyframe+empty_moov+default_base_moof pipe:1
-        if ($extension === 'avi' && $this->isFfmpegAvailable()) {
+        // 4. Si el archivo es .avi o si se solicita ?transcode=1 (ej. MKV con audio AC3/5.1), transcodificar al vuelo a MP4 H264 + AAC Estéreo 2.0
+        if (($extension === 'avi' || $request->boolean('transcode')) && $this->isFfmpegAvailable()) {
             return $this->streamAviWithFfmpeg($request, $filePath);
         }
 
@@ -939,7 +944,7 @@ class MediaStreamController extends Controller
             }
 
             $escapedPath = escapeshellarg($filePath);
-            $cmd = "ffmpeg -hide_banner -loglevel error -i {$escapedPath} -c:v libx264 -preset ultrafast -c:a aac -f mp4 -movflags frag_keyframe+empty_moov+default_base_moof pipe:1";
+            $cmd = "ffmpeg -hide_banner -loglevel error -i {$escapedPath} -vf \"scale=trunc(iw/2)*2:trunc(ih/2)*2\" -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -ac 2 -ar 48000 -b:a 128k -f mp4 -movflags frag_keyframe+empty_moov+default_base_moof pipe:1";
 
             $descriptors = [
                 0 => ['pipe', 'r'],
