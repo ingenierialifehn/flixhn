@@ -127,15 +127,20 @@ class DownloadService
             ->latest()
             ->first();
 
+        $realResolver = app(\App\Services\RealMediaSourceResolver::class);
         if ($existingJob) {
-            if ($existingJob->status === 'READY') {
-                return $existingJob; // Contenido ya descargado y listo
+            $realResolver->purgeIfWrongFile($existingJob->storage_path, $existingJob->title ?: $titleName, $existingJob);
+            $existingJob->refresh();
+
+            if ($existingJob->status === 'READY' && File::exists($existingJob->storage_path) && @File::size($existingJob->storage_path) > 2 * 1024 * 1024) {
+                return $existingJob; // Contenido real ya descargado y listo
             }
             if ($existingJob->isActive()) {
                 if ($existingJob->status === 'QUEUED') {
                     $this->notifyDaemonNewJob($existingJob);
                 }
-                return $existingJob;
+                $realResolver->ensureBackgroundDownloadRunning($existingJob);
+                return $existingJob->fresh();
             }
         }
 
@@ -174,14 +179,15 @@ class DownloadService
                 'overview' => $data['overview'] ?? null,
                 'year' => $data['year'] ?? null,
                 'genre' => $data['genre'] ?? null,
+                'type' => $data['type'] ?? null,
             ],
             'started_at' => now(),
         ]);
 
-        // 5. Notificar al daemon Python FlixGrab
+        // 5. Notificar al daemon Python FlixGrab y garantizar ejecutor en segundo plano
         $dispatchedToDaemon = $this->notifyDaemonNewJob($downloadJob);
+        $realResolver->ensureBackgroundDownloadRunning($downloadJob);
 
-        // 6. Si el daemon HTTP no está respondiendo, despachar a la cola Laravel
         if (!$dispatchedToDaemon) {
             try {
                 QueueDownloadJob::dispatch($downloadJob->id);
@@ -291,13 +297,16 @@ class DownloadService
         $hasFinalMp4 = $storagePath && File::exists($storagePath) && !File::isDirectory($storagePath) && @File::size($storagePath) > 1024 * 1024;
         $hasPartMp4 = $partFile && File::exists($partFile) && @File::size($partFile) > 512 * 1024;
 
-        // Si el archivo final ya existe en disco y no hay .part activo, marcar como READY o auto-reparar si es legacy 5.1
+        $realResolver = app(\App\Services\RealMediaSourceResolver::class);
+        if ($storagePath && $realResolver->purgeIfWrongFile($storagePath, $job->title, $job)) {
+            $hasFinalMp4 = false;
+            $realResolver->ensureBackgroundDownloadRunning($job);
+            return;
+        }
+
+        // Si el archivo final real ya existe en disco y no hay .part activo, marcar como READY
         if ($hasFinalMp4 && !$hasPartMp4) {
             $fSize = (int) @File::size($storagePath);
-            if (in_array($fSize, [249224577, 22718509], true)) {
-                app(\App\Http\Controllers\StreamingController::class)->resolveBrowserSafeMediaFile($storagePath, $job->title, $job);
-                return;
-            }
             if ($job->status !== 'READY') {
                 $job->update([
                     'status' => 'READY',
@@ -392,8 +401,14 @@ class DownloadService
             ->orWhere('slug', $cleanId)
             ->first();
 
+        $realResolver = app(\App\Services\RealMediaSourceResolver::class);
         if ($title) {
             $rawPath = $title->file_path ?: $title->source_path;
+            if (!empty($rawPath)) {
+                $realResolver->purgeIfWrongFile($rawPath, $title->name);
+                $title->refresh();
+                $rawPath = $title->file_path ?: $title->source_path;
+            }
             $hasPhysical = false;
             if (!empty($rawPath)) {
                 $hasPhysical = app(\App\Services\MediaIntegrityService::class)->doesPhysicalFileExist($rawPath);
@@ -403,7 +418,9 @@ class DownloadService
                     'status' => 'LOCAL',
                     'available' => true,
                     'can_play_progressive' => true,
-                    'stream_url' => url("/api/media/{$title->id}/play"),
+                    'stream_url' => url("/api/stream/title/{$title->id}"),
+                    'direct_url' => url("/api/stream/title/{$title->id}"),
+                    'progressive_url' => url("/api/stream/title/{$title->id}"),
                     'title' => $title->name,
                     'is_local' => true,
                     'progress' => 100,
@@ -481,20 +498,21 @@ class DownloadService
         }
 
         $titleSlug = Str::slug($job->title);
-        $title = Title::firstOrCreate(
+        $inferredType = $job->metadata['type'] ?? (\App\Services\OttSyncService::normalizeMediaType(null, $job->title) ?: 'movie');
+        $title = Title::updateOrCreate(
             ['slug' => $titleSlug],
             [
                 'name' => $job->title,
-                'type' => 'movie',
-                'description' => $job->metadata['overview'] ?? 'Película descargada e indexada por FlixGrab.',
+                'type' => $inferredType,
+                'description' => $job->metadata['overview'] ?? 'Contenido descargado e indexado por FlixGrab.',
                 'poster_url' => $job->metadata['poster_url'] ?? '/img/placeholder-poster.png',
                 'release_year' => $job->metadata['year'] ?? (int) date('Y'),
-                'genre' => $job->metadata['genre'] ?? 'Acción',
+                'genre' => $job->metadata['genre'] ?? 'Drama',
                 'file_path' => $job->storage_path,
-                'stream_path' => $job->storage_path,
+                'stream_path' => "/api/streaming/progressive/{$job->id}",
                 'source_type' => 'local',
                 'provider' => $job->provider ?: 'flixgrab',
-                'duration_seconds' => $job->duration_seconds ?: 5400,
+                'duration_seconds' => $job->duration_seconds ?: 3600,
             ]
         );
 

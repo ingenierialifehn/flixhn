@@ -8,6 +8,7 @@ use App\Models\MediaItem;
 use App\Models\Title;
 use App\Services\DownloadService;
 use App\Services\MediaIntegrityService;
+use App\Services\RealMediaSourceResolver;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\File;
@@ -19,22 +20,16 @@ class StreamingController extends Controller
 {
     protected DownloadService $downloadService;
     protected MediaIntegrityService $integrityService;
-
-    /**
-     * Tamaños en bytes de archivos de prueba antiguos con audio 5.1 incompatible (W3C / Bower)
-     * que deben ser reemplazados automáticamente por streams 1080p/720p estéreo compatibles.
-     */
-    protected array $legacyIncompatibleSizes = [
-        249224577, // W3C Big Buck Bunny 853x480 (ancho impar + audio 5.1 en contenedor 2ch)
-        22718509,  // Bower Big Buck Bunny (audio 5.1 en contenedor 2ch)
-    ];
+    protected RealMediaSourceResolver $sourceResolver;
 
     public function __construct(
         DownloadService $downloadService,
-        MediaIntegrityService $integrityService
+        MediaIntegrityService $integrityService,
+        RealMediaSourceResolver $sourceResolver
     ) {
         $this->downloadService = $downloadService;
         $this->integrityService = $integrityService;
+        $this->sourceResolver = $sourceResolver;
     }
 
     /**
@@ -42,14 +37,14 @@ class StreamingController extends Controller
      */
     public function play(Request $request, $id)
     {
-        $cleanId = trim((string)$id);
+        $cleanId = trim((string) $id);
 
         // 1. Verificar si es un Título local existente
         $title = is_numeric($cleanId) ? Title::find($cleanId) : Title::where('slug', $cleanId)->first();
         if ($title) {
             $rawPath = $title->file_path ?: $title->source_path;
             $safePath = $this->resolveBrowserSafeMediaFile($rawPath, $title->name);
-            if ($safePath && File::exists($safePath) && File::size($safePath) > 1024) {
+            if ($safePath && File::exists($safePath) && File::size($safePath) > 2 * 1024 * 1024) {
                 return response()->json([
                     'success' => true,
                     'status' => 'LOCAL',
@@ -67,7 +62,9 @@ class StreamingController extends Controller
         $episode = is_numeric($cleanId) ? Episode::find($cleanId) : null;
         if ($episode) {
             $epPath = $episode->file_path ?: $episode->stream_path;
-            if ($epPath && File::exists($epPath) && File::size($epPath) > 1024) {
+            $parentTitle = Title::find($episode->title_id);
+            $safeEpPath = $this->resolveBrowserSafeMediaFile($epPath, $parentTitle?->name ?: $episode->title);
+            if ($safeEpPath && File::exists($safeEpPath) && File::size($safeEpPath) > 2 * 1024 * 1024) {
                 return response()->json([
                     'success' => true,
                     'status' => 'LOCAL',
@@ -82,14 +79,15 @@ class StreamingController extends Controller
         }
 
         // 3. Verificar si existe un DownloadJob (Activo o Completado)
-        $job = DownloadJob::where('id', is_numeric($cleanId) ? (int)$cleanId : -1)
+        $job = DownloadJob::where('id', is_numeric($cleanId) ? (int) $cleanId : -1)
             ->orWhere('job_id', $cleanId)
             ->orWhere('content_id', $cleanId)
-            ->when($title, fn($q) => $q->orWhere('title_id', $title->id))
+            ->when($title, fn($q) => $q->orWhere('title_id', $title->id)->orWhere('title', $title->name))
             ->latest()
             ->first();
 
         if ($job) {
+            $this->sourceResolver->purgeIfWrongFile($job->storage_path, $job->title, $job);
             $this->downloadService->syncHlsProgressiveAvailability($job);
             $job->refresh();
 
@@ -115,41 +113,27 @@ class StreamingController extends Controller
                 ]);
             }
 
-            if ($job->can_play_progressive) {
-                return response()->json([
-                    'success' => true,
-                    'status' => 'DOWNLOADING_PROGRESSIVE_READY',
-                    'title' => $job->title,
-                    'job_id' => $job->job_id,
-                    'download_job_id' => $job->id,
-                    'mode' => 'direct',
-                    'stream_url' => $progressiveUrl,
-                    'direct_url' => $progressiveUrl,
-                    'progressive_url' => $progressiveUrl,
-                    'transcode_url' => $transcodeUrl,
-                    'hls_playlist_url' => $playlistUrl,
-                    'is_progressive' => true,
-                    'progress' => (float) $job->progress,
-                    'download_speed' => $job->download_speed,
-                    'segments_ready' => $job->segments_ready,
-                    'eta' => $job->eta,
-                ]);
-            }
+            $this->sourceResolver->ensureBackgroundDownloadRunning($job);
 
             return response()->json([
-                'success' => false,
-                'status' => $job->status,
+                'success' => true,
+                'status' => 'DOWNLOADING_PROGRESSIVE_READY',
                 'title' => $job->title,
                 'job_id' => $job->job_id,
                 'download_job_id' => $job->id,
-                'message' => 'Descarga en proceso. Preparando reproducción progresiva...',
-                'can_play_progressive' => false,
+                'mode' => 'direct',
+                'stream_url' => $progressiveUrl,
+                'direct_url' => $progressiveUrl,
+                'progressive_url' => $progressiveUrl,
+                'transcode_url' => $transcodeUrl,
+                'hls_playlist_url' => $playlistUrl,
+                'is_progressive' => true,
+                'can_play_progressive' => true,
                 'progress' => (float) $job->progress,
                 'download_speed' => $job->download_speed,
                 'segments_ready' => $job->segments_ready,
-                'required_segments' => 1,
                 'eta' => $job->eta,
-            ], 202);
+            ]);
         }
 
         return response()->json([
@@ -174,7 +158,7 @@ class StreamingController extends Controller
 
         if (!File::exists($targetFile)) {
             $job = DownloadJob::where('job_id', $jobId)
-                ->orWhere('id', is_numeric($jobId) ? (int)$jobId : -1)
+                ->orWhere('id', is_numeric($jobId) ? (int) $jobId : -1)
                 ->orWhere('hls_path', 'LIKE', "%{$jobId}%")
                 ->orWhere('hls_playlist_url', 'LIKE', "%{$jobId}%")
                 ->first();
@@ -222,8 +206,9 @@ class StreamingController extends Controller
 
     /**
      * GET /api/streaming/progressive/{jobId}
-     * Streaming HTTP 206 Partial Content para archivos MP4 progresivos o completados,
-     * con auto-reparación de archivos legacy 5.1 y soporte de transcodificación en vivo (?transcode=1).
+     * Si el archivo real ya terminó de descargarse, lo sirve por HTTP 206 Partial Content.
+     * Mientras está en descarga (0% - 99%), garantiza la descarga en segundo plano y transmite
+     * en vivo el stream real del título solicitado mediante FFmpeg.
      */
     public function serveProgressive(Request $request, $jobId)
     {
@@ -243,9 +228,9 @@ class StreamingController extends Controller
             ]);
         }
 
-        $cleanJobId = trim((string)$jobId);
+        $cleanJobId = trim((string) $jobId);
         $job = is_numeric($cleanJobId)
-            ? DownloadJob::find((int)$cleanJobId)
+            ? DownloadJob::find((int) $cleanJobId)
             : DownloadJob::where('job_id', $cleanJobId)
                 ->orWhere('content_id', $cleanJobId)
                 ->orWhere('storage_path', 'LIKE', "%{$cleanJobId}%")
@@ -259,24 +244,11 @@ class StreamingController extends Controller
             $mapped = rtrim(storage_path('media'), '/\\') . '/' . ltrim($sub, '/\\');
             if (File::exists($mapped)) {
                 $filePath = $mapped;
-            } elseif (File::exists($mapped . '.part') && File::size($mapped . '.part') > 512 * 1024) {
-                $filePath = $mapped . '.part';
-            } elseif (File::exists($filePath . '.part') && File::size($filePath . '.part') > 512 * 1024) {
-                $filePath = $filePath . '.part';
             }
         }
 
-        // Auto-reparación si el archivo pertenece a una muestra antigua con audio 5.1 o ancho 853 impar
+        // Purgar cualquier reemplazo incorrecto anterior (como 'Hasta que la boda nos separe' en 'plata nos separe')
         $filePath = $this->resolveBrowserSafeMediaFile($filePath, $job?->title, $job);
-
-        if (!$filePath || !File::exists($filePath)) {
-            return response()->json(['error' => 'Archivo de video preparando búfer en disco.'], 404);
-        }
-
-        $ext = strtolower(pathinfo(preg_replace('/\.part$/i', '', $filePath), PATHINFO_EXTENSION));
-        if ($request->boolean('transcode') || in_array($ext, ['avi', 'mkv'], true)) {
-            return $this->streamTranscodedMp4($request, $filePath);
-        }
 
         $headers = [
             'Content-Type' => 'video/mp4',
@@ -288,107 +260,55 @@ class StreamingController extends Controller
             'Cache-Control' => 'no-cache, private',
         ];
 
-        return response()->file($filePath, $headers);
+        // 1. Si el archivo real del título ya está completamente descargado en disco, servirlo con soporte HTTP 206 Range
+        if ($filePath && File::exists($filePath) && !File::isDirectory($filePath) && @File::size($filePath) > 2 * 1024 * 1024) {
+            $ext = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
+            if ($request->boolean('transcode') || in_array($ext, ['avi', 'mkv'], true)) {
+                return $this->streamTranscodedMp4($request, $filePath);
+            }
+            return response()->file($filePath, $headers);
+        }
+
+        // 2. Si el archivo aún se está descargando o preparando, iniciar el descargador en segundo plano y transmitir el video REAL en vivo
+        if ($job) {
+            $this->sourceResolver->ensureBackgroundDownloadRunning($job);
+            $mediaType = $job->metadata['type'] ?? null;
+            $resolved = $this->sourceResolver->resolveRealSource($job->title, $mediaType, $job->source_url);
+
+            if ($resolved) {
+                if (($resolved['mode'] ?? '') === 'local_file' && !empty($resolved['file_path']) && File::exists($resolved['file_path'])) {
+                    return response()->file($resolved['file_path'], $headers);
+                }
+                return $this->sourceResolver->streamLiveToBrowser($request, $resolved);
+            }
+        }
+
+        return response()->json(['error' => 'Preparando transmisión del contenido real...'], 404);
     }
 
     /**
-     * Verifica que el archivo físico sea 100% compatible con decodificadores de hardware Chrome/Brave
-     * (dimensiones pares 16:9 y audio AAC estéreo de 2 canales). Si detecta uno de los archivos de prueba
-     * antiguos con audio 5.1 / ancho 853px, lo reemplaza transparentemente por un MP4 1080p/720p estéreo real.
+     * Verifica que el archivo físico pertenezca realmente al título solicitado y no sea uno de los
+     * reemplazos o muestras antiguas incompatibles. NUNCA sustituye por una película distinta.
      */
     public function resolveBrowserSafeMediaFile(?string $filePath, ?string $titleName = null, ?DownloadJob $job = null): ?string
     {
-        $exists = $filePath && File::exists($filePath) && !File::isDirectory($filePath);
-        $size = $exists ? (int) @File::size($filePath) : 0;
+        if (empty($filePath)) {
+            return null;
+        }
 
-        $isLegacyBroken = in_array($size, $this->legacyIncompatibleSizes, true);
+        if ($this->sourceResolver->purgeIfWrongFile($filePath, $titleName, $job)) {
+            return null;
+        }
 
-        if ($exists && $size > 512 * 1024 && !$isLegacyBroken) {
+        if (File::exists($filePath) && !File::isDirectory($filePath) && @File::size($filePath) > 512 * 1024) {
             return $filePath;
         }
 
-        // Buscar reemplazo 1080p/720p H.264 + AAC 2ch Estéreo con Faststart en la biblioteca local del servidor
-        $lowerTitle = mb_strtolower((string) ($titleName ?: basename((string) $filePath)));
-
-        $preferredCandidates = [];
-        if (str_contains($lowerTitle, 'stranger')) {
-            $preferredCandidates[] = '/mnt/media_library/Disk4/Series 2TB-C/PQRS/Stranger Things/Temporada 1/st1x2.mp4';
-            $preferredCandidates[] = '/home/server01/Disk4/Series 2TB-C/PQRS/Stranger Things/Temporada 1/st1x2.mp4';
-        }
-        if (str_contains($lowerTitle, 'hasta') || str_contains($lowerTitle, 'boda') || str_contains($lowerTitle, 'plata') || str_contains($lowerTitle, 'separe')) {
-            $preferredCandidates[] = '/mnt/media_library/Disk2/Peliculas 1TB-A/Hasta.que.la.boda.nos.separe.2018.1080p-lat-cinecalidad.to.mp4';
-            $preferredCandidates[] = '/home/server01/Disk2/Peliculas 1TB-A/Hasta.que.la.boda.nos.separe.2018.1080p-lat-cinecalidad.to.mp4';
-        }
-
-        $verifiedPool = [
-            '/mnt/media_library/Disk2/Peliculas 1TB-A/Hasta.que.la.boda.nos.separe.2018.1080p-lat-cinecalidad.to.mp4',
-            '/mnt/media_library/Disk2/Peliculas 1TB-B/Ignacio de Loyola.mp4',
-            '/mnt/media_library/Disk2/Peliculas 1TB-B/Jurassic_World__El_reino_caído_HD_(720p)_COR__412824.mp4',
-            '/mnt/media_library/Disk2/Peliculas 1TB-B/Iboy.2017.1080p-dual-lat.mp4',
-            '/mnt/media_library/Disk4/Series 2TB-C/PQRS/Stranger Things/Temporada 1/st1x2.mp4',
-            '/home/server01/Disk2/Peliculas 1TB-A/Hasta.que.la.boda.nos.separe.2018.1080p-lat-cinecalidad.to.mp4',
-            '/home/server01/Disk2/Peliculas 1TB-B/Ignacio de Loyola.mp4',
-            '/home/server01/Disk4/Series 2TB-C/PQRS/Stranger Things/Temporada 1/st1x2.mp4',
-        ];
-
-        $idx = abs(crc32($lowerTitle ?: 'flixhn')) % 5;
-        $orderedPool = array_merge(
-            $preferredCandidates,
-            array_slice($verifiedPool, $idx),
-            array_slice($verifiedPool, 0, $idx)
-        );
-
-        $replacement = null;
-        foreach ($orderedPool as $cand) {
-            if (File::exists($cand) && !File::isDirectory($cand) && @File::size($cand) > 10 * 1024 * 1024) {
-                $replacement = $cand;
-                break;
-            }
-        }
-
-        if ($replacement) {
-            // Si había un archivo corrupto en storage/media, vincularlo o reemplazarlo
-            if ($filePath && ($isLegacyBroken || !$exists)) {
-                try {
-                    $dir = dirname($filePath);
-                    if (!File::isDirectory($dir)) {
-                        File::makeDirectory($dir, 0777, true, true);
-                    }
-                    if (File::exists($filePath)) {
-                        @unlink($filePath);
-                    }
-                    @symlink($replacement, $filePath) || @link($replacement, $filePath);
-                } catch (\Throwable $e) {
-                    // Si symlink/link entre distintos puntos de montaje no está permitido, servir directamente $replacement
-                }
-            }
-
-            if ($job && ($isLegacyBroken || $job->status !== 'READY')) {
-                try {
-                    $repSize = (int) @File::size($replacement);
-                    $job->update([
-                        'status' => 'READY',
-                        'progress' => 100,
-                        'total_bytes' => $repSize,
-                        'downloaded_bytes' => $repSize,
-                        'download_speed' => 'Finalizado',
-                        'eta' => '00:00',
-                        'can_play_progressive' => true,
-                    ]);
-                } catch (\Throwable $e) {}
-            }
-
-            return (File::exists($filePath) && !in_array((int)@File::size($filePath), $this->legacyIncompatibleSizes, true))
-                ? $filePath
-                : $replacement;
-        }
-
-        return $exists ? $filePath : null;
+        return null;
     }
 
     /**
      * Transcodificación universal al vuelo con FFmpeg hacia MP4 fragmentado (H.264 par + AAC Estéreo 2.0).
-     * Garantiza reproducción en el 100% de los navegadores incluso si el archivo fuente tiene audio 5.1/AC3 o dimensiones impares.
      */
     public function streamTranscodedMp4(Request $request, string $filePath)
     {

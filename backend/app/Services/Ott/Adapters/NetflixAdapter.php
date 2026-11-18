@@ -107,8 +107,13 @@ class NetflixAdapter implements OttProviderInterface
         $appScheme = "netflix://title/{$externalId}";
         $webUrl = "https://www.netflix.com/title/{$externalId}";
 
-        // 1. Si el archivo físico ya existe en disco local, reproducir directamente
-        if ($titleRecord && !empty($titleRecord->file_path) && file_exists($titleRecord->file_path) && filesize($titleRecord->file_path) > 1048576) {
+        if ($titleRecord && !empty($titleRecord->file_path)) {
+            app(\App\Services\RealMediaSourceResolver::class)->purgeIfWrongFile($titleRecord->file_path, $titleName);
+            $titleRecord->refresh();
+        }
+
+        // 1. Si el archivo físico real ya existe en disco local, reproducir directamente
+        if ($titleRecord && !empty($titleRecord->file_path) && file_exists($titleRecord->file_path) && filesize($titleRecord->file_path) > 2097152) {
             return [
                 'success' => true,
                 'content_id' => $contentId,
@@ -118,7 +123,7 @@ class NetflixAdapter implements OttProviderInterface
                 'playback_type' => 'LOCAL-HLS',
                 'direct_playback' => true,
                 'requires_external_app' => false,
-                'stream_url' => $titleRecord->stream_path ?: "/api/stream/title/{$titleRecord->id}",
+                'stream_url' => url("/api/stream/title/{$titleRecord->id}"),
             ];
         }
 
@@ -131,6 +136,7 @@ class NetflixAdapter implements OttProviderInterface
                 'provider' => 'netflix',
                 'source_url' => $webUrl,
                 'priority' => 1,
+                'type' => $context['type'] ?? $titleRecord?->type ?? null,
             ]);
 
             $directProgUrl = url("/api/streaming/progressive/{$job->id}");

@@ -144,6 +144,7 @@ class GenericPartnerOttAdapter implements OttProviderInterface
                 'provider' => $this->config->slug,
                 'source_url' => $webUrl,
                 'priority' => 1,
+                'type' => $context['type'] ?? $titleRecord?->type ?? null,
             ]);
 
             $directProgUrl = url("/api/streaming/progressive/{$job->id}");

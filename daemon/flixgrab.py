@@ -140,56 +140,223 @@ CHUNK_SIZE = 128 * 1024  # 128 KB
 EMBY_LOCAL_URL = os.getenv("EMBY_SERVER_URL", "http://127.0.0.1:6789")
 EMBY_LOCAL_KEY = os.getenv("EMBY_API_KEY", "ecb7a1c7421f4932a01cb8ab7a1b834c")
 
-# Candidatos de alta velocidad 1080p/720p H.264 + AAC Estéreo 2.0 con Faststart (moov al inicio)
-HIGH_SPEED_MEDIA_CANDIDATES = [
-    f"{EMBY_LOCAL_URL}/emby/Videos/42221/stream.mp4?static=true&api_key={EMBY_LOCAL_KEY}",
-    f"{EMBY_LOCAL_URL}/emby/Videos/8823/stream.mp4?static=true&api_key={EMBY_LOCAL_KEY}",
-    f"{EMBY_LOCAL_URL}/emby/Videos/8872/stream.mp4?static=true&api_key={EMBY_LOCAL_KEY}",
-    f"{EMBY_LOCAL_URL}/emby/Videos/13801/stream.mp4?static=true&api_key={EMBY_LOCAL_KEY}",
-    "https://vjs.zencdn.net/v/oceans.mp4",
-]
+import re
+import unicodedata
 
-def resolve_playable_source_url(task: 'DownloadTask') -> str:
-    url = (task.source_url or '').strip()
-    is_ott_web = any(p in url.lower() for p in ['netflix.com', 'disneyplus.com', 'max.com', 'hbomax.com', 'amazon.com', 'primevideo.com', 'apple.com'])
-    is_direct = any(url.lower().endswith(ext) for ext in ['.mp4', '.mkv', '.webm', '.ts', '.m4v', '.mov', '.avi']) or '.m3u8' in url.lower()
-    if is_ott_web or not is_direct or not url:
-        # 1. Buscar coincidencia directa en servidor multimedia local Emby (1080p/720p H.264 + AAC 2.0)
+UA_VISIONOS = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15"
+UA_WEB = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
+WRONG_FILE_RULES = {
+    249224577: "bunny",
+    22718509: "bunny",
+    1483014457: "boda",
+    1039747198: "ignacio",
+    922792072: "jurassic",
+    802892266: "iboy",
+    158268029: "stranger",
+}
+
+def strip_accents(s: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFD", s or "") if unicodedata.category(c) != "Mn")
+
+def normalize_exact(s: str) -> str:
+    clean = re.sub(r"\b(19|20)\d{2}\b|\(.*?\)|\[.*?\]", "", s or "")
+    return re.sub(r"[^a-z0-9]+", "", strip_accents(clean.lower()))
+
+def significant_words(s: str) -> List[str]:
+    stop = {"el", "la", "los", "las", "de", "del", "en", "y", "a", "que", "nos", "un", "una", "por", "con", "para", "se", "al", "lo", "como", "mas", "pero", "sus", "le", "ya", "o", "este", "si", "porque", "esta", "entre", "cuando", "muy", "sin", "sobre", "tambien", "me", "hasta", "hay", "donde", "quien", "desde", "todo"}
+    words = re.findall(r"[a-z0-9]+", strip_accents((s or "").lower()))
+    sig = [w for w in words if len(w) >= 3 and w not in stop]
+    return sig if sig else words
+
+def title_matches_query(cand_title: str, target_title: str) -> bool:
+    sig = significant_words(target_title)
+    if not sig:
+        return True
+    cand_norm = strip_accents((cand_title or "").lower())
+    matched = sum(1 for w in sig if w in cand_norm)
+    req = len(sig) if len(sig) <= 3 else max(2, len(sig) - 1)
+    return matched >= req
+
+def parse_duration_text(txt: str) -> int:
+    if not txt:
+        return 0
+    parts = [int(p) for p in txt.strip().split(":") if p.isdigit()]
+    if len(parts) == 3:
+        return parts[0] * 3600 + parts[1] * 60 + parts[2]
+    if len(parts) == 2:
+        return parts[0] * 60 + parts[1]
+    return parts[0] if parts else 0
+
+def extract_visionos_hls_for_video_id(video_id: str) -> Optional[Dict[str, Any]]:
+    try:
+        req = urllib.request.Request(f"https://www.youtube.com/embed/{video_id}", headers={"User-Agent": UA_VISIONOS})
+        html = urllib.request.urlopen(req, timeout=8).read().decode("utf-8", errors="ignore")
+        m = re.search(r'"VISITOR_DATA":"([^"]+)"', html)
+        vd = m.group(1) if m else ""
+
+        c = {
+            "clientName": "VISIONOS",
+            "clientVersion": "1.02",
+            "deviceMake": "Apple",
+            "deviceModel": "RealityDevice17,1",
+            "userAgent": UA_VISIONOS,
+            "osName": "visionOS",
+            "osVersion": "26.5.23O471",
+            "visitorData": vd,
+            "hl": "es",
+            "gl": "HN"
+        }
+        payload = json.dumps({"videoId": video_id, "context": {"client": c}, "contentCheckOk": True, "racyCheckOk": True}).encode("utf-8")
+        preq = urllib.request.Request(
+            "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+            data=payload,
+            headers={"Content-Type": "application/json", "User-Agent": UA_VISIONOS, "X-Goog-Visitor-Id": vd, "X-Youtube-Client-Name": "101", "X-Youtube-Client-Version": "1.02"}
+        )
+        resp = json.loads(urllib.request.urlopen(preq, timeout=8).read().decode("utf-8"))
+        if resp.get("playabilityStatus", {}).get("status") != "OK":
+            return None
+        sd = resp.get("streamingData", {})
+        hls_url = sd.get("hlsManifestUrl")
+        if not hls_url:
+            return None
+
+        af = sd.get("adaptiveFormats", [])
+        v_len = next((int(f.get("contentLength", 0)) for f in af if f.get("itag") in (136, 137, 135) and f.get("contentLength")), 120 * 1024 * 1024)
+        a_len = next((int(f.get("contentLength", 0)) for f in af if f.get("itag") == 140 and f.get("contentLength")), 20 * 1024 * 1024)
+
+        m3u8 = urllib.request.urlopen(urllib.request.Request(hls_url, headers={"User-Agent": UA_VISIONOS}), timeout=8).read().decode("utf-8")
+        lines = m3u8.splitlines()
+
+        audio_candidates = []
+        video_by_itag = {}
+        for l in lines:
+            l = l.strip()
+            if l.startswith("#EXT-X-MEDIA:") and "TYPE=AUDIO" in l:
+                um = re.search(r'URI="([^"]+)"', l)
+                if um:
+                    score = 0
+                    if 'GROUP-ID="234"' in l: score += 10
+                    if 'LANGUAGE="es' in l or 'original' in l.lower(): score += 25
+                    if 'dubbed-auto' in l.lower(): score -= 20
+                    if 'DEFAULT=YES' in l: score += 5
+                    audio_candidates.append((score, um.group(1)))
+            elif l.startswith("http"):
+                im = re.search(r"/itag/(\d+)/", l)
+                if im:
+                    video_by_itag[int(im.group(1))] = l
+
+        audio_candidates.sort(key=lambda x: x[0], reverse=True)
+        audio_hls = audio_candidates[0][1] if audio_candidates else None
+        video_hls = next((video_by_itag[i] for i in (232, 270, 231, 230, 229) if i in video_by_itag), None)
+        if not video_hls or not audio_hls:
+            return None
+
+        return {
+            "mode": "hls_dual",
+            "video_id": video_id,
+            "matched_title": resp.get("videoDetails", {}).get("title") or video_id,
+            "duration_seconds": int(resp.get("videoDetails", {}).get("lengthSeconds") or 1800),
+            "total_bytes": v_len + a_len,
+            "video_url": video_hls,
+            "audio_url": audio_hls,
+            "user_agent": UA_VISIONOS,
+        }
+    except Exception as e:
+        logger.debug(f"Aviso extrayendo VISIONOS HLS para {video_id}: {e}")
+        return None
+
+def resolve_real_source_for_task(task: 'DownloadTask') -> Optional[Dict[str, Any]]:
+    title_name = (task.title or "").strip()
+    norm_target = normalize_exact(title_name)
+
+    # 1. Coincidencia EXACTA en Emby local
+    if norm_target:
         try:
-            q = urllib.parse.quote((task.title or '').split(':')[0].strip())
-            if q:
-                search_url = f"{EMBY_LOCAL_URL}/emby/Items?SearchTerm={q}&IncludeItemTypes=Movie,Episode&Recursive=true&Limit=5&Fields=MediaSources&api_key={EMBY_LOCAL_KEY}"
-                req = urllib.request.Request(search_url, headers={"User-Agent": "FlixGrab/2.0"})
-                with urllib.request.urlopen(req, timeout=3) as resp:
-                    data = json.loads(resp.read().decode('utf-8'))
-                    for item in data.get("Items", []):
-                        ms = (item.get("MediaSources") or [{}])[0]
-                        if ms.get("Container") == "mp4":
-                            item_id = item.get("Id")
-                            if item_id:
-                                matched_url = f"{EMBY_LOCAL_URL}/emby/Videos/{item_id}/stream.mp4?static=true&api_key={EMBY_LOCAL_KEY}"
-                                logger.info(f"Coincidencia local HD encontrada para '{task.title}': {matched_url}")
-                                return matched_url
+            q = urllib.parse.quote(title_name)
+            search_url = f"{EMBY_LOCAL_URL}/emby/Items?SearchTerm={q}&IncludeItemTypes=Movie,Series&Recursive=true&Limit=10&Fields=MediaSources,Path&api_key={EMBY_LOCAL_KEY}"
+            req = urllib.request.Request(search_url, headers={"User-Agent": "FlixGrab/3.0"})
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                for item in data.get("Items", []):
+                    if normalize_exact(item.get("Name", "")) != norm_target:
+                        continue
+                    item_id = item.get("Id")
+                    if item.get("Type") == "Series" and item_id:
+                        ep_url = f"{EMBY_LOCAL_URL}/emby/Shows/{item_id}/Episodes?Limit=1&Fields=MediaSources,Path&api_key={EMBY_LOCAL_KEY}"
+                        with urllib.request.urlopen(urllib.request.Request(ep_url, headers={"User-Agent": "FlixGrab/3.0"}), timeout=4) as er:
+                            eps = json.loads(er.read().decode("utf-8")).get("Items", [])
+                            if eps:
+                                ep_id = eps[0].get("Id")
+                                return {
+                                    "mode": "single_url",
+                                    "video_url": f"{EMBY_LOCAL_URL}/emby/Videos/{ep_id}/stream.mp4?static=true&api_key={EMBY_LOCAL_KEY}",
+                                    "audio_url": None,
+                                    "total_bytes": int((eps[0].get("MediaSources") or [{}])[0].get("Size") or 500 * 1024 * 1024),
+                                    "user_agent": "FlixGrab/3.0",
+                                }
+                    elif item_id:
+                        return {
+                            "mode": "single_url",
+                            "video_url": f"{EMBY_LOCAL_URL}/emby/Videos/{item_id}/stream.mp4?static=true&api_key={EMBY_LOCAL_KEY}",
+                            "audio_url": None,
+                            "total_bytes": int((item.get("MediaSources") or [{}])[0].get("Size") or 1200 * 1024 * 1024),
+                            "user_agent": "FlixGrab/3.0",
+                        }
         except Exception:
             pass
 
-        # 2. Seleccionar stream 1080p/720p Estéreo Faststart verificado
-        import zlib
-        idx = abs(zlib.crc32((task.title or task.content_id).encode('utf-8'))) % (len(HIGH_SPEED_MEDIA_CANDIDATES) - 1)
-        chosen = HIGH_SPEED_MEDIA_CANDIDATES[idx]
+    # 2. Búsqueda y extracción del contenido REAL en YouTube VISIONOS HLS
+    queries = [
+        f"{title_name} capitulo 1 completo español",
+        f"{title_name} completo español",
+        f"{title_name} pelicula completa español latino",
+    ]
+    candidates = []
+    seen = set()
+    for q in queries:
         try:
-            test_req = urllib.request.Request(chosen, headers={"Range": "bytes=0-64", "User-Agent": "FlixGrab/2.0"})
-            with urllib.request.urlopen(test_req, timeout=3) as r:
-                if r.getcode() in (200, 206):
-                    logger.info(f"Fuente OTT web [{url}] para '{task.title}'. Empleando transporte HD Faststart: {chosen}")
-                    return chosen
+            s_url = "https://www.youtube.com/results?search_query=" + urllib.parse.quote(q)
+            s_req = urllib.request.Request(s_url, headers={"User-Agent": UA_WEB, "Accept-Language": "es-419,es;q=0.9"})
+            html = urllib.request.urlopen(s_req, timeout=8).read().decode("utf-8", errors="ignore")
+            m = re.search(r"var ytInitialData = (\{.*?\});</script>", html, re.S)
+            if not m:
+                continue
+            data = json.loads(m.group(1))
+            sections = data["contents"]["twoColumnSearchResultsRenderer"]["primaryContents"]["sectionListRenderer"]["contents"]
+            for sec in sections:
+                for item in sec.get("itemSectionRenderer", {}).get("contents", []):
+                    v = item.get("videoRenderer")
+                    if not v:
+                        continue
+                    vid = v.get("videoId")
+                    if not vid or vid in seen:
+                        continue
+                    vt = "".join(r.get("text", "") for r in v.get("title", {}).get("runs", []))
+                    dur_sec = parse_duration_text(v.get("lengthText", {}).get("simpleText", ""))
+                    if dur_sec < 120 or not title_matches_query(vt, title_name):
+                        continue
+                    seen.add(vid)
+                    score = (100 if dur_sec >= 900 else 40)
+                    lvt = strip_accents(vt.lower())
+                    if re.search(r"\b(capitulo\s*0?1|episodio\s*0?1|cap\s*0?1)\b", lvt):
+                        score += 50
+                    if "completo" in lvt or "completa" in lvt:
+                        score += 30
+                    candidates.append((score, vid, vt))
+            if len(candidates) >= 3:
+                break
         except Exception:
-            pass
+            continue
 
-        fallback = "https://vjs.zencdn.net/v/oceans.mp4"
-        logger.info(f"Empleando transporte CDN Faststart de respaldo para '{task.title}': {fallback}")
-        return fallback
-    return url
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    for _, vid, vt in candidates[:5]:
+        extracted = extract_visionos_hls_for_video_id(vid)
+        if extracted:
+            logger.info(f"Fuente real verificada para '{title_name}': '{extracted['matched_title']}' ({vid})")
+            return extracted
+
+    return None
 
 MIN_SEGMENTS_FOR_PLAYBACK = int(os.getenv("FLIXGRAB_MIN_SEGMENTS_PLAY", "1"))
 HLS_SEGMENT_DURATION = int(os.getenv("FLIXGRAB_HLS_SEGMENT_DURATION", "4"))
@@ -335,12 +502,24 @@ class FlixGrabEngine:
         self._purge_legacy_incompatible_files()
 
     def _purge_legacy_incompatible_files(self):
-        """Elimina archivos de prueba antiguos con audio 5.1 o ancho 853 impar para que se regeneren en 1080p Estéreo."""
+        """Elimina archivos de prueba antiguos o reemplazos incorrectos para que se descargue el título real."""
         try:
             for mp4 in MEDIA_DIR.rglob("*.mp4"):
-                if mp4.is_file() and mp4.stat().st_size in (249224577, 22718509):
-                    logger.info(f"Purgando archivo legacy incompatible (5.1/853px): {mp4}")
-                    mp4.unlink(missing_ok=True)
+                if mp4.is_symlink():
+                    try:
+                        target_name = os.path.basename(os.readlink(mp4))
+                        if not title_matches_query(target_name, mp4.stem.replace("-", " ")):
+                            logger.info(f"Purgando symlink incorrecto: {mp4} -> {target_name}")
+                            mp4.unlink()
+                            continue
+                    except Exception:
+                        pass
+                if mp4.is_file():
+                    sz = mp4.stat().st_size
+                    req_kw = WRONG_FILE_RULES.get(sz)
+                    if req_kw and req_kw not in strip_accents(mp4.stem.lower()):
+                        logger.info(f"Purgando archivo incorrecto/legacy ({sz} bytes): {mp4}")
+                        mp4.unlink()
         except Exception as e:
             logger.debug(f"Aviso purgando archivos legacy: {e}")
 
@@ -685,11 +864,8 @@ class FlixGrabEngine:
                 hls_task.cancel()
 
     async def download_file_stream(self, task: DownloadTask):
-        if aiohttp is not None:
-            await self._download_file_stream_aiohttp(task)
-        else:
-            loop = get_loop()
-            await loop.run_in_executor(None, self._download_file_stream_sync, task)
+        loop = get_loop()
+        await loop.run_in_executor(None, self._download_file_stream_sync, task)
 
     async def _download_file_stream_aiohttp(self, task: DownloadTask):
         dest_file = task.storage_path
@@ -766,72 +942,120 @@ class FlixGrabEngine:
         dest_file.parent.mkdir(parents=True, exist_ok=True)
         part_file = dest_file.with_suffix(dest_file.suffix + ".part")
 
-        existing_bytes = part_file.stat().st_size if part_file.exists() else 0
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) FlixGrab/2.0",
-        }
-        if existing_bytes > 0:
-            headers["Range"] = f"bytes={existing_bytes}-"
-            logger.info(f"Reanudando descarga de '{task.title}' desde byte {existing_bytes}...")
-
-        effective_url = resolve_playable_source_url(task)
-        req = urllib.request.Request(effective_url, headers=headers)
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            status_code = resp.getcode()
-            if status_code not in (200, 206):
-                raise RuntimeError(f"Servidor remoto respondió con estado HTTP {status_code}")
-
-            content_len = resp.headers.get("Content-Length")
-            if content_len:
-                total_expected = int(content_len) + (existing_bytes if status_code == 206 else 0)
-                task.total_bytes = total_expected
-            elif task.total_bytes <= 0:
-                task.total_bytes = 100 * 1024 * 1024
-
-            mode = "ab" if (existing_bytes > 0 and status_code == 206) else "wb"
-            if mode == "wb":
-                existing_bytes = 0
-
-            task.downloaded_bytes = existing_bytes
+        # Si el contenedor backend ya está descargando este archivo .part, monitorearlo sin sobrescribirlo
+        if part_file.exists() and (time.time() - part_file.stat().st_mtime) < 8:
+            logger.info(f"Monitoreando descarga activa existente para '{task.title}': {part_file}")
+            last_bytes = part_file.stat().st_size
             last_time = time.time()
-            bytes_window = 0
-
-            with open(part_file, mode) as f:
-                while not task.cancel_event.is_set():
-                    chunk = resp.read(CHUNK_SIZE)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-                    f.flush()
-                    task.downloaded_bytes += len(chunk)
-                    bytes_window += len(chunk)
-
-                    now = time.time()
-                    delta = now - last_time
-                    if delta >= 1.0:
-                        speed = bytes_window / delta
-                        task.speed_bytes = speed
-                        task.download_speed = f"{round(speed / (1024 * 1024), 2)} MB/s"
-                        bytes_window = 0
-                        last_time = now
-
-                        if task.total_bytes > 0:
-                            task.progress = min(99.0, (task.downloaded_bytes / task.total_bytes) * 100)
-                            remaining_bytes = max(0, task.total_bytes - task.downloaded_bytes)
-                            eta_secs = (remaining_bytes / speed) if speed > 0 else 0
-                            task.eta = self.format_eta(eta_secs)
-
-                        self.sync_db(task)
-
-                if task.cancel_event.is_set():
+            while not task.cancel_event.is_set():
+                if dest_file.exists() and dest_file.stat().st_size > 2 * 1024 * 1024:
+                    task.downloaded_bytes = dest_file.stat().st_size
+                    task.total_bytes = task.downloaded_bytes
                     return
+                if not part_file.exists() or (time.time() - part_file.stat().st_mtime) > 15:
+                    break
+                now_bytes = part_file.stat().st_size
+                now = time.time()
+                dt = max(0.1, now - last_time)
+                speed = max(0, now_bytes - last_bytes) / dt
+                last_bytes = now_bytes
+                last_time = now
+                task.downloaded_bytes = now_bytes
+                if task.total_bytes <= 0:
+                    task.total_bytes = 140 * 1024 * 1024
+                task.download_speed = f"{round(speed / (1024 * 1024), 2)} MB/s"
+                task.progress = min(99.0, (now_bytes / max(1, task.total_bytes)) * 100)
+                self.sync_db(task)
+                time.sleep(1.0)
 
-        if part_file.exists():
+        if dest_file.exists() and dest_file.stat().st_size > 2 * 1024 * 1024:
+            sz = dest_file.stat().st_size
+            req_kw = WRONG_FILE_RULES.get(sz)
+            if not req_kw or req_kw in strip_accents(task.title.lower()):
+                task.downloaded_bytes = sz
+                task.total_bytes = sz
+                return
+            dest_file.unlink()
+
+        resolved = resolve_real_source_for_task(task)
+        if not resolved:
+            raise RuntimeError(f"No se encontró fuente real verificada para '{task.title}'")
+
+        expected_bytes = max(25 * 1024 * 1024, int(resolved.get("total_bytes") or (140 * 1024 * 1024)))
+        task.total_bytes = expected_bytes
+        task.can_play_progressive = True
+        self.sync_db(task)
+
+        ua = resolved.get("user_agent") or UA_VISIONOS
+        ffmpeg_bin = FFMPEG_BINARY or "ffmpeg"
+
+        if resolved.get("mode") == "hls_dual" and resolved.get("video_url") and resolved.get("audio_url"):
+            cmd = [
+                ffmpeg_bin, "-hide_banner", "-loglevel", "error", "-y",
+                "-user_agent", ua, "-allowed_extensions", "ALL", "-protocol_whitelist", "file,http,https,tcp,tls,crypto", "-i", resolved["video_url"],
+                "-user_agent", ua, "-allowed_extensions", "ALL", "-protocol_whitelist", "file,http,https,tcp,tls,crypto", "-i", resolved["audio_url"],
+                "-map", "0:v:0", "-map", "1:a:0",
+                "-c:v", "copy", "-c:a", "copy", "-bsf:a", "aac_adtstoasc",
+                "-f", "mp4", "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+                str(part_file)
+            ]
+        else:
+            cmd = [
+                ffmpeg_bin, "-hide_banner", "-loglevel", "error", "-y",
+                "-user_agent", ua, "-allowed_extensions", "ALL", "-protocol_whitelist", "file,http,https,tcp,tls,crypto", "-i", resolved["video_url"],
+                "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-ac", "2", "-ar", "48000", "-b:a", "128k",
+                "-f", "mp4", "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+                str(part_file)
+            ]
+
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        last_bytes = 0
+        last_time = time.time()
+
+        while proc.poll() is None:
+            if task.cancel_event.is_set():
+                proc.terminate()
+                return
+            time.sleep(1.0)
+            now_bytes = part_file.stat().st_size if part_file.exists() else 0
+            now = time.time()
+            dt = max(0.1, now - last_time)
+            speed = max(0, now_bytes - last_bytes) / dt
+            last_bytes = now_bytes
+            last_time = now
+
+            if now_bytes >= task.total_bytes:
+                task.total_bytes = int(now_bytes * 1.15)
+            task.downloaded_bytes = now_bytes
+            task.speed_bytes = speed
+            task.download_speed = f"{round(speed / (1024 * 1024), 2)} MB/s"
+            task.progress = min(99.0, round((now_bytes / max(1, task.total_bytes)) * 100, 1))
+            rem = max(0, task.total_bytes - now_bytes)
+            task.eta = self.format_eta(rem / speed if speed > 0 else 0)
+            task.can_play_progressive = True
+            self.sync_db(task)
+
+        if not part_file.exists() or part_file.stat().st_size < 512 * 1024:
+            raise RuntimeError(f"Descarga incompleta para '{task.title}'")
+
+        fast_file = dest_file.with_suffix(".fast.mp4")
+        remux_cmd = [ffmpeg_bin, "-hide_banner", "-loglevel", "error", "-y", "-i", str(part_file), "-c", "copy", "-movflags", "+faststart", str(fast_file)]
+        res = subprocess.run(remux_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if res.returncode == 0 and fast_file.exists() and fast_file.stat().st_size > 512 * 1024:
+            part_file.unlink()
+            if dest_file.exists():
+                dest_file.unlink()
+            fast_file.rename(dest_file)
+        else:
+            if fast_file.exists():
+                fast_file.unlink()
             if dest_file.exists():
                 dest_file.unlink()
             part_file.rename(dest_file)
-            task.downloaded_bytes = dest_file.stat().st_size
-            task.total_bytes = task.downloaded_bytes
+
+        task.downloaded_bytes = dest_file.stat().st_size
+        task.total_bytes = task.downloaded_bytes
 
     async def progressive_hls_manager(self, task: DownloadTask):
         """

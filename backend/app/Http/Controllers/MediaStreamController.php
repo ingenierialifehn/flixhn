@@ -245,6 +245,11 @@ class MediaStreamController extends Controller
             return response()->json(['error' => 'Película o serie no encontrada.'], 404);
         }
 
+        $realResolver = app(\App\Services\RealMediaSourceResolver::class);
+        $realResolver->purgeIfWrongFile($title->file_path, $title->name);
+        $realResolver->purgeIfWrongFile($title->source_path, $title->name);
+        $title->refresh();
+
         // Si es una serie y se solicitó stream sobre el título, buscar el primer episodio
         if ($title->type === 'series') {
             $firstEpisode = Episode::where('title_id', $title->id)
@@ -291,8 +296,16 @@ class MediaStreamController extends Controller
                 return response()->json(['error' => 'Descarga en proceso. Por favor espere a que finalice.'], 202);
             }
 
-            Log::warning("MediaStreamController@streamTitle: Serie sin episodios disponibles en disco [ID {$title->id}: {$title->name}]. Devolviendo 404.");
-            return response()->json(['error' => 'Serie sin episodios disponibles en disco.'], 404);
+            $dlJob = \App\Models\DownloadJob::where('title_id', $title->id)->orWhere('title', $title->name)->latest()->first();
+            if (!$dlJob) {
+                $dlJob = app(\App\Services\DownloadService::class)->requestDownload([
+                    'content_id' => (string) $title->id,
+                    'title' => $title->name,
+                    'provider' => $title->provider ?: 'netflix',
+                    'type' => 'series',
+                ]);
+            }
+            return app(StreamingController::class)->serveProgressive($request, $dlJob->id);
         }
 
         // Para películas (streamTitle($id)), busca la ruta física en $title->source_path ?? $title->file_path.
@@ -348,8 +361,16 @@ class MediaStreamController extends Controller
         }
 
         if (!$resolved || !file_exists($resolved) || is_dir($resolved) || @filesize($resolved) <= 1024) {
-            Log::warning("MediaStreamController@streamTitle: Archivo físico no existe para [ID {$title->id}: {$title->name}]. Devolviendo 404.");
-            return response()->json(['error' => 'Archivo físico no encontrado en el servidor.'], 404);
+            $dlJob = \App\Models\DownloadJob::where('title_id', $title->id)->orWhere('title', $title->name)->latest()->first();
+            if (!$dlJob) {
+                $dlJob = app(\App\Services\DownloadService::class)->requestDownload([
+                    'content_id' => (string) $title->id,
+                    'title' => $title->name,
+                    'provider' => $title->provider ?: 'netflix',
+                    'type' => $title->type ?: 'movie',
+                ]);
+            }
+            return app(StreamingController::class)->serveProgressive($request, $dlJob->id);
         }
 
         return $this->serveStreamWithByteRange($request, $resolved);
@@ -372,6 +393,13 @@ class MediaStreamController extends Controller
 
         if (!$episode) {
             return response()->json(['error' => 'Episodio no encontrado.'], 404);
+        }
+
+        $parentForEp = Title::find($episode->title_id);
+        if (app(\App\Services\RealMediaSourceResolver::class)->purgeIfWrongFile($episode->file_path, $parentForEp?->name ?: $episode->title)) {
+            if ($parentForEp) {
+                return $this->streamTitle($request, $parentForEp->id);
+            }
         }
 
         // Para episodios (streamEpisode($id)), busca en $episode->file_path ?? $episode->source_path
