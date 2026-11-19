@@ -84,19 +84,9 @@ class DownloadService
         $sourceUrl = trim($data['source_url'] ?? $data['url'] ?? '');
 
         if (empty($sourceUrl) && !empty($contentId)) {
-            $authorizedSources = [
-                'big-buck-bunny-2008' => 'https://archive.org/download/BigBuckBunny_124/BigBuckBunny_1080p.mp4',
-                'sita-sings-the-blues-2008' => 'https://archive.org/download/Sita_Sings_the_Blues_1080p/Sita_Sings_the_Blues_1080p.mp4',
-                'tears-of-steel-2012' => 'https://archive.org/download/Tears-of-Steel/tears_of_steel_1080p.webm',
-                'cosmos-laundromat-2015' => 'https://archive.org/download/CosmosLaundromatFirstCycle/Cosmos_Laundromat_First_Cycle_1080p.mp4',
-                'night-of-the-living-dead-1968' => 'https://archive.org/download/night_of_the_living_dead/night_of_the_living_dead_1080p.mp4',
-            ];
-            $sourceUrl = $authorizedSources[$contentId] ?? '';
-            if (empty($sourceUrl)) {
-                $t = Title::where('id', $contentId)->orWhere('slug', $contentId)->first();
-                if ($t && $t->stream_url) {
-                    $sourceUrl = $t->stream_url;
-                }
+            $t = Title::where('id', $contentId)->orWhere('slug', $contentId)->first();
+            if ($t && $t->stream_url && !str_contains($t->stream_url, 'archive.org') && !str_contains($t->stream_url, 'youtube')) {
+                $sourceUrl = $t->stream_url;
             }
         }
 
@@ -463,14 +453,7 @@ class DownloadService
         }
 
         // 3. Si no existe localmente ni hay descarga, es contenido REMOTO disponible para solicitud
-        $authorizedSources = [
-            'big-buck-bunny-2008' => 'https://archive.org/download/BigBuckBunny_124/BigBuckBunny_1080p.mp4',
-            'sita-sings-the-blues-2008' => 'https://archive.org/download/Sita_Sings_the_Blues_1080p/Sita_Sings_the_Blues_1080p.mp4',
-            'tears-of-steel-2012' => 'https://archive.org/download/Tears-of-Steel/tears_of_steel_1080p.webm',
-            'cosmos-laundromat-2015' => 'https://archive.org/download/CosmosLaundromatFirstCycle/Cosmos_Laundromat_First_Cycle_1080p.mp4',
-            'night-of-the-living-dead-1968' => 'https://archive.org/download/night_of_the_living_dead/night_of_the_living_dead_1080p.mp4',
-        ];
-        $knownSourceUrl = $authorizedSources[$cleanId] ?? ($title?->stream_url ?: null);
+        $knownSourceUrl = ($title?->stream_url && !str_contains($title->stream_url, 'archive.org') && !str_contains($title->stream_url, 'youtube')) ? $title->stream_url : null;
         $provider = $title?->provider ?? 'remote';
         $isOtt = in_array(strtolower($provider), ['netflix', 'disney', 'max', 'prime', 'amazon', 'apple', 'paramount', 'starplus', 'crunchyroll']);
 

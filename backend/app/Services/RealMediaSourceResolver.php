@@ -14,7 +14,8 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class RealMediaSourceResolver
 {
-    public const UA_VISIONOS = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15';
+    public const UA_FLIXGRAB = 'FlixGrab/4.0 (OTT-Sync-Official)';
+    public const UA_VISIONOS = 'FlixGrab/4.0 (OTT-Sync-Official)';
     public const UA_WEB = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
     /**
@@ -28,7 +29,33 @@ class RealMediaSourceResolver
         922792072  => 'jurassic', // Jurassic World
         802892266  => 'iboy',     // iBoy
         158268029  => 'stranger', // Stranger Things st1x2
+        363976887  => 'hawkeye',    // Fake hardlink to mitorrent.org Hawkeye
+        2853203619 => 'invasion',   // Fake hardlink to PelisEnHD Secret Invasion
+        781274825  => 'phineas',    // Fake hardlink to Phineas y Ferb
+        456678163  => 'spartacus',  // Fake hardlink to Spartacus
+        2542046808 => 'mandalorian',
     ];
+
+    /**
+     * Sitios web externos y fuentes prohibidas (YouTube, Dailymotion, Archive.org y sitios piratas).
+     */
+    protected array $bannedPatterns = [
+        'youtube.com', 'youtu.be', 'youtubei', 'googlevideo.com',
+        'dailymotion.com', 'dmcdn.net', 'vimeo.com', 'archive.org',
+        'commondatastorage.googleapis.com', 'gtv-videos-bucket',
+        'blender.org', 'test-streams.mux.dev', 'akamaized.net/dash264',
+        'cuevana', 'pelisplus', 'repelis',
+    ];
+
+    public function isBannedUrl(?string $url): bool
+    {
+        if (empty($url)) return false;
+        $lower = strtolower($url);
+        foreach ($this->bannedPatterns as $banned) {
+            if (str_contains($lower, $banned)) return true;
+        }
+        return false;
+    }
 
     /**
      * Detecta si un archivo en storage/media pertenece a un reemplazo incorrecto o muestra legacy.
@@ -122,6 +149,58 @@ class RealMediaSourceResolver
         return preg_replace('/[^a-z0-9]+/', '', $clean) ?: '';
     }
 
+    /**
+     * Extrae todas las variantes del título (ej. "John Wick (Otro día para matar)" -> ["John Wick (Otro día para matar)", "John Wick", "Otro día para matar"]).
+     */
+    public function extractTitleVariants(string $text): array
+    {
+        $raw = trim($text);
+        if ($raw === '') return [];
+        $variants = [$raw];
+        $noYear = trim((string) preg_replace('/\b(19|20)\d{2}\b/', '', $raw));
+        if ($noYear !== '' && !in_array($noYear, $variants, true)) {
+            $variants[] = $noYear;
+        }
+        $outsideParens = trim((string) preg_replace('/\(.*?\)|\[.*?\]/', '', $noYear));
+        if ($outsideParens !== '' && !in_array($outsideParens, $variants, true)) {
+            $variants[] = $outsideParens;
+        }
+        if (preg_match_all('/\(([^()]{3,})\)/u', $raw, $matches)) {
+            foreach ($matches[1] as $inner) {
+                $innerClean = trim($inner);
+                if ($innerClean !== '' && !is_numeric($innerClean) && !in_array($innerClean, $variants, true)) {
+                    $variants[] = $innerClean;
+                }
+            }
+        }
+        if (str_contains($outsideParens, ':')) {
+            $parts = explode(':', $outsideParens);
+            foreach ($parts as $p) {
+                $pClean = trim($p);
+                if (mb_strlen($pClean) >= 3 && !in_array($pClean, $variants, true)) {
+                    $variants[] = $pClean;
+                }
+            }
+        }
+        return $variants;
+    }
+
+    public function extractNormalizedSet(string $text): array
+    {
+        $norms = [];
+        foreach ($this->extractTitleVariants($text) as $v) {
+            $n = preg_replace('/[^a-z0-9]+/', '', $this->stripAccents(mb_strtolower($v)));
+            if (strlen($n) >= 3) {
+                $norms[$n] = true;
+            }
+        }
+        $base = $this->normalizeExact($text);
+        if (strlen($base) >= 3) {
+            $norms[$base] = true;
+        }
+        return array_keys($norms);
+    }
+
     public function stripAccents(string $str): string
     {
         $map = [
@@ -181,13 +260,23 @@ class RealMediaSourceResolver
     }
 
     /**
-     * Resuelve la fuente de video REAL para cualquier título (Local Emby exacto -> YouTube VISIONOS HLS -> Dailymotion).
+     * Resuelve la fuente de video REAL EXCLUSIVAMENTE desde:
+     * 1) Archivo físico autenticado en titles (file_path o source_path) o episodes.
+     * 2) Biblioteca del servidor multimedia vinculado (Emby).
+     * 3) Stream directo legítimo (NO YouTube/Dailymotion/Archive/pirata) de una cuenta vinculada en OTT Sync.
+     * PROHIBIDO terminantemente usar YouTube, Dailymotion o páginas piratas.
      */
-    public function resolveRealSource(string $titleName, ?string $mediaType = null, ?string $sourceUrl = null): ?array
+    public function resolveRealSource(string $titleName, ?string $mediaType = null, ?string $sourceUrl = null, ?string $provider = null): ?array
     {
         $titleName = trim($titleName);
         if (empty($titleName)) {
             return null;
+        }
+
+        // Si sourceUrl es prohibida (YouTube, Dailymotion, Archive.org, etc.), descartarla
+        if (!empty($sourceUrl) && $this->isBannedUrl($sourceUrl)) {
+            Log::warning("RealMediaSourceResolver: URL externa prohibida bloqueada para [{$titleName}]: {$sourceUrl}");
+            $sourceUrl = null;
         }
 
         // Determinar si es serie o película
@@ -197,37 +286,127 @@ class RealMediaSourceResolver
         }
         $isSeries = ($mediaType === 'series');
 
-        // 1. Verificar coincidencia EXACTA en biblioteca local / Emby
-        $exactLocal = $this->findExactLocalOrEmbyMatch($titleName, $isSeries);
-        if ($exactLocal) {
-            return $exactLocal;
+        // Obtener variantes del título para coincidencia exacta y parentética
+        $titleVariants = $this->extractTitleVariants($titleName);
+
+        // 1. Buscar en base de datos local (titles.file_path, titles.source_path y episodes.file_path)
+        $localDbMatch = $this->findLocalDatabaseMatch($titleVariants, $isSeries);
+        if ($localDbMatch) {
+            return $localDbMatch;
         }
 
-        // 2. Resolver stream real externo (cacheado por 60 min para velocidad instantánea)
-        $cacheKey = 'flixhn_real_src_v3_' . md5($this->normalizeExact($titleName) . '_' . ($isSeries ? 'series' : 'movie'));
+        // 2. Buscar en Emby local usando título y variantes (incluyendo OriginalTitle)
+        $embyMatch = $this->findExactLocalOrEmbyMatch($titleName, $isSeries, $titleVariants);
+        if ($embyMatch) {
+            return $embyMatch;
+        }
 
-        return Cache::remember($cacheKey, 3600, function () use ($titleName, $isSeries) {
-            $ytResolved = $this->resolveFromYouTubeVisionOs($titleName, $isSeries);
-            if ($ytResolved) {
-                return $ytResolved;
+        // 3. Si sourceUrl es un stream directo legítimo y no prohibido
+        if (!empty($sourceUrl) && !$this->isBannedUrl($sourceUrl)) {
+            if (str_starts_with($sourceUrl, 'http://') || str_starts_with($sourceUrl, 'https://')) {
+                return [
+                    'mode' => 'single_url',
+                    'video_url' => $sourceUrl,
+                    'audio_url' => null,
+                    'total_bytes' => 800 * 1024 * 1024,
+                    'matched_title' => $titleName,
+                    'user_agent' => self::UA_FLIXGRAB,
+                ];
             }
+        }
 
-            $dmResolved = $this->resolveFromDailymotion($titleName, $isSeries);
-            if ($dmResolved) {
-                return $dmResolved;
-            }
-
-            return null;
-        });
+        Log::warning("RealMediaSourceResolver: No se encontró stream autenticado para [{$titleName}] en plataformas vinculadas. Se rechaza cualquier fallback a YouTube o páginas externas.");
+        return null;
     }
 
     /**
-     * Busca en Emby y discos locales exigiendo coincidencia EXACTA del nombre normalizado.
+     * Busca en la base de datos local verificando títulos auténticos en titles y episodes.
+     * Revisa tanto file_path como source_path.
      */
-    protected function findExactLocalOrEmbyMatch(string $titleName, bool $isSeries): ?array
+    protected function findLocalDatabaseMatch(array $titleVariants, bool $isSeries): ?array
     {
-        $normTarget = $this->normalizeExact($titleName);
-        if (empty($normTarget)) {
+        $targetNorms = [];
+        foreach ($titleVariants as $v) {
+            foreach ($this->extractNormalizedSet($v) as $n) {
+                $targetNorms[$n] = true;
+            }
+        }
+        if (empty($targetNorms)) {
+            return null;
+        }
+
+        $titles = Title::where(function ($q) {
+            $q->whereNotNull('file_path')->orWhereNotNull('source_path');
+        })->get();
+
+        foreach ($titles as $t) {
+            $tNorms = $this->extractNormalizedSet($t->name);
+            if (!empty($t->slug)) {
+                $tNorms = array_merge($tNorms, $this->extractNormalizedSet(str_replace('-', ' ', $t->slug)));
+            }
+            $intersect = array_intersect(array_keys($targetNorms), $tNorms);
+            if (empty($intersect)) {
+                continue;
+            }
+
+            foreach (['file_path', 'source_path'] as $col) {
+                $rawPath = $t->{$col};
+                if (!empty($rawPath)) {
+                    $diskPath = \App\Jobs\ProcessMediaIngestJob::resolveDiskPath($rawPath) ?: $rawPath;
+                    if (file_exists($diskPath) && !$this->isWrongOrLegacyFile($diskPath, $t->name) && @filesize($diskPath) > 2 * 1024 * 1024) {
+                        Log::info("RealMediaSourceResolver: Archivo local encontrado en BD para [{$t->name}] ({$col}): {$diskPath}");
+                        return [
+                            'mode' => 'local_file',
+                            'file_path' => $diskPath,
+                            'total_bytes' => (int) @filesize($diskPath),
+                            'matched_title' => $t->name,
+                            'title_id' => $t->id,
+                        ];
+                    }
+                }
+            }
+
+            if ($t->type === 'series' || $isSeries) {
+                $ep = Episode::where('title_id', $t->id)
+                    ->whereNotNull('file_path')
+                    ->orderBy('season_number', 'asc')
+                    ->orderBy('episode_number', 'asc')
+                    ->first();
+                if ($ep && !empty($ep->file_path)) {
+                    $epDiskPath = \App\Jobs\ProcessMediaIngestJob::resolveDiskPath($ep->file_path) ?: $ep->file_path;
+                    if (file_exists($epDiskPath) && !$this->isWrongOrLegacyFile($epDiskPath, $t->name) && @filesize($epDiskPath) > 2 * 1024 * 1024) {
+                        Log::info("RealMediaSourceResolver: Episodio local encontrado en BD para [{$t->name}]: {$epDiskPath}");
+                        return [
+                            'mode' => 'local_file',
+                            'file_path' => $epDiskPath,
+                            'total_bytes' => (int) @filesize($epDiskPath),
+                            'matched_title' => $t->name . ' - ' . ($ep->name ?: "S01E01"),
+                            'title_id' => $t->id,
+                            'episode_id' => $ep->id,
+                        ];
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Busca en Emby y discos locales mediante el servidor multimedia vinculado.
+     */
+    protected function findExactLocalOrEmbyMatch(string $titleName, bool $isSeries, array $titleVariants = []): ?array
+    {
+        if (empty($titleVariants)) {
+            $titleVariants = $this->extractTitleVariants($titleName);
+        }
+        $targetNorms = [];
+        foreach ($titleVariants as $v) {
+            foreach ($this->extractNormalizedSet($v) as $n) {
+                $targetNorms[$n] = true;
+            }
+        }
+        if (empty($targetNorms)) {
             return null;
         }
 
@@ -247,409 +426,89 @@ class RealMediaSourceResolver
             }
         } catch (\Throwable $e) {}
 
-        $ctx = stream_context_create(['http' => ['timeout' => 4, 'User-Agent' => 'FlixGrab/3.0']]);
-        $q = urlencode($titleName);
-        $url = "{$serverUrl}/emby/Items?SearchTerm={$q}&IncludeItemTypes=Movie,Series&Recursive=true&Fields=MediaSources,Path&api_key={$apiKey}";
+        $ctx = stream_context_create(['http' => ['timeout' => 4, 'User-Agent' => self::UA_FLIXGRAB]]);
 
-        $res = @file_get_contents($url, false, $ctx);
-        if (!$res) {
-            return null;
-        }
+        foreach ($titleVariants as $searchVariant) {
+            $q = urlencode($searchVariant);
+            $url = "{$serverUrl}/emby/Items?SearchTerm={$q}&IncludeItemTypes=Movie,Series&Recursive=true&Fields=MediaSources,Path,OriginalTitle&api_key={$apiKey}";
 
-        $data = json_decode($res, true);
-        foreach ($data['Items'] ?? [] as $item) {
-            $itemName = $item['Name'] ?? '';
-            if ($this->normalizeExact($itemName) !== $normTarget) {
-                continue; // Coincidencia estricta obligatoria
-            }
-
-            $itemId = $item['Id'] ?? null;
-            $type = $item['Type'] ?? '';
-            if (!$itemId) {
+            $res = @file_get_contents($url, false, $ctx);
+            if (!$res) {
                 continue;
             }
 
-            if ($type === 'Series') {
-                $epUrl = "{$serverUrl}/emby/Shows/{$itemId}/Episodes?Limit=1&Fields=MediaSources,Path&api_key={$apiKey}";
-                $epRes = @file_get_contents($epUrl, false, $ctx);
-                $eps = $epRes ? (json_decode($epRes, true)['Items'] ?? []) : [];
-                if (!empty($eps)) {
-                    $ep = $eps[0];
-                    $epId = $ep['Id'] ?? null;
-                    $rawPath = $ep['Path'] ?? ($ep['MediaSources'][0]['Path'] ?? '');
+            $data = json_decode($res, true);
+            foreach ($data['Items'] ?? [] as $item) {
+                $itemName = $item['Name'] ?? '';
+                $itemOrig = $item['OriginalTitle'] ?? '';
+                $itemNorms = array_merge($this->extractNormalizedSet($itemName), $this->extractNormalizedSet($itemOrig));
+                $intersect = array_intersect(array_keys($targetNorms), $itemNorms);
+                if (empty($intersect)) {
+                    continue;
+                }
+
+                $itemId = $item['Id'] ?? null;
+                $type = $item['Type'] ?? '';
+                if (!$itemId) {
+                    continue;
+                }
+
+                if ($type === 'Series') {
+                    $epUrl = "{$serverUrl}/emby/Shows/{$itemId}/Episodes?Limit=1&Fields=MediaSources,Path&api_key={$apiKey}";
+                    $epRes = @file_get_contents($epUrl, false, $ctx);
+                    $eps = $epRes ? (json_decode($epRes, true)['Items'] ?? []) : [];
+                    if (!empty($eps)) {
+                        $ep = $eps[0];
+                        $epId = $ep['Id'] ?? null;
+                        $rawPath = $ep['Path'] ?? ($ep['MediaSources'][0]['Path'] ?? '');
+                        if ($rawPath) {
+                            $mapped = str_replace('/home/server01/', '/mnt/media_library/', $rawPath);
+                            if (file_exists($mapped) && !$this->isWrongOrLegacyFile($mapped, $itemName) && filesize($mapped) > 5 * 1024 * 1024) {
+                                return [
+                                    'mode' => 'local_file',
+                                    'file_path' => $mapped,
+                                    'total_bytes' => (int) filesize($mapped),
+                                    'matched_title' => $itemName . ' - ' . ($ep['Name'] ?? 'Capítulo 1'),
+                                ];
+                            }
+                        }
+                        if ($epId) {
+                            return [
+                                'mode' => 'single_url',
+                                'video_url' => "{$serverUrl}/emby/Videos/{$epId}/stream.mp4?static=true&api_key={$apiKey}",
+                                'audio_url' => null,
+                                'total_bytes' => (int) ($ep['MediaSources'][0]['Size'] ?? 500 * 1024 * 1024),
+                                'matched_title' => $itemName,
+                                'user_agent' => self::UA_FLIXGRAB,
+                            ];
+                        }
+                    }
+                } else {
+                    $rawPath = $item['Path'] ?? ($item['MediaSources'][0]['Path'] ?? '');
                     if ($rawPath) {
                         $mapped = str_replace('/home/server01/', '/mnt/media_library/', $rawPath);
-                        if (file_exists($mapped) && filesize($mapped) > 5 * 1024 * 1024) {
+                        if (file_exists($mapped) && !$this->isWrongOrLegacyFile($mapped, $itemName) && filesize($mapped) > 5 * 1024 * 1024) {
                             return [
                                 'mode' => 'local_file',
                                 'file_path' => $mapped,
                                 'total_bytes' => (int) filesize($mapped),
-                                'matched_title' => $itemName . ' - ' . ($ep['Name'] ?? 'Capítulo 1'),
+                                'matched_title' => $itemName,
                             ];
                         }
                     }
-                    if ($epId) {
-                        return [
-                            'mode' => 'single_url',
-                            'video_url' => "{$serverUrl}/emby/Videos/{$epId}/stream.mp4?static=true&api_key={$apiKey}",
-                            'audio_url' => null,
-                            'total_bytes' => (int) ($ep['MediaSources'][0]['Size'] ?? 500 * 1024 * 1024),
-                            'matched_title' => $itemName,
-                            'user_agent' => 'FlixGrab/3.0',
-                        ];
-                    }
-                }
-            } else {
-                $rawPath = $item['Path'] ?? ($item['MediaSources'][0]['Path'] ?? '');
-                if ($rawPath) {
-                    $mapped = str_replace('/home/server01/', '/mnt/media_library/', $rawPath);
-                    if (file_exists($mapped) && filesize($mapped) > 5 * 1024 * 1024) {
-                        return [
-                            'mode' => 'local_file',
-                            'file_path' => $mapped,
-                            'total_bytes' => (int) filesize($mapped),
-                            'matched_title' => $itemName,
-                        ];
-                    }
-                }
-                return [
-                    'mode' => 'single_url',
-                    'video_url' => "{$serverUrl}/emby/Videos/{$itemId}/stream.mp4?static=true&api_key={$apiKey}",
-                    'audio_url' => null,
-                    'total_bytes' => (int) ($item['MediaSources'][0]['Size'] ?? 1200 * 1024 * 1024),
-                    'matched_title' => $itemName,
-                    'user_agent' => 'FlixGrab/3.0',
-                ];
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * Busca y extrae los streams HLS de alta velocidad (ratebypass=yes) para el título real usando el cliente VISIONOS.
-     */
-    protected function resolveFromYouTubeVisionOs(string $titleName, bool $isSeries): ?array
-    {
-        $queries = $isSeries
-            ? [
-                "{$titleName} capitulo 1 completo español",
-                "{$titleName} episodio 1 completo español",
-                "{$titleName} completo español",
-            ]
-            : [
-                "{$titleName} pelicula completa español latino",
-                "{$titleName} completo español",
-                "{$titleName} español latino",
-            ];
-
-        $candidates = [];
-        $seenIds = [];
-
-        foreach ($queries as $q) {
-            $searchUrl = 'https://www.youtube.com/results?search_query=' . urlencode($q);
-            $ctx = stream_context_create([
-                'http' => [
-                    'method' => 'GET',
-                    'header' => "User-Agent: " . self::UA_WEB . "\r\nAccept-Language: es-419,es;q=0.9\r\n",
-                    'timeout' => 8,
-                ],
-            ]);
-
-            $html = @file_get_contents($searchUrl, false, $ctx);
-            if (!$html || !preg_match('/var ytInitialData = (\{.*?\});<\/script>/s', $html, $m)) {
-                continue;
-            }
-
-            $data = json_decode($m[1], true);
-            $sections = $data['contents']['twoColumnSearchResultsRenderer']['primaryContents']['sectionListRenderer']['contents'] ?? [];
-
-            foreach ($sections as $sec) {
-                $items = $sec['itemSectionRenderer']['contents'] ?? [];
-                foreach ($items as $item) {
-                    $v = $item['videoRenderer'] ?? null;
-                    if (!$v) {
-                        continue;
-                    }
-                    $vid = $v['videoId'] ?? null;
-                    if (!$vid || isset($seenIds[$vid])) {
-                        continue;
-                    }
-
-                    $runs = $v['title']['runs'] ?? [];
-                    $vTitle = '';
-                    foreach ($runs as $r) {
-                        $vTitle .= $r['text'] ?? '';
-                    }
-
-                    $durTxt = $v['lengthText']['simpleText'] ?? '';
-                    $durSec = $this->parseDurationText($durTxt);
-
-                    if ($durSec < 120) {
-                        continue; // Ignorar cortos/shorts
-                    }
-
-                    if (!$this->titleMatchesQuery($vTitle, $titleName)) {
-                        continue; // Exigir coincidencia real con las palabras del título
-                    }
-
-                    $seenIds[$vid] = true;
-                    $score = 0;
-                    if ($durSec >= 900) {
-                        $score += 100; // Priorizar episodios o películas completas (>= 15 min)
-                    } elseif ($durSec >= 300) {
-                        $score += 40;
-                    }
-
-                    $lowerVTitle = $this->stripAccents(mb_strtolower($vTitle));
-                    if (preg_match('/\b(capitulo\s*0?1|episodio\s*0?1|cap\s*0?1)\b/', $lowerVTitle)) {
-                        $score += 50;
-                    }
-                    if (str_contains($lowerVTitle, 'completo') || str_contains($lowerVTitle, 'completa')) {
-                        $score += 30;
-                    }
-                    if (str_contains($lowerVTitle, 'telemundo') || str_contains($lowerVTitle, 'netflix')) {
-                        $score += 20;
-                    }
-
-                    $candidates[] = [
-                        'video_id' => $vid,
-                        'title' => $vTitle,
-                        'duration' => $durSec,
-                        'score' => $score,
-                    ];
-                }
-            }
-
-            if (count($candidates) >= 3) {
-                break;
-            }
-        }
-
-        if (empty($candidates)) {
-            return null;
-        }
-
-        usort($candidates, fn($a, $b) => $b['score'] <=> $a['score']);
-
-        foreach (array_slice($candidates, 0, 5) as $cand) {
-            $extracted = $this->extractVisionOsHlsForVideoId($cand['video_id']);
-            if ($extracted) {
-                Log::info("RealMediaSourceResolver: Fuente real resuelta para [{$titleName}] -> [{$extracted['matched_title']}] (ID: {$cand['video_id']}, {$extracted['duration_seconds']}s)");
-                return $extracted;
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * Extrae los manifiestos HLS VOD (con ratebypass/yes) de video H.264 y audio AAC Estéreo en español.
-     */
-    public function extractVisionOsHlsForVideoId(string $videoId): ?array
-    {
-        $embedCtx = stream_context_create([
-            'http' => [
-                'method' => 'GET',
-                'header' => "User-Agent: " . self::UA_VISIONOS . "\r\n",
-                'timeout' => 6,
-            ],
-        ]);
-        $embedHtml = @file_get_contents("https://www.youtube.com/embed/{$videoId}", false, $embedCtx);
-        $visitorData = '';
-        if ($embedHtml && preg_match('/"VISITOR_DATA":"([^"]+)"/', $embedHtml, $vm)) {
-            $visitorData = $vm[1];
-        }
-
-        $payload = json_encode([
-            'videoId' => $videoId,
-            'context' => [
-                'client' => [
-                    'clientName' => 'VISIONOS',
-                    'clientVersion' => '1.02',
-                    'deviceMake' => 'Apple',
-                    'deviceModel' => 'RealityDevice17,1',
-                    'userAgent' => self::UA_VISIONOS,
-                    'osName' => 'visionOS',
-                    'osVersion' => '26.5.23O471',
-                    'visitorData' => $visitorData,
-                    'hl' => 'es',
-                    'gl' => 'HN',
-                ],
-            ],
-            'contentCheckOk' => true,
-            'racyCheckOk' => true,
-        ]);
-
-        $headers = [
-            'Content-Type: application/json',
-            'User-Agent: ' . self::UA_VISIONOS,
-            'X-Youtube-Client-Name: 101',
-            'X-Youtube-Client-Version: 1.02',
-        ];
-        if ($visitorData) {
-            $headers[] = "X-Goog-Visitor-Id: {$visitorData}";
-        }
-
-        $playerCtx = stream_context_create([
-            'http' => [
-                'method' => 'POST',
-                'header' => implode("\r\n", $headers) . "\r\n",
-                'content' => $payload,
-                'timeout' => 8,
-            ],
-        ]);
-
-        $respRaw = @file_get_contents('https://www.youtube.com/youtubei/v1/player?prettyPrint=false', false, $playerCtx);
-        if (!$respRaw) {
-            return null;
-        }
-
-        $resp = json_decode($respRaw, true);
-        if (($resp['playabilityStatus']['status'] ?? '') !== 'OK') {
-            return null;
-        }
-
-        $sd = $resp['streamingData'] ?? [];
-        $hlsManifestUrl = $sd['hlsManifestUrl'] ?? null;
-        if (!$hlsManifestUrl) {
-            return null;
-        }
-
-        $af = $sd['adaptiveFormats'] ?? [];
-        $vLen = 0;
-        $aLen = 0;
-        foreach ($af as $f) {
-            $itag = (int) ($f['itag'] ?? 0);
-            $clen = (int) ($f['contentLength'] ?? 0);
-            if (in_array($itag, [136, 137, 135], true) && $clen > 0 && $vLen === 0) {
-                $vLen = $clen;
-            }
-            if ($itag === 140 && $clen > 0 && $aLen === 0) {
-                $aLen = $clen;
-            }
-        }
-        $totalBytes = ($vLen + $aLen) > 0 ? ($vLen + $aLen) : (140 * 1024 * 1024);
-
-        $m3u8Raw = @file_get_contents($hlsManifestUrl, false, $embedCtx);
-        if (!$m3u8Raw) {
-            return null;
-        }
-
-        $lines = preg_split('/\r\n|\r|\n/', $m3u8Raw);
-        $audioCandidates = [];
-        $videoByItag = [];
-
-        foreach ($lines as $line) {
-            $line = trim($line);
-            if (str_starts_with($line, '#EXT-X-MEDIA:') && str_contains($line, 'TYPE=AUDIO')) {
-                if (preg_match('/URI="([^"]+)"/', $line, $um)) {
-                    $uri = $um[1];
-                    $score = 0;
-                    if (str_contains($line, 'GROUP-ID="234"')) $score += 10;
-                    if (stripos($line, 'LANGUAGE="es') !== false || stripos($line, 'original') !== false) $score += 25;
-                    if (stripos($line, 'dubbed-auto') !== false) $score -= 20;
-                    if (str_contains($line, 'DEFAULT=YES')) $score += 5;
-                    $audioCandidates[] = ['score' => $score, 'uri' => $uri];
-                }
-            } elseif (str_starts_with($line, 'http')) {
-                if (preg_match('#/itag/(\d+)/#', $line, $im)) {
-                    $videoByItag[(int) $im[1]] = $line;
-                }
-            }
-        }
-
-        usort($audioCandidates, fn($a, $b) => $b['score'] <=> $a['score']);
-        $audioHls = $audioCandidates[0]['uri'] ?? null;
-
-        $videoHls = null;
-        foreach ([232, 270, 231, 230, 229] as $prefItag) {
-            if (!empty($videoByItag[$prefItag])) {
-                $videoHls = $videoByItag[$prefItag];
-                break;
-            }
-        }
-
-        if (!$videoHls || !$audioHls) {
-            return null;
-        }
-
-        $durSec = (int) ($resp['videoDetails']['lengthSeconds'] ?? 1500);
-        $vTitle = $resp['videoDetails']['title'] ?? $videoId;
-
-        return [
-            'mode' => 'hls_dual',
-            'video_id' => $videoId,
-            'matched_title' => $vTitle,
-            'duration_seconds' => $durSec,
-            'total_bytes' => $totalBytes,
-            'video_url' => $videoHls,
-            'audio_url' => $audioHls,
-            'user_agent' => self::UA_VISIONOS,
-        ];
-    }
-
-    /**
-     * Respaldo mediante API pública de Dailymotion.
-     */
-    protected function resolveFromDailymotion(string $titleName, bool $isSeries): ?array
-    {
-        $query = $isSeries ? "{$titleName} capitulo 1" : "{$titleName} español";
-        $url = 'https://api.dailymotion.com/videos?search=' . urlencode($query) . '&fields=id,title,duration,url&limit=10';
-        $ctx = stream_context_create(['http' => ['timeout' => 6, 'User-Agent' => self::UA_WEB]]);
-        $raw = @file_get_contents($url, false, $ctx);
-        if (!$raw) {
-            return null;
-        }
-
-        $list = json_decode($raw, true)['list'] ?? [];
-        foreach ($list as $item) {
-            $candTitle = $item['title'] ?? '';
-            if (!$this->titleMatchesQuery($candTitle, $titleName)) {
-                continue;
-            }
-            $vid = $item['id'] ?? null;
-            if (!$vid) {
-                continue;
-            }
-            $metaRaw = @file_get_contents("https://www.dailymotion.com/player/metadata/video/{$vid}", false, $ctx);
-            if (!$metaRaw) {
-                continue;
-            }
-            $meta = json_decode($metaRaw, true);
-            $autoUrls = $meta['qualities']['auto'] ?? [];
-            foreach ($autoUrls as $au) {
-                if (!empty($au['url'])) {
                     return [
                         'mode' => 'single_url',
-                        'video_url' => $au['url'],
+                        'video_url' => "{$serverUrl}/emby/Videos/{$itemId}/stream.mp4?static=true&api_key={$apiKey}",
                         'audio_url' => null,
-                        'duration_seconds' => (int) ($item['duration'] ?? 1800),
-                        'total_bytes' => 150 * 1024 * 1024,
-                        'matched_title' => $candTitle,
-                        'user_agent' => self::UA_WEB,
+                        'total_bytes' => (int) ($item['MediaSources'][0]['Size'] ?? 1200 * 1024 * 1024),
+                        'matched_title' => $itemName,
+                        'user_agent' => self::UA_FLIXGRAB,
                     ];
                 }
             }
         }
 
         return null;
-    }
-
-    protected function parseDurationText(string $txt): int
-    {
-        $txt = trim($txt);
-        if (empty($txt)) {
-            return 0;
-        }
-        $parts = array_map('intval', explode(':', $txt));
-        if (count($parts) === 3) {
-            return $parts[0] * 3600 + $parts[1] * 60 + $parts[2];
-        }
-        if (count($parts) === 2) {
-            return $parts[0] * 60 + $parts[1];
-        }
-        return $parts[0] ?? 0;
     }
 
     /**
@@ -723,7 +582,7 @@ class RealMediaSourceResolver
         }
 
         $mode = $resolved['mode'] ?? 'single_url';
-        $ua = $resolved['user_agent'] ?? self::UA_VISIONOS;
+        $ua = $resolved['user_agent'] ?? self::UA_FLIXGRAB;
 
         if ($mode === 'hls_dual' && !empty($resolved['video_url']) && !empty($resolved['audio_url'])) {
             $vArg = escapeshellarg($resolved['video_url']);

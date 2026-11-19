@@ -238,26 +238,11 @@ class FlixGrabDownloader:
         return True
 
     def resolve_media_candidates(self) -> list:
-        """Determina fuentes prioritarias de video de larga duración según título o URL suministrada."""
+        """Determina fuentes prioritarias de video auténtico según metadatos suministrados."""
         candidates = []
-        if self.metadata.get("video_url"):
-            candidates.append(self.metadata["video_url"])
-
-        title_lower = self.title.lower()
-        if "rescate" in title_lower or "extraction" in title_lower:
-            candidates.append("https://archive.org/download/movie-extraction-2-2023/MOVIE%20Extraction%202%20%282023%29.mp4")
-        elif "stranger" in title_lower:
-            candidates.append("https://archive.org/download/stranger-things-s01e01/Stranger.Things.S01E01.720p.mkv")
-        elif "calamar" in title_lower or "squid" in title_lower:
-            candidates.append("https://archive.org/download/squid-game-s02e01/Squid.Game.S02E01.mp4")
-        elif "glass onion" in title_lower or "knives out" in title_lower:
-            candidates.append("https://archive.org/download/glass-onion-a-knives-out-mystery-2022-1080p/Glass%20Onion%20A%20Knives%20Out%20Mystery%20%282022%29%201080p.mp4")
-        elif "merlina" in title_lower or "wednesday" in title_lower:
-            candidates.append("https://archive.org/download/wednesday_dance_hd/wednesday_dance_hd.mp4")
-        elif "rebel ridge" in title_lower:
-            candidates.append("https://archive.org/download/rebel-ridge-2024/Rebel.Ridge.2024.1080p.mkv")
-
-        # REGLA DE ORO: No añadir candidatos genéricos de otras películas si no coinciden con el título
+        v_url = self.metadata.get("video_url")
+        if v_url and not any(b in v_url.lower() for b in ("archive.org", "youtube.com", "youtu.be", "dailymotion.com")):
+            candidates.append(v_url)
         return candidates
 
     def _stream_download(self, target_path: Path) -> bool:

@@ -206,24 +206,44 @@ class OttSyncService
             }
         } catch (\Throwable $e) {}
 
-        // También incluir proveedores activos en la configuración de la plataforma
-        try {
-            $configs = DB::table('ott_provider_configs')
-                ->where('is_active', true)
-                ->whereNotIn('slug', ['local', 'partner_hls'])
-                ->pluck('slug')
-                ->toArray();
+        // Si no se encontraron cuentas en ott_provider_accounts, buscar sesiones activas con refresh_token
+        if (empty($connected)) {
+            try {
+                $sessions = DB::table('ott_sessions')
+                    ->whereNotNull('refresh_token')
+                    ->where('refresh_token', '!=', '')
+                    ->pluck('provider')
+                    ->toArray();
 
-            foreach ($configs as $prov) {
-                $norm = self::normalizePlatformKey($prov) ?: strtolower(trim($prov));
-                if ($norm && !in_array($norm, $connected, true)) {
-                    $connected[] = $norm;
+                foreach ($sessions as $prov) {
+                    $norm = self::normalizePlatformKey($prov) ?: strtolower(trim($prov));
+                    if ($norm && !in_array($norm, $connected, true)) {
+                        $connected[] = $norm;
+                    }
                 }
-            }
-        } catch (\Throwable $e) {}
+            } catch (\Throwable $e) {}
+        }
+
+        // Si y solo si no existe ninguna cuenta conectada ni sesión activa, recurrir a ott_provider_configs
+        if (empty($connected)) {
+            try {
+                $configs = DB::table('ott_provider_configs')
+                    ->where('is_active', true)
+                    ->whereNotIn('slug', ['local', 'partner_hls'])
+                    ->pluck('slug')
+                    ->toArray();
+
+                foreach ($configs as $prov) {
+                    $norm = self::normalizePlatformKey($prov) ?: strtolower(trim($prov));
+                    if ($norm && !in_array($norm, $connected, true)) {
+                        $connected[] = $norm;
+                    }
+                }
+            } catch (\Throwable $e) {}
+        }
 
         if (empty($connected)) {
-            $connected = ['netflix', 'amazon_prime', 'disney_plus', 'hbo_max', 'apple_tv', 'paramount'];
+            $connected = ['netflix', 'amazon_prime', 'disney'];
         }
 
         return $connected;
@@ -342,16 +362,26 @@ class OttSyncService
 
                 // Filtrar resultados no relacionados que JustWatch a veces incluye como populares
                 $cleanQNorm = self::removeDiacritics($cleanQ);
-                $qTokens = array_filter(preg_split('/\s+/u', $cleanQNorm), fn($t) => mb_strlen($t) >= 2);
-                if (!empty($qTokens)) {
+                $stopWords = ['el', 'la', 'los', 'las', 'de', 'del', 'en', 'y', 'a', 'que', 'nos', 'un', 'una', 'por', 'con', 'para', 'se', 'al', 'lo', 'como', 'mas', 'pero', 'sus', 'le', 'ya', 'o', 'este', 'si', 'porque', 'esta', 'the', 'of', 'and', 'in', 'on', 'at', 'to', 'for'];
+                $allTokens = array_values(array_filter(preg_split('/\s+/u', $cleanQNorm), fn($t) => mb_strlen($t) >= 2));
+                $sigTokens = array_values(array_filter($allTokens, fn($t) => mb_strlen($t) >= 3 && !in_array($t, $stopWords, true)));
+                if (empty($sigTokens)) {
+                    $sigTokens = $allTokens;
+                }
+
+                if (!empty($sigTokens)) {
                     $tNorm = self::removeDiacritics($title);
                     $origNorm = self::removeDiacritics($origTitle);
-                    $matchesQuery = false;
-                    foreach ($qTokens as $token) {
-                        if (str_contains($tNorm, $token) || str_contains($origNorm, $token)) {
-                            $matchesQuery = true;
-                            break;
+                    $matchesQuery = str_contains($tNorm, $cleanQNorm) || str_contains($origNorm, $cleanQNorm);
+                    if (!$matchesQuery) {
+                        $matchedCount = 0;
+                        foreach ($sigTokens as $token) {
+                            if (str_contains($tNorm, $token) || str_contains($origNorm, $token)) {
+                                $matchedCount++;
+                            }
                         }
+                        $required = count($sigTokens) <= 2 ? count($sigTokens) : max(2, count($sigTokens) - 1);
+                        $matchesQuery = ($matchedCount >= $required);
                     }
                     if (!$matchesQuery) continue;
                 }
@@ -538,6 +568,27 @@ class OttSyncService
                         $mediaType = str_contains($objType, 'show') || str_contains($objType, 'series') || $objType === 'tv' ? 'series' : 'movie';
                         $year = (int)($content['originalReleaseYear'] ?? date('Y'));
                         $desc = (string)($content['shortDescription'] ?? '');
+
+                        // Filtrar por relevancia
+                        $cleanQNorm = self::removeDiacritics($cleanQ);
+                        $stopWords = ['el', 'la', 'los', 'las', 'de', 'del', 'en', 'y', 'a', 'que', 'nos', 'un', 'una', 'por', 'con', 'para', 'se', 'al', 'lo', 'como', 'mas', 'pero', 'sus', 'le', 'ya', 'o', 'este', 'si', 'porque', 'esta', 'the', 'of', 'and', 'in', 'on', 'at', 'to', 'for'];
+                        $allTokens = array_values(array_filter(preg_split('/\s+/u', $cleanQNorm), fn($t) => mb_strlen($t) >= 2));
+                        $sigTokens = array_values(array_filter($allTokens, fn($t) => mb_strlen($t) >= 3 && !in_array($t, $stopWords, true)));
+                        if (empty($sigTokens)) $sigTokens = $allTokens;
+                        if (!empty($sigTokens)) {
+                            $tNorm = self::removeDiacritics($title);
+                            $origNorm = self::removeDiacritics($origTitle);
+                            $matchesQuery = str_contains($tNorm, $cleanQNorm) || str_contains($origNorm, $cleanQNorm);
+                            if (!$matchesQuery) {
+                                $matchedCount = 0;
+                                foreach ($sigTokens as $token) {
+                                    if (str_contains($tNorm, $token) || str_contains($origNorm, $token)) $matchedCount++;
+                                }
+                                $required = count($sigTokens) <= 2 ? count($sigTokens) : max(2, count($sigTokens) - 1);
+                                $matchesQuery = ($matchedCount >= $required);
+                            }
+                            if (!$matchesQuery) continue;
+                        }
 
                         $posterUrl = (string)($content['posterUrl'] ?? '');
                         $poster = '';
@@ -1741,14 +1792,46 @@ class OttSyncService
 
         if (!$isDownloaded && !empty($title)) {
             $catalogTitle = Title::where('name', 'LIKE', $title)
+                ->orWhere('name', 'LIKE', "%{$title}%")
                 ->orWhere('slug', 'LIKE', Str::slug($title))
                 ->first();
 
+            if (!$catalogTitle && !empty($originalTitle) && $originalTitle !== $title) {
+                $catalogTitle = Title::where('name', 'LIKE', $originalTitle)
+                    ->orWhere('name', 'LIKE', "%{$originalTitle}%")
+                    ->orWhere('slug', 'LIKE', Str::slug($originalTitle))
+                    ->first();
+            }
+
+            if (!$catalogTitle && preg_match('/^(.*?)\s*\((.*?)\)$/u', $title, $pm)) {
+                $p1 = trim($pm[1]);
+                $p2 = trim($pm[2]);
+                $catalogTitle = Title::where('name', 'LIKE', "%{$p1}%")
+                    ->orWhere('name', 'LIKE', "%{$p2}%")
+                    ->first();
+            }
+
             if ($catalogTitle) {
                 $titleId = $catalogTitle->id;
-                $candidatePath = $catalogTitle->file_path ?: ($catalogTitle->source_path ?: $catalogTitle->stream_path);
-                if (!empty($candidatePath) && !str_starts_with($candidatePath, '/api/')) {
-                    $isDownloaded = $checkDiskFile($candidatePath);
+                if ($catalogTitle->type === 'series') {
+                    $ep = Episode::where('title_id', $catalogTitle->id)->whereNotNull('file_path')->first();
+                    if ($ep && $checkDiskFile($ep->file_path)) {
+                        $isDownloaded = true;
+                        $item['localFilePath'] = $ep->file_path;
+                        $item['filePath'] = $ep->file_path;
+                        $item['file_path'] = $ep->file_path;
+                    }
+                }
+                if (!$isDownloaded) {
+                    $candidatePath = $catalogTitle->file_path ?: ($catalogTitle->source_path ?: $catalogTitle->stream_path);
+                    if (!empty($candidatePath) && !str_starts_with($candidatePath, '/api/')) {
+                        $isDownloaded = $checkDiskFile($candidatePath);
+                        if ($isDownloaded) {
+                            $item['localFilePath'] = $candidatePath;
+                            $item['filePath'] = $candidatePath;
+                            $item['file_path'] = $candidatePath;
+                        }
+                    }
                 }
             }
         }

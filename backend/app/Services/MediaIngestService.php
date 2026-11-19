@@ -328,8 +328,9 @@ class MediaIngestService
                           ->orWhere('name', 'LIKE', "{$st} -%");
                     })->first();
 
-                if ($localTitle && !empty($localTitle->file_path)) {
-                    $res = ProcessMediaIngestJob::resolveDiskPath($localTitle->file_path);
+                $targetPath = $localTitle?->file_path ?: $localTitle?->source_path;
+                if ($localTitle && !empty($targetPath)) {
+                    $res = ProcessMediaIngestJob::resolveDiskPath($targetPath);
                     if ($res && is_dir($res)) {
                         $res = ProcessMediaIngestJob::findFirstPlayableVideoInDirectory($res);
                     }
@@ -386,8 +387,8 @@ class MediaIngestService
             if (str_ends_with($path, $ext)) return true;
         }
 
-        if (str_contains($host, 'youtube.') || str_contains($host, 'youtu.be') || str_contains($host, 'vimeo.') || str_contains($host, 'archive.org') || str_contains($host, 'googleapis.com')) {
-            return true;
+        if (str_contains($host, 'youtube.') || str_contains($host, 'youtu.be') || str_contains($host, 'vimeo.') || str_contains($host, 'archive.org') || str_contains($host, 'dailymotion.')) {
+            return false;
         }
 
         return false;

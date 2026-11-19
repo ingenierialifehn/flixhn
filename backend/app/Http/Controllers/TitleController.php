@@ -40,7 +40,7 @@ class TitleController extends Controller
             $localCandidates = Title::select([
                 'id', 'name', 'slug', 'type', 'provider', 'description',
                 'poster_url', 'backdrop_url', 'release_year', 'genre',
-                'duration_seconds', 'stream_path', 'file_path', 'source_type', 'category_id', 'created_at'
+                'duration_seconds', 'stream_path', 'file_path', 'source_path', 'source_type', 'category_id', 'created_at'
             ])
             ->where(function ($w) use ($searchQuery) {
                 $w->where('name', 'LIKE', "%{$searchQuery}%")
@@ -91,11 +91,20 @@ class TitleController extends Controller
                         };
                         $itemAlpha = $cleanAlpha($itemTitleNorm);
 
-                        $matchedLocal = $localCandidates->first(function ($t) use ($itemTitleNorm, $normHelper, $cleanAlpha, $itemAlpha) {
+                        $origTitle = trim($item['original_title'] ?? '');
+                        $matchedLocal = $localCandidates->first(function ($t) use ($itemTitleNorm, $normHelper, $cleanAlpha, $itemAlpha, $origTitle) {
                             $tNorm = $normHelper(trim($t->name ?? ''));
                             if ($tNorm === $itemTitleNorm) return true;
                             $tAlpha = $cleanAlpha($tNorm);
-                            return !empty($tAlpha) && !empty($itemAlpha) && $tAlpha === $itemAlpha;
+                            if (!empty($tAlpha) && !empty($itemAlpha) && $tAlpha === $itemAlpha) return true;
+                            if (!empty($origTitle)) {
+                                $origNorm = $normHelper($origTitle);
+                                if ($tNorm === $origNorm) return true;
+                                $origAlpha = $cleanAlpha($origNorm);
+                                if (!empty($origAlpha) && $tAlpha === $origAlpha) return true;
+                            }
+                            if (str_contains($tNorm, $itemTitleNorm) || str_contains($itemTitleNorm, $tNorm)) return true;
+                            return false;
                         });
 
                         $hasAuthenticMedia = false;
@@ -103,8 +112,13 @@ class TitleController extends Controller
 
                         if (!$targetLocalTitle) {
                             $targetLocalTitle = Title::where('name', $itemTitle)
-                                ->orWhere('name', 'LIKE', $itemTitle)
+                                ->orWhere('name', 'LIKE', "%{$itemTitle}%")
                                 ->first();
+                            if (!$targetLocalTitle && !empty($origTitle) && $origTitle !== $itemTitle) {
+                                $targetLocalTitle = Title::where('name', $origTitle)
+                                    ->orWhere('name', 'LIKE', "%{$origTitle}%")
+                                    ->first();
+                            }
                         }
 
                         if ($targetLocalTitle) {
@@ -117,8 +131,9 @@ class TitleController extends Controller
                                     }
                                 }
                             }
-                            if (!$hasAuthenticMedia && !empty($targetLocalTitle->file_path)) {
-                                $resFile = \App\Jobs\ProcessMediaIngestJob::resolveDiskPath($targetLocalTitle->file_path);
+                            $targetPath = $targetLocalTitle->file_path ?: $targetLocalTitle->source_path;
+                            if (!$hasAuthenticMedia && !empty($targetPath)) {
+                                $resFile = \App\Jobs\ProcessMediaIngestJob::resolveDiskPath($targetPath);
                                 if ($resFile && file_exists($resFile) && !\App\Jobs\ProcessMediaIngestJob::isBannedOrPiratedSource($resFile) && \App\Jobs\ProcessMediaIngestJob::isVideoFilePlayable($resFile)) {
                                     $hasAuthenticMedia = true;
                                 }
@@ -208,8 +223,9 @@ class TitleController extends Controller
                         }
                     }
                 }
-                if (!$hasValidMedia && !empty($t->file_path)) {
-                    $res = \App\Jobs\ProcessMediaIngestJob::resolveDiskPath($t->file_path);
+                $targetP = $t->file_path ?: $t->source_path;
+                if (!$hasValidMedia && !empty($targetP)) {
+                    $res = \App\Jobs\ProcessMediaIngestJob::resolveDiskPath($targetP);
                     if ($res && file_exists($res) && !\App\Jobs\ProcessMediaIngestJob::isBannedOrPiratedSource($res) && \App\Jobs\ProcessMediaIngestJob::isVideoFilePlayable($res)) {
                         $hasValidMedia = true;
                     }
@@ -247,7 +263,7 @@ class TitleController extends Controller
             $allTitles = Title::select([
                 'id', 'name', 'slug', 'type', 'provider', 'description',
                 'poster_url', 'backdrop_url', 'release_year', 'genre',
-                'is_featured', 'stream_path', 'file_path', 'source_type', 'duration_seconds', 'category_id', 'created_at'
+                'is_featured', 'stream_path', 'file_path', 'source_path', 'source_type', 'duration_seconds', 'category_id', 'created_at'
             ])
             ->withCount('seasons')
             ->orderBy('created_at', 'desc')

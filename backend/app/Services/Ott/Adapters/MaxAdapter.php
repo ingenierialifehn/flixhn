@@ -92,7 +92,23 @@ class MaxAdapter implements OttProviderInterface
         $cleanId = preg_replace('/^(max_|hbo_|ott_hbo_max_|ott_max_)/', '', $contentId);
         $titleRecord = is_numeric($cleanId) ? Title::find((int)$cleanId) : null;
         if (!$titleRecord && !empty($context['title'])) {
-            $titleRecord = Title::where('name', $context['title'])->first();
+            $searchTitle = trim($context['title']);
+            $titleRecord = Title::where('name', $searchTitle)
+                ->orWhere('name', 'LIKE', "%{$searchTitle}%")
+                ->first();
+            if (!$titleRecord && !empty($context['original_title'])) {
+                $origTitle = trim($context['original_title']);
+                $titleRecord = Title::where('name', $origTitle)
+                    ->orWhere('name', 'LIKE', "%{$origTitle}%")
+                    ->first();
+            }
+            if (!$titleRecord && preg_match('/^(.*?)\s*\((.*?)\)$/u', $searchTitle, $pm)) {
+                $p1 = trim($pm[1]);
+                $p2 = trim($pm[2]);
+                $titleRecord = Title::where('name', 'LIKE', "%{$p1}%")
+                    ->orWhere('name', 'LIKE', "%{$p2}%")
+                    ->first();
+            }
         }
         $titleName = $titleRecord?->name ?? ($context['title'] ?? "Contenido Max ({$cleanId})");
         $externalId = $titleRecord?->imdb_id ?: ($titleRecord?->tmdb_id ?: $cleanId);
@@ -100,24 +116,52 @@ class MaxAdapter implements OttProviderInterface
         $appScheme = "max://player/{$externalId}";
         $webUrl = "https://play.max.com/video/watch/{$externalId}";
 
-        if ($titleRecord && !empty($titleRecord->file_path)) {
-            app(\App\Services\RealMediaSourceResolver::class)->purgeIfWrongFile($titleRecord->file_path, $titleName);
-            $titleRecord->refresh();
+        if ($titleRecord) {
+            $chkPath = $titleRecord->file_path ?: $titleRecord->source_path;
+            if (!empty($chkPath)) {
+                app(\App\Services\RealMediaSourceResolver::class)->purgeIfWrongFile($chkPath, $titleName);
+                $titleRecord->refresh();
+            }
         }
 
-        // 1. Si el archivo físico real ya existe en disco local, reproducir directamente
-        if ($titleRecord && !empty($titleRecord->file_path) && file_exists($titleRecord->file_path) && filesize($titleRecord->file_path) > 2097152) {
-            return [
-                'success' => true,
-                'content_id' => $contentId,
-                'title' => $titleName,
-                'provider' => 'max',
-                'provider_name' => 'Max',
-                'playback_type' => 'LOCAL-HLS',
-                'direct_playback' => true,
-                'requires_external_app' => false,
-                'stream_url' => url("/api/stream/title/{$titleRecord->id}"),
-            ];
+        // Si es serie y tiene episodios locales en disco
+        if ($titleRecord && $titleRecord->type === 'series') {
+            $firstEp = $titleRecord->episodes()->whereNotNull('file_path')->first();
+            if ($firstEp && !empty($firstEp->file_path)) {
+                $diskEp = \App\Jobs\ProcessMediaIngestJob::resolveDiskPath($firstEp->file_path) ?: $firstEp->file_path;
+                if (file_exists($diskEp) && !app(\App\Services\RealMediaSourceResolver::class)->isWrongOrLegacyFile($diskEp, $titleName) && filesize($diskEp) > 2097152) {
+                    return [
+                        'success' => true,
+                        'content_id' => $contentId,
+                        'title' => $titleName,
+                        'provider' => 'max',
+                        'provider_name' => 'Max',
+                        'playback_type' => 'LOCAL-HLS',
+                        'direct_playback' => true,
+                        'requires_external_app' => false,
+                        'stream_url' => url("/api/stream/episode/{$firstEp->id}"),
+                    ];
+                }
+            }
+        }
+
+        // 1. Si el archivo físico real ya existe en disco local (file_path o source_path), reproducir directamente
+        $localMedia = $titleRecord?->file_path ?: $titleRecord?->source_path;
+        if ($titleRecord && !empty($localMedia)) {
+            $diskP = \App\Jobs\ProcessMediaIngestJob::resolveDiskPath($localMedia) ?: $localMedia;
+            if (file_exists($diskP) && !app(\App\Services\RealMediaSourceResolver::class)->isWrongOrLegacyFile($diskP, $titleName) && filesize($diskP) > 2097152) {
+                return [
+                    'success' => true,
+                    'content_id' => $contentId,
+                    'title' => $titleName,
+                    'provider' => 'max',
+                    'provider_name' => 'Max',
+                    'playback_type' => 'LOCAL-HLS',
+                    'direct_playback' => true,
+                    'requires_external_app' => false,
+                    'stream_url' => url("/api/stream/title/{$titleRecord->id}"),
+                ];
+            }
         }
 
         // 2. Iniciar descarga e ingesta de fondo en FlixGrab Engine para reproducción progresiva

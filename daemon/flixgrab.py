@@ -143,8 +143,7 @@ EMBY_LOCAL_KEY = os.getenv("EMBY_API_KEY", "ecb7a1c7421f4932a01cb8ab7a1b834c")
 import re
 import unicodedata
 
-UA_VISIONOS = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15"
-UA_WEB = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+UA_FLIXGRAB = "FlixGrab/4.0 (OTT-Sync-Official)"
 
 WRONG_FILE_RULES = {
     249224577: "bunny",
@@ -154,7 +153,61 @@ WRONG_FILE_RULES = {
     922792072: "jurassic",
     802892266: "iboy",
     158268029: "stranger",
+    363976887: "hawkeye",
+    2853203619: "invasion",
+    781274825: "phineas",
+    456678163: "spartacus",
+    2542046808: "mandalorian",
 }
+
+BANNED_EXTERNAL_PATTERNS = (
+    "youtube.com",
+    "youtu.be",
+    "youtubei",
+    "googlevideo.com",
+    "dailymotion.com",
+    "dmcdn.net",
+    "vimeo.com",
+    "archive.org",
+    "commondatastorage.googleapis.com",
+    "gtv-videos-bucket",
+    "blender.org",
+    "test-streams.mux.dev",
+    "akamaized.net/dash264",
+    "cuevana",
+    "pelisplus",
+    "repelis",
+)
+
+PROVIDER_ALIAS_MAP = {
+    "prime": "amazon_prime",
+    "prime_video": "amazon_prime",
+    "amazon": "amazon_prime",
+    "amazon_prime": "amazon_prime",
+    "disney": "disney",
+    "disney_plus": "disney",
+    "disney+": "disney",
+    "netflix": "netflix",
+    "max": "hbo_max",
+    "hbomax": "hbo_max",
+    "hbo_max": "hbo_max",
+    "paramount": "paramount_plus",
+    "paramount+": "paramount_plus",
+    "paramount_plus": "paramount_plus",
+    "apple_tv": "apple_tv",
+    "appletv": "apple_tv",
+    "vix": "vix",
+}
+
+def canonical_provider(provider: str) -> str:
+    p = (provider or "").strip().lower()
+    return PROVIDER_ALIAS_MAP.get(p, p)
+
+def is_banned_external_url(url: str) -> bool:
+    u = (url or "").strip().lower()
+    if not u:
+        return False
+    return any(pat.lower() in u for pat in BANNED_EXTERNAL_PATTERNS)
 
 def strip_accents(s: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFD", s or "") if unicodedata.category(c) != "Mn")
@@ -163,6 +216,43 @@ def normalize_exact(s: str) -> str:
     clean = re.sub(r"\b(19|20)\d{2}\b|\(.*?\)|\[.*?\]", "", s or "")
     return re.sub(r"[^a-z0-9]+", "", strip_accents(clean.lower()))
 
+def extract_title_variants(s: str) -> List[str]:
+    """
+    Extrae el título base y los subtítulos/alias entre paréntesis o después de ':' / '-'
+    (ej. 'John Wick (Otro día para matar)' -> ['John Wick (Otro día para matar)', 'John Wick', 'Otro día para matar']).
+    """
+    raw = (s or "").strip()
+    if not raw:
+        return []
+    variants: List[str] = [raw]
+    no_year = re.sub(r"\b(19|20)\d{2}\b", "", raw).strip()
+    if no_year and no_year not in variants:
+        variants.append(no_year)
+    outside_parens = re.sub(r"\(.*?\)|\[.*?\]", "", no_year).strip()
+    if outside_parens and outside_parens not in variants:
+        variants.append(outside_parens)
+    for inner in re.findall(r"\(([^()]{3,})\)", raw):
+        inner_clean = inner.strip()
+        if inner_clean and not inner_clean.isdigit() and inner_clean not in variants:
+            variants.append(inner_clean)
+    if ":" in outside_parens:
+        parts = [p.strip() for p in outside_parens.split(":") if len(p.strip()) >= 3]
+        for p in parts:
+            if p not in variants:
+                variants.append(p)
+    return variants
+
+def extract_normalized_set(s: str) -> set:
+    norms = set()
+    for v in extract_title_variants(s):
+        n = re.sub(r"[^a-z0-9]+", "", strip_accents(v.lower()))
+        if len(n) >= 3:
+            norms.add(n)
+    base = normalize_exact(s)
+    if len(base) >= 3:
+        norms.add(base)
+    return norms
+
 def significant_words(s: str) -> List[str]:
     stop = {"el", "la", "los", "las", "de", "del", "en", "y", "a", "que", "nos", "un", "una", "por", "con", "para", "se", "al", "lo", "como", "mas", "pero", "sus", "le", "ya", "o", "este", "si", "porque", "esta", "entre", "cuando", "muy", "sin", "sobre", "tambien", "me", "hasta", "hay", "donde", "quien", "desde", "todo"}
     words = re.findall(r"[a-z0-9]+", strip_accents((s or "").lower()))
@@ -170,130 +260,318 @@ def significant_words(s: str) -> List[str]:
     return sig if sig else words
 
 def title_matches_query(cand_title: str, target_title: str) -> bool:
+    cand_norms = extract_normalized_set(cand_title)
+    target_norms = extract_normalized_set(target_title)
+    if cand_norms and target_norms and (cand_norms & target_norms):
+        return True
     sig = significant_words(target_title)
     if not sig:
-        return True
-    cand_norm = strip_accents((cand_title or "").lower())
-    matched = sum(1 for w in sig if w in cand_norm)
-    req = len(sig) if len(sig) <= 3 else max(2, len(sig) - 1)
-    return matched >= req
+        return False
+    cand_words = set(re.findall(r"[a-z0-9]+", strip_accents((cand_title or "").lower())))
+    matched = sum(1 for w in sig if w in cand_words)
+    return matched == len(sig) and len(sig) >= 2
 
-def parse_duration_text(txt: str) -> int:
-    if not txt:
-        return 0
-    parts = [int(p) for p in txt.strip().split(":") if p.isdigit()]
-    if len(parts) == 3:
-        return parts[0] * 3600 + parts[1] * 60 + parts[2]
-    if len(parts) == 2:
-        return parts[0] * 60 + parts[1]
-    return parts[0] if parts else 0
-
-def extract_visionos_hls_for_video_id(video_id: str) -> Optional[Dict[str, Any]]:
+def is_valid_local_media_file(path_str: str, target_title: str) -> bool:
+    if not path_str:
+        return False
+    p = Path(path_str)
+    if not p.is_file():
+        return False
     try:
-        req = urllib.request.Request(f"https://www.youtube.com/embed/{video_id}", headers={"User-Agent": UA_VISIONOS})
-        html = urllib.request.urlopen(req, timeout=8).read().decode("utf-8", errors="ignore")
-        m = re.search(r'"VISITOR_DATA":"([^"]+)"', html)
-        vd = m.group(1) if m else ""
+        sz = p.stat().st_size
+    except Exception:
+        return False
+    if sz <= 2 * 1024 * 1024:
+        return False
+    req_kw = WRONG_FILE_RULES.get(sz)
+    if req_kw and req_kw not in strip_accents((target_title or "").lower()):
+        return False
+    return True
 
-        c = {
-            "clientName": "VISIONOS",
-            "clientVersion": "1.02",
-            "deviceMake": "Apple",
-            "deviceModel": "RealityDevice17,1",
-            "userAgent": UA_VISIONOS,
-            "osName": "visionOS",
-            "osVersion": "26.5.23O471",
-            "visitorData": vd,
-            "hl": "es",
-            "gl": "HN"
-        }
-        payload = json.dumps({"videoId": video_id, "context": {"client": c}, "contentCheckOk": True, "racyCheckOk": True}).encode("utf-8")
-        preq = urllib.request.Request(
-            "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
-            data=payload,
-            headers={"Content-Type": "application/json", "User-Agent": UA_VISIONOS, "X-Goog-Visitor-Id": vd, "X-Youtube-Client-Name": "101", "X-Youtube-Client-Version": "1.02"}
-        )
-        resp = json.loads(urllib.request.urlopen(preq, timeout=8).read().decode("utf-8"))
-        if resp.get("playabilityStatus", {}).get("status") != "OK":
-            return None
-        sd = resp.get("streamingData", {})
-        hls_url = sd.get("hlsManifestUrl")
-        if not hls_url:
-            return None
-
-        af = sd.get("adaptiveFormats", [])
-        v_len = next((int(f.get("contentLength", 0)) for f in af if f.get("itag") in (136, 137, 135) and f.get("contentLength")), 120 * 1024 * 1024)
-        a_len = next((int(f.get("contentLength", 0)) for f in af if f.get("itag") == 140 and f.get("contentLength")), 20 * 1024 * 1024)
-
-        m3u8 = urllib.request.urlopen(urllib.request.Request(hls_url, headers={"User-Agent": UA_VISIONOS}), timeout=8).read().decode("utf-8")
-        lines = m3u8.splitlines()
-
-        audio_candidates = []
-        video_by_itag = {}
-        for l in lines:
-            l = l.strip()
-            if l.startswith("#EXT-X-MEDIA:") and "TYPE=AUDIO" in l:
-                um = re.search(r'URI="([^"]+)"', l)
-                if um:
-                    score = 0
-                    if 'GROUP-ID="234"' in l: score += 10
-                    if 'LANGUAGE="es' in l or 'original' in l.lower(): score += 25
-                    if 'dubbed-auto' in l.lower(): score -= 20
-                    if 'DEFAULT=YES' in l: score += 5
-                    audio_candidates.append((score, um.group(1)))
-            elif l.startswith("http"):
-                im = re.search(r"/itag/(\d+)/", l)
-                if im:
-                    video_by_itag[int(im.group(1))] = l
-
-        audio_candidates.sort(key=lambda x: x[0], reverse=True)
-        audio_hls = audio_candidates[0][1] if audio_candidates else None
-        video_hls = next((video_by_itag[i] for i in (232, 270, 231, 230, 229) if i in video_by_itag), None)
-        if not video_hls or not audio_hls:
-            return None
-
-        return {
-            "mode": "hls_dual",
-            "video_id": video_id,
-            "matched_title": resp.get("videoDetails", {}).get("title") or video_id,
-            "duration_seconds": int(resp.get("videoDetails", {}).get("lengthSeconds") or 1800),
-            "total_bytes": v_len + a_len,
-            "video_url": video_hls,
-            "audio_url": audio_hls,
-            "user_agent": UA_VISIONOS,
-        }
-    except Exception as e:
-        logger.debug(f"Aviso extrayendo VISIONOS HLS para {video_id}: {e}")
+def map_server_path_to_local(path_str: str) -> Optional[Path]:
+    if not path_str:
         return None
+    s = str(path_str).replace("\\", "/")
+    candidates = [Path(s)]
+    if "/var/www/html/storage/media" in s:
+        sub = s.split("/var/www/html/storage/media", 1)[1].lstrip("/")
+        candidates.append(MEDIA_DIR / sub)
+    for c in candidates:
+        try:
+            if c.is_file():
+                return c
+        except Exception:
+            continue
+    return None
+
+def get_connected_ott_accounts() -> Dict[str, Dict[str, Any]]:
+    """
+    Obtiene únicamente las plataformas que el usuario tiene vinculadas y activas en OTT Sync
+    (tablas ott_provider_accounts y ott_sessions).
+    """
+    connected: Dict[str, Dict[str, Any]] = {}
+    conn = get_mysql_connection()
+    if not conn:
+        return connected
+    try:
+        cur = conn.cursor(dictionary=True)
+        cur.execute(
+            "SELECT provider, email, status, session_cookies, auth_token, metadata "
+            "FROM ott_provider_accounts WHERE status = 'connected'"
+        )
+        for row in cur.fetchall() or []:
+            prov = canonical_provider(row.get("provider") or "")
+            if prov:
+                connected[prov] = row
+        cur.execute(
+            "SELECT provider, access_token, refresh_token, expires_at "
+            "FROM ott_sessions WHERE refresh_token IS NOT NULL AND refresh_token != ''"
+        )
+        for row in cur.fetchall() or []:
+            prov = canonical_provider(row.get("provider") or "")
+            if prov and prov not in connected:
+                connected[prov] = {
+                    "provider": prov,
+                    "status": "connected",
+                    "auth_token": row.get("access_token"),
+                    "metadata": None,
+                }
+        cur.close()
+    except Exception as e:
+        logger.debug(f"Error consultando cuentas OTT vinculadas: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return connected
+
+def resolve_ott_catalog_metadata(title_name: str, provider: str) -> Dict[str, Any]:
+    """
+    Busca en ott_contents y en los catálogos OTT vinculados el título original y metadatos
+    de la película/serie dentro de la plataforma OTT correspondiente.
+    """
+    info: Dict[str, Any] = {
+        "title": title_name,
+        "original_title": None,
+        "provider": canonical_provider(provider),
+        "external_id": None,
+        "deep_link": None,
+    }
+    target_norms = extract_normalized_set(title_name)
+    if not target_norms:
+        return info
+
+    conn = get_mysql_connection()
+    if conn:
+        try:
+            cur = conn.cursor(dictionary=True)
+            cur.execute(
+                "SELECT provider, external_id, title, payload, deep_link FROM ott_contents ORDER BY id DESC LIMIT 500"
+            )
+            for row in cur.fetchall() or []:
+                row_title = row.get("title") or ""
+                payload_raw = row.get("payload")
+                payload = {}
+                if isinstance(payload_raw, str) and payload_raw.strip():
+                    try:
+                        payload = json.loads(payload_raw)
+                    except Exception:
+                        payload = {}
+                elif isinstance(payload_raw, dict):
+                    payload = payload_raw
+                orig = payload.get("original_title") or payload.get("originalTitle") or ""
+                row_norms = extract_normalized_set(row_title) | extract_normalized_set(orig)
+                if target_norms & row_norms:
+                    info["original_title"] = orig or row_title
+                    info["external_id"] = row.get("external_id")
+                    info["deep_link"] = row.get("deep_link")
+                    if not info["provider"] or info["provider"] == "flixgrab":
+                        info["provider"] = canonical_provider(row.get("provider") or "")
+                    break
+            cur.close()
+        except Exception:
+            pass
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    return info
 
 def resolve_real_source_for_task(task: 'DownloadTask') -> Optional[Dict[str, Any]]:
+    """
+    Resuelve la fuente de video EXCLUSIVAMENTE desde las plataformas vinculadas en OTT Sync
+    y la biblioteca autenticada del servidor asociada a esas plataformas.
+    PROHIBIDO usar YouTube, Dailymotion, Archive.org o páginas piratas.
+    """
     title_name = (task.title or "").strip()
-    norm_target = normalize_exact(title_name)
+    if not title_name:
+        return None
 
-    # 1. Coincidencia EXACTA en Emby local
-    if norm_target:
+    connected_accounts = get_connected_ott_accounts()
+    req_provider = canonical_provider(task.provider or "")
+
+    # Validar que la plataforma solicitada esté vinculada en OTT Sync
+    if req_provider and req_provider not in ("flixgrab", "local", "emby", "ott"):
+        if connected_accounts and req_provider not in connected_accounts:
+            logger.warning(
+                f"Plataforma '{req_provider}' no está vinculada en OTT Sync "
+                f"(vinculadas: {list(connected_accounts.keys())}). Abortando resolución externa."
+            )
+            return None
+
+    # Rechazar cualquier source_url que provenga de YouTube o sitios externos prohibidos
+    if task.source_url and is_banned_external_url(task.source_url):
+        logger.warning(f"URL externa prohibida detectada y bloqueada para '{title_name}': {task.source_url}")
+        task.source_url = ""
+
+    ott_meta = resolve_ott_catalog_metadata(title_name, req_provider)
+    candidate_titles = []
+    for t in [title_name, ott_meta.get("original_title")]:
+        if t:
+            for v in extract_title_variants(t):
+                if v not in candidate_titles:
+                    candidate_titles.append(v)
+
+    target_norms = set()
+    for ct in candidate_titles:
+        target_norms |= extract_normalized_set(ct)
+
+    # 1. Verificar archivo físico autenticado en MySQL (titles.file_path / titles.source_path / episodes.file_path)
+    conn = get_mysql_connection()
+    if conn and target_norms:
         try:
-            q = urllib.parse.quote(title_name)
-            search_url = f"{EMBY_LOCAL_URL}/emby/Items?SearchTerm={q}&IncludeItemTypes=Movie,Series&Recursive=true&Limit=10&Fields=MediaSources,Path&api_key={EMBY_LOCAL_KEY}"
-            req = urllib.request.Request(search_url, headers={"User-Agent": "FlixGrab/3.0"})
-            with urllib.request.urlopen(req, timeout=4) as resp:
+            cur = conn.cursor(dictionary=True)
+            cur.execute(
+                "SELECT id, name, type, provider, file_path, source_path, video_url "
+                "FROM titles WHERE file_path IS NOT NULL OR source_path IS NOT NULL"
+            )
+            for row in cur.fetchall() or []:
+                row_name = row.get("name") or ""
+                row_norms = extract_normalized_set(row_name)
+                if not (target_norms & row_norms):
+                    continue
+                for col in ("file_path", "source_path"):
+                    raw_p = row.get(col)
+                    local_p = map_server_path_to_local(raw_p)
+                    if local_p and is_valid_local_media_file(str(local_p), row_name):
+                        sz = local_p.stat().st_size
+                        logger.info(
+                            f"[OTT-Sync] Fuente autenticada en catálogo para '{title_name}' "
+                            f"(plataforma={req_provider or row.get('provider') or 'ott'}): {local_p}"
+                        )
+                        cur.close()
+                        conn.close()
+                        return {
+                            "mode": "local_file",
+                            "local_path": str(local_p),
+                            "video_url": str(local_p),
+                            "audio_url": None,
+                            "total_bytes": sz,
+                            "matched_title": row_name,
+                            "provider": req_provider or canonical_provider(row.get("provider") or ""),
+                            "user_agent": UA_FLIXGRAB,
+                        }
+                # Si es serie, revisar episodios con archivo real
+                if (row.get("type") or "").lower() == "series":
+                    cur.execute(
+                        "SELECT file_path FROM episodes WHERE title_id = %s AND file_path IS NOT NULL "
+                        "ORDER BY season_number ASC, episode_number ASC LIMIT 5",
+                        (row["id"],)
+                    )
+                    for ep in cur.fetchall() or []:
+                        local_ep = map_server_path_to_local(ep.get("file_path"))
+                        if local_ep and is_valid_local_media_file(str(local_ep), row_name):
+                            sz = local_ep.stat().st_size
+                            logger.info(f"[OTT-Sync] Episodio autenticado para '{title_name}': {local_ep}")
+                            cur.close()
+                            conn.close()
+                            return {
+                                "mode": "local_file",
+                                "local_path": str(local_ep),
+                                "video_url": str(local_ep),
+                                "audio_url": None,
+                                "total_bytes": sz,
+                                "matched_title": row_name,
+                                "provider": req_provider or canonical_provider(row.get("provider") or ""),
+                                "user_agent": UA_FLIXGRAB,
+                            }
+            cur.close()
+        except Exception as e:
+            logger.debug(f"Error buscando en tabla titles: {e}")
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    # 2. Búsqueda en el servidor multimedia vinculado (Emby) usando título, título original y variantes
+    for search_term in candidate_titles:
+        try:
+            q = urllib.parse.quote(search_term)
+            search_url = (
+                f"{EMBY_LOCAL_URL}/emby/Items?SearchTerm={q}"
+                f"&IncludeItemTypes=Movie,Series&Recursive=true&Limit=15"
+                f"&Fields=MediaSources,Path,OriginalTitle&api_key={EMBY_LOCAL_KEY}"
+            )
+            req = urllib.request.Request(search_url, headers={"User-Agent": UA_FLIXGRAB})
+            with urllib.request.urlopen(req, timeout=5) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 for item in data.get("Items", []):
-                    if normalize_exact(item.get("Name", "")) != norm_target:
+                    item_name = item.get("Name") or ""
+                    item_orig = item.get("OriginalTitle") or ""
+                    item_norms = extract_normalized_set(item_name) | extract_normalized_set(item_orig)
+                    if not (target_norms & item_norms):
                         continue
+
+                    item_path = item.get("Path") or ""
+                    local_item_path = map_server_path_to_local(item_path)
+                    if item.get("Type") != "Series" and local_item_path and is_valid_local_media_file(str(local_item_path), item_name):
+                        sz = local_item_path.stat().st_size
+                        logger.info(f"[OTT-Sync] Archivo directo verificado para '{title_name}' -> '{item_name}': {local_item_path}")
+                        return {
+                            "mode": "local_file",
+                            "local_path": str(local_item_path),
+                            "video_url": str(local_item_path),
+                            "audio_url": None,
+                            "total_bytes": sz,
+                            "matched_title": item_name,
+                            "provider": req_provider,
+                            "user_agent": UA_FLIXGRAB,
+                        }
+
                     item_id = item.get("Id")
                     if item.get("Type") == "Series" and item_id:
-                        ep_url = f"{EMBY_LOCAL_URL}/emby/Shows/{item_id}/Episodes?Limit=1&Fields=MediaSources,Path&api_key={EMBY_LOCAL_KEY}"
-                        with urllib.request.urlopen(urllib.request.Request(ep_url, headers={"User-Agent": "FlixGrab/3.0"}), timeout=4) as er:
+                        ep_url = (
+                            f"{EMBY_LOCAL_URL}/emby/Shows/{item_id}/Episodes"
+                            f"?Limit=1&Fields=MediaSources,Path&api_key={EMBY_LOCAL_KEY}"
+                        )
+                        with urllib.request.urlopen(urllib.request.Request(ep_url, headers={"User-Agent": UA_FLIXGRAB}), timeout=5) as er:
                             eps = json.loads(er.read().decode("utf-8")).get("Items", [])
                             if eps:
-                                ep_id = eps[0].get("Id")
+                                ep = eps[0]
+                                ep_local = map_server_path_to_local(ep.get("Path") or "")
+                                if ep_local and is_valid_local_media_file(str(ep_local), item_name):
+                                    return {
+                                        "mode": "local_file",
+                                        "local_path": str(ep_local),
+                                        "video_url": str(ep_local),
+                                        "audio_url": None,
+                                        "total_bytes": ep_local.stat().st_size,
+                                        "matched_title": item_name,
+                                        "provider": req_provider,
+                                        "user_agent": UA_FLIXGRAB,
+                                    }
+                                ep_id = ep.get("Id")
                                 return {
                                     "mode": "single_url",
                                     "video_url": f"{EMBY_LOCAL_URL}/emby/Videos/{ep_id}/stream.mp4?static=true&api_key={EMBY_LOCAL_KEY}",
                                     "audio_url": None,
-                                    "total_bytes": int((eps[0].get("MediaSources") or [{}])[0].get("Size") or 500 * 1024 * 1024),
-                                    "user_agent": "FlixGrab/3.0",
+                                    "total_bytes": int((ep.get("MediaSources") or [{}])[0].get("Size") or 500 * 1024 * 1024),
+                                    "matched_title": item_name,
+                                    "provider": req_provider,
+                                    "user_agent": UA_FLIXGRAB,
                                 }
                     elif item_id:
                         return {
@@ -301,61 +579,32 @@ def resolve_real_source_for_task(task: 'DownloadTask') -> Optional[Dict[str, Any
                             "video_url": f"{EMBY_LOCAL_URL}/emby/Videos/{item_id}/stream.mp4?static=true&api_key={EMBY_LOCAL_KEY}",
                             "audio_url": None,
                             "total_bytes": int((item.get("MediaSources") or [{}])[0].get("Size") or 1200 * 1024 * 1024),
-                            "user_agent": "FlixGrab/3.0",
+                            "matched_title": item_name,
+                            "provider": req_provider,
+                            "user_agent": UA_FLIXGRAB,
                         }
-        except Exception:
-            pass
-
-    # 2. Búsqueda y extracción del contenido REAL en YouTube VISIONOS HLS
-    queries = [
-        f"{title_name} capitulo 1 completo español",
-        f"{title_name} completo español",
-        f"{title_name} pelicula completa español latino",
-    ]
-    candidates = []
-    seen = set()
-    for q in queries:
-        try:
-            s_url = "https://www.youtube.com/results?search_query=" + urllib.parse.quote(q)
-            s_req = urllib.request.Request(s_url, headers={"User-Agent": UA_WEB, "Accept-Language": "es-419,es;q=0.9"})
-            html = urllib.request.urlopen(s_req, timeout=8).read().decode("utf-8", errors="ignore")
-            m = re.search(r"var ytInitialData = (\{.*?\});</script>", html, re.S)
-            if not m:
-                continue
-            data = json.loads(m.group(1))
-            sections = data["contents"]["twoColumnSearchResultsRenderer"]["primaryContents"]["sectionListRenderer"]["contents"]
-            for sec in sections:
-                for item in sec.get("itemSectionRenderer", {}).get("contents", []):
-                    v = item.get("videoRenderer")
-                    if not v:
-                        continue
-                    vid = v.get("videoId")
-                    if not vid or vid in seen:
-                        continue
-                    vt = "".join(r.get("text", "") for r in v.get("title", {}).get("runs", []))
-                    dur_sec = parse_duration_text(v.get("lengthText", {}).get("simpleText", ""))
-                    if dur_sec < 120 or not title_matches_query(vt, title_name):
-                        continue
-                    seen.add(vid)
-                    score = (100 if dur_sec >= 900 else 40)
-                    lvt = strip_accents(vt.lower())
-                    if re.search(r"\b(capitulo\s*0?1|episodio\s*0?1|cap\s*0?1)\b", lvt):
-                        score += 50
-                    if "completo" in lvt or "completa" in lvt:
-                        score += 30
-                    candidates.append((score, vid, vt))
-            if len(candidates) >= 3:
-                break
         except Exception:
             continue
 
-    candidates.sort(key=lambda x: x[0], reverse=True)
-    for _, vid, vt in candidates[:5]:
-        extracted = extract_visionos_hls_for_video_id(vid)
-        if extracted:
-            logger.info(f"Fuente real verificada para '{title_name}': '{extracted['matched_title']}' ({vid})")
-            return extracted
+    # 3. Si task.source_url es un stream directo legítimo (NO YouTube/Dailymotion/Archive/pirata) de una cuenta OTT vinculada
+    if task.source_url and not is_banned_external_url(task.source_url):
+        if task.source_url.startswith("http://") or task.source_url.startswith("https://"):
+            if not req_provider or req_provider in connected_accounts or "127.0.0.1" in task.source_url or "localhost" in task.source_url:
+                return {
+                    "mode": "single_url",
+                    "video_url": task.source_url,
+                    "audio_url": None,
+                    "total_bytes": 800 * 1024 * 1024,
+                    "matched_title": title_name,
+                    "provider": req_provider,
+                    "user_agent": UA_FLIXGRAB,
+                }
 
+    logger.warning(
+        f"[OTT-Sync] No se encontró stream autenticado para '{title_name}' "
+        f"en las plataformas vinculadas ({list(connected_accounts.keys())}). "
+        f"Se rechaza cualquier fallback a YouTube o páginas externas."
+    )
     return None
 
 MIN_SEGMENTS_FOR_PLAYBACK = int(os.getenv("FLIXGRAB_MIN_SEGMENTS_PLAY", "1"))
@@ -881,7 +1130,10 @@ class FlixGrabEngine:
             headers["Range"] = f"bytes={existing_bytes}-"
             logger.info(f"Reanudando descarga de '{task.title}' desde byte {existing_bytes}...")
 
-        effective_url = resolve_playable_source_url(task)
+        resolved = resolve_real_source_for_task(task)
+        if not resolved or not resolved.get("video_url"):
+            raise RuntimeError(f"No se encontró fuente real verificada para '{task.title}'")
+        effective_url = resolved.get("video_url")
         timeout = aiohttp.ClientTimeout(total=7200, connect=30)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(effective_url, headers=headers) as resp:
@@ -981,12 +1233,41 @@ class FlixGrabEngine:
         if not resolved:
             raise RuntimeError(f"No se encontró fuente real verificada para '{task.title}'")
 
+        if resolved.get("mode") == "local_file" and resolved.get("local_path"):
+            local_src = Path(resolved["local_path"])
+            if local_src.exists() and local_src.stat().st_size > 2 * 1024 * 1024:
+                sz = local_src.stat().st_size
+                task.downloaded_bytes = sz
+                task.total_bytes = sz
+                if dest_file.exists():
+                    dest_file.unlink()
+                try:
+                    os.link(str(local_src), str(dest_file))
+                except Exception:
+                    try:
+                        os.symlink(str(local_src), str(dest_file))
+                    except Exception:
+                        fast_file = dest_file.with_suffix(".fast.mp4")
+                        remux_cmd = [FFMPEG_BINARY or "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(local_src), "-c", "copy", "-movflags", "+faststart", str(fast_file)]
+                        res = subprocess.run(remux_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        if res.returncode == 0 and fast_file.exists() and fast_file.stat().st_size > 512 * 1024:
+                            fast_file.rename(dest_file)
+                        else:
+                            shutil.copy2(str(local_src), str(dest_file))
+                task.progress = 100.0
+                task.download_speed = "Finalizado"
+                task.eta = "00:00"
+                task.can_play_progressive = True
+                self.sync_db(task)
+                logger.info(f"[FlixGrab] Archivo local vinculado instantáneamente para '{task.title}': {dest_file} ({sz} bytes)")
+                return
+
         expected_bytes = max(25 * 1024 * 1024, int(resolved.get("total_bytes") or (140 * 1024 * 1024)))
         task.total_bytes = expected_bytes
         task.can_play_progressive = True
         self.sync_db(task)
 
-        ua = resolved.get("user_agent") or UA_VISIONOS
+        ua = resolved.get("user_agent") or UA_FLIXGRAB
         ffmpeg_bin = FFMPEG_BINARY or "ffmpeg"
 
         if resolved.get("mode") == "hls_dual" and resolved.get("video_url") and resolved.get("audio_url"):

@@ -637,6 +637,8 @@ class ProcessMediaIngestJob implements ShouldQueue
 
         $lower = mb_strtolower($diskPath);
         $bannedTerms = [
+            'youtube', 'youtu.be', 'youtubei', 'dailymotion', 'vimeo', 'archive.org',
+            'mitorrent', 'pelisenhd',
             'todopelis', 'todopelishd', 'cinecalidad', 'hackstore', 'pelisplus',
             'repelis', 'cuevana', 'gnula', 'divx', 'granpelis', 'somosmovies',
             'alt-torrent', 'yify', 'yts', 'rarbg', 'faridieck', 'descargas'
@@ -816,12 +818,23 @@ class ProcessMediaIngestJob implements ShouldQueue
             if (!$isSeries) {
                 $matchedTitle = \App\Models\Title::where('type', 'movie')
                     ->where(function($q) use ($title) {
-                        $q->where('name', $title)->orWhere('title', $title);
+                        $q->where('name', $title)->orWhere('title', $title)->orWhere('name', 'LIKE', "%{$title}%");
                     })->first();
-                if ($matchedTitle && !empty($matchedTitle->file_path)) {
-                    $source = self::resolveDiskPath($matchedTitle->file_path);
-                    if ($source && $source !== $diskPath && File::isFile($source) && $linkSuccess($source)) {
-                        return true;
+                if (!$matchedTitle && preg_match('/^(.*?)\s*\((.*?)\)$/u', $title, $pm)) {
+                    $p1 = trim($pm[1]);
+                    $p2 = trim($pm[2]);
+                    $matchedTitle = \App\Models\Title::where('type', 'movie')
+                        ->where(function($q) use ($p1, $p2) {
+                            $q->where('name', 'LIKE', "%{$p1}%")->orWhere('name', 'LIKE', "%{$p2}%");
+                        })->first();
+                }
+                if ($matchedTitle) {
+                    $targetPath = $matchedTitle->file_path ?: $matchedTitle->source_path;
+                    if (!empty($targetPath)) {
+                        $source = self::resolveDiskPath($targetPath);
+                        if ($source && $source !== $diskPath && File::isFile($source) && $linkSuccess($source)) {
+                            return true;
+                        }
                     }
                 }
             }
@@ -1032,34 +1045,7 @@ class ProcessMediaIngestJob implements ShouldQueue
 
         }
 
-        $titleLower = mb_strtolower($title ?? '');
-
-        if (str_contains($titleLower, 'rescate') || str_contains($titleLower, 'extraction')) {
-
-            $candidates[] = 'https://archive.org/download/movie-extraction-2-2023/MOVIE%20Extraction%202%20%282023%29.mp4';
-
-        } elseif (str_contains($titleLower, 'stranger')) {
-
-            $candidates[] = 'https://archive.org/download/stranger-things-s01e01/Stranger.Things.S01E01.720p.mkv';
-
-        } elseif (str_contains($titleLower, 'calamar') || str_contains($titleLower, 'squid')) {
-
-            $candidates[] = 'https://archive.org/download/squid-game-s02e01/Squid.Game.S02E01.mp4';
-
-        } elseif (str_contains($titleLower, 'glass onion') || str_contains($titleLower, 'knives out')) {
-
-            $candidates[] = 'https://archive.org/download/glass-onion-a-knives-out-mystery-2022-1080p/Glass%20Onion%20A%20Knives%20Out%20Mystery%20%282022%29%201080p.mp4';
-
-        } elseif (str_contains($titleLower, 'merlina') || str_contains($titleLower, 'wednesday')) {
-
-            $candidates[] = 'https://archive.org/download/wednesday_dance_hd/wednesday_dance_hd.mp4';
-
-        } elseif (str_contains($titleLower, 'rebel ridge')) {
-
-            $candidates[] = 'https://archive.org/download/rebel-ridge-2024/Rebel.Ridge.2024.1080p.mkv';
-
-        }
-
+        // Jamás inyectar URLs de Archive.org ni videos ajenos
         return array_unique(array_filter($candidates));
 
     }

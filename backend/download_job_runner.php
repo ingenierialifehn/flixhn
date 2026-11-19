@@ -123,7 +123,7 @@ try {
         @unlink($partFile);
     }
 
-    $ua = $resolved['user_agent'] ?? RealMediaSourceResolver::UA_VISIONOS;
+    $ua = $resolved['user_agent'] ?? RealMediaSourceResolver::UA_FLIXGRAB;
     $uaArg = escapeshellarg($ua);
     $partArg = escapeshellarg($partFile);
 
