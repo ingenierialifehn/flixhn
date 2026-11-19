@@ -951,10 +951,23 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
             content_id: String(activeMedia?.id || ''),
             provider: activeMedia?.provider,
             title: activeMedia?.title || activeMedia?.name || title?.name,
+            original_title: activeMedia?.original_title || activeMedia?.metadata?.original_title || title?.original_title,
+            web_url: activeMedia?.web_url || activeMedia?.metadata?.web_url || title?.web_url,
+            app_url: activeMedia?.app_url || activeMedia?.metadata?.app_url || title?.app_url,
+            poster_url: activeMedia?.poster_url || title?.poster_url,
             type: activeMedia?.type || (currentEpisode ? 'episode' : 'movie'),
           });
 
           if (isCancelled) return;
+
+          // 0. Si el contenido es DRM oficial en la plataforma OTT vinculada, mostrar modal oficial directo
+          if (ottRes?.playback_type === 'OTT-EXTERNAL' || ottRes?.requires_external_app) {
+            setSourceType('OTT-EXTERNAL');
+            setOttPlaybackInfo(ottRes);
+            setIsLoading(false);
+            setPlaybackError(null);
+            return;
+          }
 
           // 1. Si el archivo ya está en disco local o es LOCAL-DIRECT, reproducir inmediatamente
           if ((ottRes?.playback_type === 'LOCAL-DIRECT' || ottRes?.playback_type === 'LOCAL-HLS') && ottRes?.stream_url) {
@@ -1843,7 +1856,7 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
       />
 
       {/* Botón Central de Reproducción si el navegador pausó o espera interacción */}
-      {!isPlaying && !isLoading && !playbackError && (
+      {!isPlaying && !isLoading && !playbackError && sourceType !== 'OTT-EXTERNAL' && (
         <button
           onClick={togglePlay}
           className="absolute inset-0 flex items-center justify-center bg-black/20 hover:bg-black/35 transition-colors z-20 cursor-pointer group"
@@ -1892,8 +1905,17 @@ const VideoPlayer = ({ title: initialTitle, episode: initialEpisode, initialTime
       )}
 
 
+      {/* Modal Oficial de Interoperabilidad OTT (Netflix, Disney+, Prime Video, Max) */}
+      {sourceType === 'OTT-EXTERNAL' && ottPlaybackInfo && (
+        <OttExternalModal
+          title={title}
+          playbackInfo={ottPlaybackInfo}
+          onClose={handleClose}
+        />
+      )}
+
       {/* Mensaje de Error de Reproducción */}
-      {playbackError && (
+      {playbackError && sourceType !== 'OTT-EXTERNAL' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/90 z-50 p-6 text-center">
           <div className="w-16 h-16 rounded-full bg-red-950/80 border border-red-600/50 flex items-center justify-center text-red-500 mb-4">
             <X className="w-8 h-8" />

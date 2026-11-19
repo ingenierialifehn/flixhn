@@ -58,6 +58,34 @@ class RealMediaSourceResolver
     }
 
     /**
+     * Verifica que una URL HTTP(S) corresponda a un flujo multimedia directo reproducible por FFmpeg
+     * y NO a una página web HTML protegida por DRM (como netflix.com/title/... o disneyplus.com/...).
+     */
+    public function isPlayableDirectStreamUrl(?string $url): bool
+    {
+        if (empty($url) || $this->isBannedUrl($url)) return false;
+        if (!str_starts_with($url, 'http://') && !str_starts_with($url, 'https://')) return false;
+        $lower = strtolower($url);
+        $htmlPortalHosts = [
+            'netflix.com/', 'disneyplus.com/', 'primevideo.com/', 'amazon.com/',
+            'play.max.com/', 'max.com/', 'tv.apple.com/', 'paramountplus.com/',
+        ];
+        foreach ($htmlPortalHosts as $h) {
+            if (str_contains($lower, $h)) {
+                return false;
+            }
+        }
+        if (str_contains($lower, '/emby/videos/') || str_contains($lower, '/api/stream/')) {
+            return true;
+        }
+        $path = strtolower((string) (parse_url($url, PHP_URL_PATH) ?? ''));
+        foreach (['.mp4', '.m3u8', '.mkv', '.ts', '.webm', '.mov', '.mpd'] as $ext) {
+            if (str_ends_with($path, $ext)) return true;
+        }
+        return false;
+    }
+
+    /**
      * Detecta si un archivo en storage/media pertenece a un reemplazo incorrecto o muestra legacy.
      */
     public function isWrongOrLegacyFile(?string $filePath, ?string $titleName = null): bool
@@ -301,18 +329,16 @@ class RealMediaSourceResolver
             return $embyMatch;
         }
 
-        // 3. Si sourceUrl es un stream directo legítimo y no prohibido
-        if (!empty($sourceUrl) && !$this->isBannedUrl($sourceUrl)) {
-            if (str_starts_with($sourceUrl, 'http://') || str_starts_with($sourceUrl, 'https://')) {
-                return [
-                    'mode' => 'single_url',
-                    'video_url' => $sourceUrl,
-                    'audio_url' => null,
-                    'total_bytes' => 800 * 1024 * 1024,
-                    'matched_title' => $titleName,
-                    'user_agent' => self::UA_FLIXGRAB,
-                ];
-            }
+        // 3. Si sourceUrl es un stream de video directo real (NUNCA páginas HTML de Netflix/Disney/Prime)
+        if (!empty($sourceUrl) && !$this->isBannedUrl($sourceUrl) && $this->isPlayableDirectStreamUrl($sourceUrl)) {
+            return [
+                'mode' => 'single_url',
+                'video_url' => $sourceUrl,
+                'audio_url' => null,
+                'total_bytes' => 800 * 1024 * 1024,
+                'matched_title' => $titleName,
+                'user_agent' => self::UA_FLIXGRAB,
+            ];
         }
 
         Log::warning("RealMediaSourceResolver: No se encontró stream autenticado para [{$titleName}] en plataformas vinculadas. Se rechaza cualquier fallback a YouTube o páginas externas.");

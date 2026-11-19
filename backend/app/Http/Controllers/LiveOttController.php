@@ -118,6 +118,10 @@ class LiveOttController extends Controller
             $playbackInfo = $this->ottManager->resolveStreamLink($contentId, $provider, [
                 'type' => $type,
                 'title' => $request->input('title') ?? $request->input('name'),
+                'original_title' => $request->input('original_title'),
+                'web_url' => $request->input('web_url'),
+                'app_url' => $request->input('app_url'),
+                'poster_url' => $request->input('poster_url'),
                 'client_ip' => $request->ip(),
                 'user_id' => $request->user()?->id,
             ]);

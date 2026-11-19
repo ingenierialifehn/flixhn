@@ -164,47 +164,49 @@ class DisneyPlusAdapter implements OttProviderInterface
             }
         }
 
-        // 2. Iniciar descarga e ingesta de fondo en FlixGrab Engine para reproducción progresiva
-        try {
-            $downloadService = app(\App\Services\DownloadService::class);
-            $job = $downloadService->requestDownload([
-                'content_id' => (string) $contentId,
-                'title' => $titleName,
-                'provider' => 'disney',
-                'source_url' => $webUrl,
-                'priority' => 1,
-                'type' => $context['type'] ?? $titleRecord?->type ?? null,
-            ]);
-
-            $directProgUrl = url("/api/streaming/progressive/{$job->id}");
-            return [
-                'success' => true,
-                'content_id' => $contentId,
-                'external_id' => (string) $externalId,
-                'title' => $titleName,
-                'provider' => 'disney',
-                'provider_name' => 'Disney+',
-                'playback_type' => $job->status === 'READY' ? 'LOCAL-DIRECT' : 'PROGRESSIVE-HLS',
-                'direct_playback' => true,
-                'requires_external_app' => false,
-                'status' => $job->status,
-                'job_id' => $job->job_id,
-                'download_job_id' => $job->id,
-                'stream_url' => $directProgUrl,
-                'transcode_url' => url("/api/streaming/progressive/{$job->id}?transcode=1"),
-                'progressive_url' => $directProgUrl,
-                'direct_url' => $directProgUrl,
-                'can_play_progressive' => true,
-                'progress' => (float) $job->progress,
-                'download_speed' => $job->download_speed,
-                'eta' => $job->eta,
-                'app_url' => $appScheme,
-                'web_url' => $webUrl,
-                'brand_color' => '#0063E5',
-            ];
-        } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::warning("DisneyPlusAdapter: Error solicitando descarga FlixGrab: " . $e->getMessage());
+        // 2. Verificar en Emby / almacenamiento local mediante RealMediaSourceResolver (título y variantes)
+        $resolver = app(\App\Services\RealMediaSourceResolver::class);
+        $resolvedLocal = $resolver->resolveRealSource($titleName, $context['type'] ?? $titleRecord?->type ?? null, null, 'disney');
+        if ($resolvedLocal) {
+            if (!empty($resolvedLocal['title_id'])) {
+                $streamEndpoint = !empty($resolvedLocal['episode_id'])
+                    ? url("/api/stream/episode/{$resolvedLocal['episode_id']}")
+                    : url("/api/stream/title/{$resolvedLocal['title_id']}");
+                return [
+                    'success' => true,
+                    'content_id' => $contentId,
+                    'title' => $resolvedLocal['matched_title'] ?? $titleName,
+                    'provider' => 'disney',
+                    'provider_name' => 'Disney+',
+                    'playback_type' => 'LOCAL-HLS',
+                    'direct_playback' => true,
+                    'requires_external_app' => false,
+                    'stream_url' => $streamEndpoint,
+                ];
+            }
+            if (($resolvedLocal['mode'] ?? '') === 'single_url' && !empty($resolvedLocal['video_url'])) {
+                return [
+                    'success' => true,
+                    'content_id' => $contentId,
+                    'title' => $resolvedLocal['matched_title'] ?? $titleName,
+                    'provider' => 'disney',
+                    'provider_name' => 'Disney+',
+                    'playback_type' => 'LOCAL-DIRECT',
+                    'direct_playback' => true,
+                    'requires_external_app' => false,
+                    'stream_url' => $resolvedLocal['video_url'],
+                ];
+            }
         }
+
+        // 3. El título pertenece exclusivamente al catálogo oficial con DRM de Disney+ (no está en disco local).
+        // Resolver el enlace oficial REAL (JustWatch offers) y abrir mediante interoperabilidad oficial (sin YouTube ni errores 404).
+        $officialLinks = \App\Services\OttSyncService::resolveOfficialWatchUrl(
+            $titleName,
+            'disney',
+            $context['web_url'] ?? null,
+            $context['app_url'] ?? null
+        );
 
         return [
             'success' => true,
@@ -213,12 +215,15 @@ class DisneyPlusAdapter implements OttProviderInterface
             'title' => $titleName,
             'provider' => 'disney',
             'provider_name' => 'Disney+',
-            'playback_type' => 'PROGRESSIVE-HLS',
-            'direct_playback' => true,
-            'requires_external_app' => false,
-            'app_url' => $appScheme,
-            'web_url' => $webUrl,
+            'playback_type' => 'OTT-EXTERNAL',
+            'direct_playback' => false,
+            'requires_external_app' => true,
+            'action' => 'redirect_external',
+            'app_url' => $officialLinks['app_url'] ?? $appScheme,
+            'web_url' => $officialLinks['web_url'] ?? $webUrl,
             'brand_color' => '#0063E5',
+            'poster_url' => $context['poster_url'] ?? $titleRecord?->poster_url,
+            'disclaimer' => "Este título pertenece al catálogo oficial de Disney+ vinculado en tu cuenta OTT Sync y no está almacenado en el servidor local. Debido a la protección DRM oficial (Widevine/FairPlay) de Disney+, ábrelo directamente en su aplicación o portal oficial.",
         ];
     }
 

@@ -303,7 +303,7 @@ class OttSyncService
             return [];
         }
 
-        $gql = 'query GetSearchTitles($country: Country!, $searchFilter: TitleFilter!) { popularTitles(country: $country, filter: $searchFilter, first: 15) { edges { node { id objectId objectType content(country: $country, language: "es") { title originalTitle originalReleaseYear shortDescription posterUrl } } } } }';
+        $gql = 'query GetSearchTitles($country: Country!, $searchFilter: TitleFilter!) { popularTitles(country: $country, filter: $searchFilter, first: 15) { edges { node { id objectId objectType content(country: $country, language: "es") { title originalTitle originalReleaseYear shortDescription posterUrl } offers(country: $country, platform: WEB) { standardWebURL package { shortName technicalName clearName } } } } } }';
 
         $responses = [];
         try {
@@ -401,8 +401,11 @@ class OttSyncService
                     $poster = 'https://images.justwatch.com' . str_replace(['{profile}', '.{format}'], ['s592', '.jpg'], $posterUrl);
                 }
 
+                $offerLinks = self::extractOfferUrlsFromNode($node, $normPlatform, $title);
                 $item = [
                     'id'             => 'ott_' . $normPlatform . '_' . $objectId,
+                    'web_url'        => $offerLinks['web_url'],
+                    'app_url'        => $offerLinks['app_url'],
                     'unique_id'      => 'ott_' . $normPlatform . '_' . $objectId,
                     'title'          => $title,
                     'name'           => $title,
@@ -501,6 +504,156 @@ class OttSyncService
         return 'HN';
     }
 
+    /**
+     * Extrae la URL oficial real y el deep-link nativo de la plataforma desde las ofertas JustWatch.
+     */
+    public static function extractOfferUrlsFromNode(array $node, string $platform, string $title = ''): array
+    {
+        $norm = self::normalizePlatformKey($platform) ?: strtolower(trim($platform));
+        $targetPkg = self::resolvePlatformPackageKey($norm);
+        $offers = $node['offers'] ?? [];
+        $webUrl = null;
+
+        if (is_array($offers)) {
+            foreach ($offers as $offer) {
+                $short = strtolower((string) ($offer['package']['shortName'] ?? ''));
+                $url = trim((string) ($offer['standardWebURL'] ?? ''));
+                if ($url !== '' && $short === $targetPkg) {
+                    $webUrl = $url;
+                    break;
+                }
+            }
+            if (!$webUrl) {
+                foreach ($offers as $offer) {
+                    $tech = strtolower((string) ($offer['package']['technicalName'] ?? ''));
+                    $url = trim((string) ($offer['standardWebURL'] ?? ''));
+                    if ($url !== '' && (str_contains($tech, str_replace('_', '', $norm)) || str_contains($url, 'netflix.com') && $norm === 'netflix' || str_contains($url, 'disneyplus.com') && str_contains($norm, 'disney') || str_contains($url, 'primevideo.com') && str_contains($norm, 'prime'))) {
+                        $webUrl = $url;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (!$webUrl) {
+            $qEnc = rawurlencode($title);
+            $webUrl = match ($norm) {
+                'netflix' => "https://www.netflix.com/search?q={$qEnc}",
+                'disney', 'disney_plus' => "https://www.disneyplus.com/search?q={$qEnc}",
+                'amazon_prime', 'prime', 'prime_video' => "https://www.primevideo.com/search/ref=atv_nb_sr?phrase={$qEnc}",
+                'hbo_max', 'max' => "https://play.max.com/search?q={$qEnc}",
+                'apple_tv', 'apple_tv_plus' => "https://tv.apple.com/search?term={$qEnc}",
+                'paramount', 'paramount_plus' => "https://www.paramountplus.com/search/?q={$qEnc}",
+                default => "https://www.netflix.com/search?q={$qEnc}",
+            };
+        }
+
+        $appUrl = $webUrl;
+        if ($norm === 'netflix' && preg_match('#netflix\.com/(?:title|watch)/(\d+)#i', $webUrl, $m)) {
+            $appUrl = "netflix://title/{$m[1]}";
+        } elseif (str_contains($norm, 'disney')) {
+            $appUrl = preg_replace('#^https?://(?:www\.)?disneyplus\.com/#i', 'disneyplus://', $webUrl) ?: $webUrl;
+        } elseif (str_contains($norm, 'prime') || str_contains($norm, 'amazon')) {
+            $appUrl = preg_replace('#^https?://(?:www\.)?primevideo\.com/#i', 'primevideo://', $webUrl) ?: $webUrl;
+        } elseif (str_contains($norm, 'max') || str_contains($norm, 'hbo')) {
+            $appUrl = preg_replace('#^https?://play\.max\.com/#i', 'max://', $webUrl) ?: $webUrl;
+        }
+
+        return [
+            'web_url' => $webUrl,
+            'app_url' => $appUrl,
+        ];
+    }
+
+    /**
+     * Resuelve el enlace oficial REAL (web_url y app_url) para un título en su plataforma OTT vinculada.
+     */
+    public static function resolveOfficialWatchUrl(string $title, string $platform, ?string $preferredWebUrl = null, ?string $preferredAppUrl = null): array
+    {
+        $norm = self::normalizePlatformKey($platform) ?: strtolower(trim($platform));
+
+        if (!empty($preferredWebUrl) && str_starts_with($preferredWebUrl, 'http')) {
+            $links = self::extractOfferUrlsFromNode([
+                'offers' => [[
+                    'standardWebURL' => $preferredWebUrl,
+                    'package' => ['shortName' => self::resolvePlatformPackageKey($norm)],
+                ]]
+            ], $norm, $title);
+            if (!empty($preferredAppUrl)) {
+                $links['app_url'] = $preferredAppUrl;
+            }
+            return $links;
+        }
+
+        $cacheKey = 'ott_official_watch_' . md5($norm . '_' . mb_strtolower(trim($title)));
+        try {
+            $cached = Cache::get($cacheKey);
+            if (is_array($cached) && !empty($cached['web_url'])) {
+                return $cached;
+            }
+        } catch (\Throwable $e) {}
+
+        $pkg = self::resolvePlatformPackageKey($norm);
+        $country = self::resolveCountryForPlatform($norm);
+        $gql = 'query GetSearchTitles($country: Country!, $searchFilter: TitleFilter!) { popularTitles(country: $country, filter: $searchFilter, first: 5) { edges { node { id objectId objectType content(country: $country, language: "es") { title originalTitle } offers(country: $country, platform: WEB) { standardWebURL package { shortName technicalName clearName } } } } } }';
+
+        $resolved = null;
+        try {
+            $resp = Http::timeout(6)
+                ->withHeaders([
+                    'Content-Type' => 'application/json',
+                    'User-Agent'   => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                ])
+                ->post('https://apis.justwatch.com/graphql', [
+                    'query' => $gql,
+                    'variables' => [
+                        'country' => $country,
+                        'searchFilter' => [
+                            'searchQuery' => trim($title),
+                            'packages' => [$pkg],
+                        ],
+                    ],
+                ]);
+
+            if ($resp->successful()) {
+                $edges = data_get($resp->json(), 'data.popularTitles.edges', []);
+                $targetNorm = self::removeDiacritics(trim($title));
+                $bestNode = null;
+                foreach ($edges as $edge) {
+                    $node = $edge['node'] ?? null;
+                    if (!$node) continue;
+                    $ct = self::removeDiacritics((string) ($node['content']['title'] ?? ''));
+                    $co = self::removeDiacritics((string) ($node['content']['originalTitle'] ?? ''));
+                    if ($ct === $targetNorm || $co === $targetNorm) {
+                        $bestNode = $node;
+                        break;
+                    }
+                    if (!$bestNode && (str_contains($ct, $targetNorm) || str_contains($targetNorm, $ct))) {
+                        $bestNode = $node;
+                    }
+                }
+                if (!$bestNode && !empty($edges[0]['node'])) {
+                    $bestNode = $edges[0]['node'];
+                }
+                if ($bestNode) {
+                    $resolved = self::extractOfferUrlsFromNode($bestNode, $norm, $title);
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::debug("resolveOfficialWatchUrl fallback [{$norm}] '{$title}': " . $e->getMessage());
+        }
+
+        if (!$resolved) {
+            $resolved = self::extractOfferUrlsFromNode([], $norm, $title);
+        }
+
+        try {
+            Cache::put($cacheKey, $resolved, 21600);
+        } catch (\Throwable $e) {}
+
+        return $resolved;
+    }
+
 
     public static function searchRemoteOttCatalog(string $query, string $platform = 'netflix'): array
     {
@@ -513,7 +666,7 @@ class OttSyncService
         $pkg = self::resolvePlatformPackageKey($normPlatform);
         $country = self::resolveCountryForPlatform($normPlatform);
 
-        $gql = 'query GetSearchTitles($country: Country!, $searchFilter: TitleFilter!) { popularTitles(country: $country, filter: $searchFilter, first: 20) { edges { node { id objectId objectType content(country: $country, language: "es") { title originalTitle originalReleaseYear shortDescription posterUrl } } } } }';
+        $gql = 'query GetSearchTitles($country: Country!, $searchFilter: TitleFilter!) { popularTitles(country: $country, filter: $searchFilter, first: 20) { edges { node { id objectId objectType content(country: $country, language: "es") { title originalTitle originalReleaseYear shortDescription posterUrl } offers(country: $country, platform: WEB) { standardWebURL package { shortName technicalName clearName } } } } } }';
         $items = [];
 
         try {
@@ -596,8 +749,11 @@ class OttSyncService
                             $poster = 'https://images.justwatch.com' . str_replace(['{profile}', '.{format}'], ['s592', '.jpg'], $posterUrl);
                         }
 
+                        $offerLinks = self::extractOfferUrlsFromNode($node, $normPlatform, $title);
                         $item = [
                             'id'             => 'ott_' . $normPlatform . '_' . $objectId,
+                            'web_url'        => $offerLinks['web_url'],
+                            'app_url'        => $offerLinks['app_url'],
                             'unique_id'      => 'ott_' . $normPlatform . '_' . $objectId,
                             'title'          => $title,
                             'original_title' => $origTitle,
@@ -1069,7 +1225,7 @@ class OttSyncService
                 $pkg = self::resolvePlatformPackageKey($norm);
                 $country = self::resolveCountryForPlatform($norm);
 
-                $gql = 'query GetPopularTitles($country: Country!, $filter: TitleFilter!) { popularTitles(country: $country, filter: $filter, first: 18) { edges { node { id objectId objectType content(country: $country, language: "es") { title originalTitle originalReleaseYear shortDescription posterUrl } } } } }';
+                $gql = 'query GetPopularTitles($country: Country!, $filter: TitleFilter!) { popularTitles(country: $country, filter: $filter, first: 18) { edges { node { id objectId objectType content(country: $country, language: "es") { title originalTitle originalReleaseYear shortDescription posterUrl } offers(country: $country, platform: WEB) { standardWebURL package { shortName technicalName clearName } } } } } }';
 
                 try {
                     $resp = Http::timeout(3)
@@ -1121,8 +1277,11 @@ class OttSyncService
                                 $poster = 'https://images.justwatch.com' . str_replace(['{profile}', '.{format}'], ['s592', '.jpg'], $posterUrl);
                             }
 
+                            $offerLinks = self::extractOfferUrlsFromNode($node, $norm, $title);
                             $item = [
                                 'id'             => 'ott_' . $norm . '_' . $objectId,
+                                'web_url'        => $offerLinks['web_url'],
+                                'app_url'        => $offerLinks['app_url'],
                                 'unique_id'      => 'ott_' . $norm . '_' . $objectId,
                                 'external_id'    => $objectId,
                                 'title'          => $title,

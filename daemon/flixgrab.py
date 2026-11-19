@@ -316,7 +316,7 @@ def get_connected_ott_accounts() -> Dict[str, Dict[str, Any]]:
     try:
         cur = conn.cursor(dictionary=True)
         cur.execute(
-            "SELECT provider, email, status, session_cookies, auth_token, metadata "
+            "SELECT provider, account_name, status, session_metadata "
             "FROM ott_provider_accounts WHERE status = 'connected'"
         )
         for row in cur.fetchall() or []:
@@ -586,19 +586,29 @@ def resolve_real_source_for_task(task: 'DownloadTask') -> Optional[Dict[str, Any
         except Exception:
             continue
 
-    # 3. Si task.source_url es un stream directo legítimo (NO YouTube/Dailymotion/Archive/pirata) de una cuenta OTT vinculada
+    # 3. Si task.source_url es un stream de video directo real (NUNCA páginas HTML DRM de Netflix/Disney/Prime)
     if task.source_url and not is_banned_external_url(task.source_url):
-        if task.source_url.startswith("http://") or task.source_url.startswith("https://"):
-            if not req_provider or req_provider in connected_accounts or "127.0.0.1" in task.source_url or "localhost" in task.source_url:
-                return {
-                    "mode": "single_url",
-                    "video_url": task.source_url,
-                    "audio_url": None,
-                    "total_bytes": 800 * 1024 * 1024,
-                    "matched_title": title_name,
-                    "provider": req_provider,
-                    "user_agent": UA_FLIXGRAB,
-                }
+        lower_u = task.source_url.lower()
+        is_html_portal = any(h in lower_u for h in (
+            "netflix.com/", "disneyplus.com/", "primevideo.com/", "amazon.com/",
+            "play.max.com/", "max.com/", "tv.apple.com/", "paramountplus.com/"
+        ))
+        parsed_path = urllib.parse.urlparse(lower_u).path
+        is_direct_media = (
+            "/emby/videos/" in lower_u
+            or "/api/stream/" in lower_u
+            or any(parsed_path.endswith(ext) for ext in (".mp4", ".m3u8", ".mkv", ".ts", ".webm", ".mov"))
+        )
+        if not is_html_portal and is_direct_media and (task.source_url.startswith("http://") or task.source_url.startswith("https://")):
+            return {
+                "mode": "single_url",
+                "video_url": task.source_url,
+                "audio_url": None,
+                "total_bytes": 800 * 1024 * 1024,
+                "matched_title": title_name,
+                "provider": req_provider,
+                "user_agent": UA_FLIXGRAB,
+            }
 
     logger.warning(
         f"[OTT-Sync] No se encontró stream autenticado para '{title_name}' "

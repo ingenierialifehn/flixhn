@@ -96,12 +96,28 @@ class GenericPartnerOttAdapter implements OttProviderInterface
         $isDirect = !empty($playbackConfig['direct_playback']);
         $prefix = "{$this->config->slug}_";
         $cleanId = str_starts_with($contentId, $prefix) ? substr($contentId, strlen($prefix)) : $contentId;
+        if (str_starts_with($cleanId, 'ott_')) {
+            $parts = explode('_', $cleanId);
+            $cleanId = end($parts) ?: $cleanId;
+        }
 
         $titleRecord = is_numeric($cleanId) ? Title::find((int)$cleanId) : null;
-        $titleName = $titleRecord?->name ?? "Contenido {$this->config->name} ({$cleanId})";
+        if (!$titleRecord && !empty($context['title'])) {
+            $searchTitle = trim($context['title']);
+            $titleRecord = Title::where('name', $searchTitle)
+                ->orWhere('name', 'LIKE', "%{$searchTitle}%")
+                ->first();
+            if (!$titleRecord && !empty($context['original_title'])) {
+                $origTitle = trim($context['original_title']);
+                $titleRecord = Title::where('name', $origTitle)
+                    ->orWhere('name', 'LIKE', "%{$origTitle}%")
+                    ->first();
+            }
+        }
+        $titleName = $titleRecord?->name ?? ($context['title'] ?? "Contenido {$this->config->name} ({$cleanId})");
         $externalId = $titleRecord?->imdb_id ?: ($titleRecord?->tmdb_id ?: $cleanId);
 
-        // Si el proveedor soporta streaming directo (HLS/DASH)
+        // Si el proveedor soporta streaming directo autorizado (HLS/DASH)
         if ($isDirect) {
             $ttl = (int) ($playbackConfig['token_expiry_seconds'] ?? 7200);
             $clientIp = $context['client_ip'] ?? request()->ip();
@@ -128,54 +144,92 @@ class GenericPartnerOttAdapter implements OttProviderInterface
             ];
         }
 
-        // Si es integración deep-link / aplicación externa
-        $appSchemeTemplate = $playbackConfig['app_scheme'] ?? "{$this->config->slug}://watch/{id}";
-        $webUrlTemplate = $playbackConfig['web_url_template'] ?? "https://www.{$this->config->slug}.com/watch/{id}";
-
-        $appScheme = str_replace('{id}', $externalId, $appSchemeTemplate);
-        $webUrl = str_replace('{id}', $externalId, $webUrlTemplate);
-
-        // Iniciar descarga e ingesta de fondo en FlixGrab Engine para reproducción progresiva
-        try {
-            $downloadService = app(\App\Services\DownloadService::class);
-            $job = $downloadService->requestDownload([
-                'content_id' => (string) $contentId,
-                'title' => $titleName,
-                'provider' => $this->config->slug,
-                'source_url' => $webUrl,
-                'priority' => 1,
-                'type' => $context['type'] ?? $titleRecord?->type ?? null,
-            ]);
-
-            $directProgUrl = url("/api/streaming/progressive/{$job->id}");
-            return [
-                'success' => true,
-                'content_id' => $contentId,
-                'external_id' => (string) $externalId,
-                'title' => $titleName,
-                'provider' => $this->config->slug,
-                'provider_name' => $this->config->name,
-                'playback_type' => $job->status === 'READY' ? 'LOCAL-DIRECT' : 'PROGRESSIVE-HLS',
-                'direct_playback' => true,
-                'requires_external_app' => false,
-                'status' => $job->status,
-                'job_id' => $job->job_id,
-                'download_job_id' => $job->id,
-                'stream_url' => $directProgUrl,
-                'transcode_url' => url("/api/streaming/progressive/{$job->id}?transcode=1"),
-                'progressive_url' => $directProgUrl,
-                'direct_url' => $directProgUrl,
-                'can_play_progressive' => true,
-                'progress' => (float) $job->progress,
-                'download_speed' => $job->download_speed,
-                'eta' => $job->eta,
-                'app_url' => $appScheme,
-                'web_url' => $webUrl,
-                'brand_color' => $playbackConfig['brand_color'] ?? '#6366F1',
-            ];
-        } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::warning("GenericAdapter: Error solicitando descarga FlixGrab: " . $e->getMessage());
+        // 1. Verificar archivo físico local o en Emby antes de redirigir a la plataforma oficial
+        $resolver = app(\App\Services\RealMediaSourceResolver::class);
+        if ($titleRecord && $titleRecord->type === 'series') {
+            $firstEp = $titleRecord->episodes()->whereNotNull('file_path')->first();
+            if ($firstEp && !empty($firstEp->file_path)) {
+                $diskEp = \App\Jobs\ProcessMediaIngestJob::resolveDiskPath($firstEp->file_path) ?: $firstEp->file_path;
+                if (file_exists($diskEp) && !$resolver->isWrongOrLegacyFile($diskEp, $titleName) && filesize($diskEp) > 2097152) {
+                    return [
+                        'success' => true,
+                        'content_id' => $contentId,
+                        'title' => $titleName,
+                        'provider' => $this->config->slug,
+                        'provider_name' => $this->config->name,
+                        'playback_type' => 'LOCAL-HLS',
+                        'direct_playback' => true,
+                        'requires_external_app' => false,
+                        'stream_url' => url("/api/stream/episode/{$firstEp->id}"),
+                    ];
+                }
+            }
         }
+
+        $localMedia = $titleRecord?->file_path ?: $titleRecord?->source_path;
+        if ($titleRecord && !empty($localMedia)) {
+            $diskP = \App\Jobs\ProcessMediaIngestJob::resolveDiskPath($localMedia) ?: $localMedia;
+            if (file_exists($diskP) && !$resolver->isWrongOrLegacyFile($diskP, $titleName) && filesize($diskP) > 2097152) {
+                return [
+                    'success' => true,
+                    'content_id' => $contentId,
+                    'title' => $titleName,
+                    'provider' => $this->config->slug,
+                    'provider_name' => $this->config->name,
+                    'playback_type' => 'LOCAL-HLS',
+                    'direct_playback' => true,
+                    'requires_external_app' => false,
+                    'stream_url' => url("/api/stream/title/{$titleRecord->id}"),
+                ];
+            }
+        }
+
+        $resolvedLocal = $resolver->resolveRealSource($titleName, $context['type'] ?? $titleRecord?->type ?? null, null, $this->config->slug);
+        if ($resolvedLocal) {
+            if (!empty($resolvedLocal['title_id'])) {
+                $streamEndpoint = !empty($resolvedLocal['episode_id'])
+                    ? url("/api/stream/episode/{$resolvedLocal['episode_id']}")
+                    : url("/api/stream/title/{$resolvedLocal['title_id']}");
+                return [
+                    'success' => true,
+                    'content_id' => $contentId,
+                    'title' => $resolvedLocal['matched_title'] ?? $titleName,
+                    'provider' => $this->config->slug,
+                    'provider_name' => $this->config->name,
+                    'playback_type' => 'LOCAL-HLS',
+                    'direct_playback' => true,
+                    'requires_external_app' => false,
+                    'stream_url' => $streamEndpoint,
+                ];
+            }
+            if (($resolvedLocal['mode'] ?? '') === 'single_url' && !empty($resolvedLocal['video_url'])) {
+                return [
+                    'success' => true,
+                    'content_id' => $contentId,
+                    'title' => $resolvedLocal['matched_title'] ?? $titleName,
+                    'provider' => $this->config->slug,
+                    'provider_name' => $this->config->name,
+                    'playback_type' => 'LOCAL-DIRECT',
+                    'direct_playback' => true,
+                    'requires_external_app' => false,
+                    'stream_url' => $resolvedLocal['video_url'],
+                ];
+            }
+        }
+
+        // 2. Resolver enlace oficial real en la plataforma vinculada (Prime Video, Apple TV+, Paramount+, etc.)
+        $officialLinks = \App\Services\OttSyncService::resolveOfficialWatchUrl(
+            $titleName,
+            $this->config->slug,
+            $context['web_url'] ?? null,
+            $context['app_url'] ?? null
+        );
+
+        $brandColor = $playbackConfig['brand_color'] ?? (
+            str_contains($this->config->slug, 'prime') || str_contains($this->config->slug, 'amazon')
+                ? '#00A8E1'
+                : '#6366F1'
+        );
 
         return [
             'success' => true,
@@ -184,12 +238,15 @@ class GenericPartnerOttAdapter implements OttProviderInterface
             'title' => $titleName,
             'provider' => $this->config->slug,
             'provider_name' => $this->config->name,
-            'playback_type' => 'PROGRESSIVE-HLS',
-            'direct_playback' => true,
-            'requires_external_app' => false,
-            'app_url' => $appScheme,
-            'web_url' => $webUrl,
-            'brand_color' => $playbackConfig['brand_color'] ?? '#6366F1',
+            'playback_type' => 'OTT-EXTERNAL',
+            'direct_playback' => false,
+            'requires_external_app' => true,
+            'action' => 'redirect_external',
+            'app_url' => $officialLinks['app_url'],
+            'web_url' => $officialLinks['web_url'],
+            'brand_color' => $brandColor,
+            'poster_url' => $context['poster_url'] ?? $titleRecord?->poster_url,
+            'disclaimer' => "Este título pertenece al catálogo oficial de {$this->config->name} vinculado en tu cuenta OTT Sync y no está almacenado en el servidor local. Debido a la protección DRM oficial (Widevine/FairPlay) de {$this->config->name}, ábrelo directamente en su aplicación o portal oficial.",
         ];
     }
 

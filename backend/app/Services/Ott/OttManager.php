@@ -38,26 +38,30 @@ class OttManager
         if (!$config) {
             $names = [
                 'prime' => 'Amazon Prime Video',
+                'prime_video' => 'Amazon Prime Video',
+                'amazon_prime' => 'Amazon Prime Video',
                 'amazon' => 'Amazon Prime Video',
                 'apple' => 'Apple TV+',
+                'apple_tv' => 'Apple TV+',
                 'appletv' => 'Apple TV+',
                 'paramount' => 'Paramount+',
+                'paramount_plus' => 'Paramount+',
                 'paramountplus' => 'Paramount+',
                 'starplus' => 'Star+',
                 'crunchyroll' => 'Crunchyroll',
             ];
-            $friendlyName = $names[$normalizedSlug] ?? ucfirst($normalizedSlug);
+            $friendlyName = $names[$normalizedSlug] ?? ucfirst(str_replace('_', ' ', $normalizedSlug));
             $appScheme = match ($normalizedSlug) {
-                'prime', 'amazon' => 'primevideo://',
-                'apple', 'appletv' => 'appletv://',
-                'paramount', 'paramountplus' => 'paramountplus://',
+                'prime', 'prime_video', 'amazon_prime', 'amazon' => 'primevideo://',
+                'apple', 'apple_tv', 'appletv' => 'appletv://',
+                'paramount', 'paramount_plus', 'paramountplus' => 'paramountplus://',
                 'crunchyroll' => 'crunchyroll://',
                 default => "{$normalizedSlug}://",
             };
             $webUrl = match ($normalizedSlug) {
-                'prime', 'amazon' => 'https://www.primevideo.com',
-                'apple', 'appletv' => 'https://tv.apple.com',
-                'paramount', 'paramountplus' => 'https://www.paramountplus.com',
+                'prime', 'prime_video', 'amazon_prime', 'amazon' => 'https://www.primevideo.com',
+                'apple', 'apple_tv', 'appletv' => 'https://tv.apple.com',
+                'paramount', 'paramount_plus', 'paramountplus' => 'https://www.paramountplus.com',
                 'crunchyroll' => 'https://www.crunchyroll.com',
                 default => "https://www.{$normalizedSlug}.com",
             };
@@ -213,9 +217,11 @@ class OttManager
                         'poster_url' => $item['poster_url'] ?? $item['poster'] ?? '',
                         'backdrop_url' => $item['backdrop_url'] ?? $item['poster_url'] ?? $item['poster'] ?? '',
                         'duration_seconds' => (int) ($item['duration_seconds'] ?? 7200),
-                        'playback_type' => $isDownloaded ? 'LOCAL-HLS' : 'PROGRESSIVE-HLS',
-                        'requires_external_app' => false,
-                        'direct_playback' => true,
+                        'playback_type' => $isDownloaded ? 'LOCAL-HLS' : 'OTT-EXTERNAL',
+                        'requires_external_app' => !$isDownloaded,
+                        'direct_playback' => $isDownloaded,
+                        'web_url' => $item['web_url'] ?? null,
+                        'app_url' => $item['app_url'] ?? null,
                         'is_available' => true,
                         'is_ott' => true,
                         'is_downloaded' => $isDownloaded,
