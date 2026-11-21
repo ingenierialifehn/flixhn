@@ -21,6 +21,11 @@ use Illuminate\Support\Facades\Schema;
 class MediaIntegrityService
 {
     /**
+     * Protección anti-recursión al purgar títulos con observadores encadenados.
+     */
+    protected static array $purgingTitleIds = [];
+
+    /**
      * Rutas predeterminadas de bibliotecas locales en el servidor (Disk2 a Disk7 y almacenamiento On-Net).
      */
     protected array $standardDisks = [
@@ -222,31 +227,45 @@ class MediaIntegrityService
     }
 
     /**
-     * Purga un Título (película o serie) de MySQL en cascada.
+     * Purga un Título (película o serie) de MySQL en cascada sin ciclos de observadores.
      */
     public function purgeTitle(Title $title): void
     {
         $titleId = $title->id;
         $titleName = $title->name;
 
-        // Eliminar registros asociados en cascada
-        $this->purgeAssociatedData('title', $titleId, $titleName);
-
-        // Si es serie, eliminar temporadas y episodios
-        if ($title->type === 'series') {
-            $episodes = Episode::where('title_id', $titleId)->get();
-            foreach ($episodes as $ep) {
-                $this->purgeAssociatedData('episode', $ep->id, $ep->title);
-                $ep->delete();
-            }
-            Season::where('title_id', $titleId)->delete();
+        if (!$titleId || isset(self::$purgingTitleIds[$titleId])) {
+            return;
         }
 
-        // Eliminar título principal
-        $title->delete();
+        self::$purgingTitleIds[$titleId] = true;
 
-        // Limpiar caché de catálogo al instante
-        $this->clearCatalogCache();
+        try {
+            // Eliminar registros asociados en cascada
+            $this->purgeAssociatedData('title', $titleId, $titleName);
+
+            // Si es serie, eliminar temporadas y episodios sin disparar recursión en EpisodeObserver
+            if ($title->type === 'series') {
+                $episodes = Episode::where('title_id', $titleId)->get();
+                foreach ($episodes as $ep) {
+                    $this->purgeAssociatedData('episode', $ep->id, $ep->title);
+                }
+                Episode::where('title_id', $titleId)->delete();
+                Season::where('title_id', $titleId)->delete();
+            }
+
+            // Eliminar título principal silenciosamente (ya limpiamos relaciones y caché aquí)
+            if ($title->exists) {
+                $title->deleteQuietly();
+            } else {
+                Title::where('id', $titleId)->delete();
+            }
+
+            // Limpiar caché de catálogo al instante
+            $this->clearCatalogCache();
+        } finally {
+            unset(self::$purgingTitleIds[$titleId]);
+        }
     }
 
     /**
@@ -335,7 +354,7 @@ class MediaIntegrityService
             } catch (\Throwable $e) {}
         }
 
-        // 3. Tareas de descargas (MediaIngestTask, OttDownloadTask, downloads)
+        // 3. Tareas de descargas (MediaIngestTask, OttDownloadTask, DownloadJob, downloads)
         if ($type === 'title') {
             if (Schema::hasTable('media_items')) {
                 try {
@@ -345,7 +364,21 @@ class MediaIntegrityService
 
             if (Schema::hasTable('ott_download_tasks')) {
                 try {
-                    OttDownloadTask::where('media_item_id', $id)->delete();
+                    OttDownloadTask::where('title_id', $id)
+                        ->orWhere('media_item_id', $id)
+                        ->delete();
+                } catch (\Throwable $e) {}
+            }
+
+            if (Schema::hasTable('media_ingest_tasks')) {
+                try {
+                    MediaIngestTask::where('title_id', $id)->delete();
+                } catch (\Throwable $e) {}
+            }
+
+            if (Schema::hasTable('download_jobs')) {
+                try {
+                    DB::table('download_jobs')->where('title_id', $id)->delete();
                 } catch (\Throwable $e) {}
             }
 
@@ -375,6 +408,10 @@ class MediaIntegrityService
     {
         Cache::forget('catalog_home_base');
         Cache::forget('catalog_home_kids');
+        Cache::forget('catalog_home');
+        Cache::forget('titles_all');
+        Cache::forget('catalog_all');
+        Cache::forget('admin_dashboard_counts');
         Cache::forget('livetv_channels_list');
         Cache::forget('emby_livetv_channels_map');
 

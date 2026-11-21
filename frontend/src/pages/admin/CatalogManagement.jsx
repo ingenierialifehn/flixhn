@@ -17,8 +17,10 @@ import {
   Play,
   Edit2,
   Tv,
+  AlertTriangle,
 } from 'lucide-react';
 import { notifyCatalogUpdated } from '../../utils/catalogEvents';
+import { showFlixHnToast } from '../../components/Toast';
 
 const CatalogManagement = ({ titles = [], onRefresh }) => {
   const [showAddTitle, setShowAddTitle] = useState(false);
@@ -27,6 +29,14 @@ const CatalogManagement = ({ titles = [], onRefresh }) => {
   const [previewVideo, setPreviewVideo] = useState(null); // title object for playback
   const [titleToDelete, setTitleToDelete] = useState(null); // title object for delete confirmation
   const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteTitleError, setDeleteTitleError] = useState('');
+  const [folderToRename, setFolderToRename] = useState(null); // folder object for renaming
+  const [renameFolderValue, setRenameFolderValue] = useState('');
+  const [isRenamingFolder, setIsRenamingFolder] = useState(false);
+  const [renameFolderError, setRenameFolderError] = useState('');
+  const [folderToDelete, setFolderToDelete] = useState(null); // folder object for delete confirmation
+  const [isDeletingFolder, setIsDeletingFolder] = useState(false);
+  const [deleteFolderError, setDeleteFolderError] = useState('');
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
 
@@ -41,6 +51,7 @@ const CatalogManagement = ({ titles = [], onRefresh }) => {
   const [folders, setFolders] = useState([]);
   const [breadcrumbs, setBreadcrumbs] = useState([{ name: 'Inicio', path: '' }]);
   const [folderTitles, setFolderTitles] = useState([]);
+  const [hasLoadedFolder, setHasLoadedFolder] = useState(false);
   const [loadingFolder, setLoadingFolder] = useState(false);
 
   // Cargar contenido de la carpeta solicitada desde la API
@@ -53,6 +64,7 @@ const CatalogManagement = ({ titles = [], onRefresh }) => {
       const data = res?.data || {};
       setFolders(data.folders || []);
       setFolderTitles(data.titles || []);
+      setHasLoadedFolder(true);
       setBreadcrumbs(data.breadcrumbs || [{ name: 'Inicio', path: '' }]);
       setCurrentFolder(data.current_folder !== undefined ? data.current_folder : path);
       setParentFolder(data.parent_folder !== undefined ? data.parent_folder : null);
@@ -161,37 +173,159 @@ const CatalogManagement = ({ titles = [], onRefresh }) => {
     if (!showEditTitle) return;
     setLoading(true);
     try {
-      await api.put(`/admin/titles/${showEditTitle.id}`, showEditTitle);
+      const res = await api.put(`/admin/titles/${encodeURIComponent(showEditTitle.id)}`, showEditTitle);
       const updatedId = showEditTitle.id;
       setShowEditTitle(null);
+      showFlixHnToast(res?.data?.message || 'Título actualizado correctamente.', 'success');
       await loadFolder(currentFolder);
       if (onRefresh) onRefresh();
       notifyCatalogUpdated({ action: 'title_updated', titleId: updatedId });
     } catch (err) {
       console.error('Error actualizando título:', err);
+      const msg = err.response?.data?.message || 'Error al actualizar el título.';
+      showFlixHnToast(msg, 'error');
     } finally {
       setLoading(false);
     }
   };
 
   const handleDeleteTitle = (t) => {
+    setDeleteTitleError('');
     setTitleToDelete(t);
   };
 
   const handleConfirmDelete = async () => {
     if (!titleToDelete) return;
     setIsDeleting(true);
+    setDeleteTitleError('');
+    const target = titleToDelete;
+    const targetPath = target.file_path || target.source_path || target.stream_path || '';
+
     try {
-      await api.delete(`/admin/titles/${titleToDelete.id}`);
-      const deletedId = titleToDelete.id;
+      const res = await api.delete(`/admin/titles/${encodeURIComponent(target.id)}`, {
+        params: {
+          path: targetPath,
+          stream_path: target.stream_path || '',
+          source_path: target.source_path || '',
+        },
+        data: {
+          path: targetPath,
+          file_path: target.file_path || '',
+          stream_path: target.stream_path || '',
+          source_path: target.source_path || '',
+        },
+      });
+
+      const deletedId = target.id;
       setTitleToDelete(null);
+      setFolderTitles((prev) => prev.filter((item) => String(item.id) !== String(deletedId)));
+      showFlixHnToast(
+        res?.data?.message || `Título "${target.name}" eliminado definitivamente del servidor.`,
+        'success'
+      );
       await loadFolder(currentFolder);
       if (onRefresh) onRefresh();
       notifyCatalogUpdated({ action: 'title_deleted', titleId: deletedId });
     } catch (err) {
       console.error('Error eliminando título:', err);
+      const status = err.response?.status;
+      if (status === 404) {
+        // Si ya no existía en el servidor, limpiar de la vista inmediatamente
+        setTitleToDelete(null);
+        setFolderTitles((prev) => prev.filter((item) => String(item.id) !== String(target.id)));
+        await loadFolder(currentFolder);
+        if (onRefresh) onRefresh();
+        return;
+      }
+      const msg = err.response?.data?.message || 'No se pudo eliminar el título del servidor.';
+      setDeleteTitleError(msg);
+      showFlixHnToast(msg, 'error');
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  const handleOpenRenameFolder = (e, folder) => {
+    e.stopPropagation();
+    setRenameFolderError('');
+    setRenameFolderValue(folder.raw_name || folder.name || '');
+    setFolderToRename(folder);
+  };
+
+  const handleConfirmRenameFolder = async (e) => {
+    e.preventDefault();
+    if (!folderToRename) return;
+    const trimmed = renameFolderValue.trim();
+    if (!trimmed) {
+      setRenameFolderError('Ingresa un nuevo nombre para la carpeta.');
+      return;
+    }
+
+    setIsRenamingFolder(true);
+    setRenameFolderError('');
+    try {
+      const res = await api.put('/admin/library/folders/rename', {
+        path: folderToRename.relative_path || folderToRename.path,
+        new_name: trimmed,
+        type: folderToRename.type || 'folder',
+        category_id: folderToRename.category_id || null,
+      });
+
+      setFolderToRename(null);
+      setRenameFolderValue('');
+      showFlixHnToast(
+        res?.data?.message || `Carpeta renombrada a "${trimmed}".`,
+        'success'
+      );
+      await loadFolder(currentFolder);
+      if (onRefresh) onRefresh();
+      notifyCatalogUpdated({ action: 'folder_renamed' });
+    } catch (err) {
+      console.error('Error renombrando carpeta:', err);
+      const msg = err.response?.data?.message || 'No se pudo renombrar la carpeta en el servidor.';
+      setRenameFolderError(msg);
+      showFlixHnToast(msg, 'error');
+    } finally {
+      setIsRenamingFolder(false);
+    }
+  };
+
+  const handleOpenDeleteFolder = (e, folder) => {
+    e.stopPropagation();
+    setDeleteFolderError('');
+    setFolderToDelete(folder);
+  };
+
+  const handleConfirmDeleteFolder = async () => {
+    if (!folderToDelete) return;
+    setIsDeletingFolder(true);
+    setDeleteFolderError('');
+    const targetFolder = folderToDelete;
+    const folderPath = targetFolder.relative_path || targetFolder.path;
+
+    try {
+      const res = await api.post('/admin/library/folders/delete', {
+        path: folderPath,
+        type: targetFolder.type || 'folder',
+        category_id: targetFolder.category_id || null,
+      });
+
+      setFolderToDelete(null);
+      setFolders((prev) => prev.filter((item) => (item.relative_path || item.path) !== folderPath));
+      showFlixHnToast(
+        res?.data?.message || `Carpeta "${targetFolder.name}" eliminada del servidor.`,
+        'success'
+      );
+      await loadFolder(currentFolder);
+      if (onRefresh) onRefresh();
+      notifyCatalogUpdated({ action: 'folder_deleted', path: folderPath });
+    } catch (err) {
+      console.error('Error eliminando carpeta:', err);
+      const msg = err.response?.data?.message || 'No se pudo eliminar la carpeta del servidor.';
+      setDeleteFolderError(msg);
+      showFlixHnToast(msg, 'error');
+    } finally {
+      setIsDeletingFolder(false);
     }
   };
 
@@ -243,7 +377,7 @@ const CatalogManagement = ({ titles = [], onRefresh }) => {
   }, []);
 
   // Títulos mostrados para la carpeta activa
-  const activeTitles = folderTitles.length > 0 || currentFolder !== '' ? folderTitles : (titles || []);
+  const activeTitles = hasLoadedFolder ? folderTitles : (titles || []);
 
   const filteredTitles = useMemo(() => {
     return (activeTitles || []).filter((t) => {
@@ -498,31 +632,62 @@ const CatalogManagement = ({ titles = [], onRefresh }) => {
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-            {folders.map((f, idx) => (
-              <div
-                key={f.path || f.relative_path || idx}
-                onClick={() => handleOpenFolder(f.path || f.relative_path)}
-                className="group bg-[#181818] hover:bg-zinc-850 border border-zinc-800 hover:border-[#E50914]/50 rounded-xl p-3.5 transition-all duration-200 cursor-pointer shadow-sm hover:shadow-md flex flex-col justify-between gap-2.5 active:scale-[0.98]"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="p-2.5 rounded-lg bg-amber-500/10 text-amber-500 group-hover:bg-[#E50914]/10 group-hover:text-[#E50914] transition-colors">
-                    <Folder className="w-5 h-5 fill-amber-500/20 group-hover:fill-[#E50914]/20 transition-colors" />
-                  </div>
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-zinc-900 border border-zinc-800 text-zinc-400">
-                    {f.items_count} items
-                  </span>
-                </div>
+            {folders.map((f, idx) => {
+              const canEdit = f.can_edit !== undefined ? Boolean(f.can_edit) : f.type !== 'library';
+              const canDelete = f.can_delete !== undefined ? Boolean(f.can_delete) : f.type !== 'library';
 
-                <div className="min-w-0">
-                  <h4 className="font-bold text-xs text-white group-hover:text-[#E50914] truncate transition-colors" title={f.name}>
-                    {f.name}
-                  </h4>
-                  <p className="text-[10px] text-zinc-500 truncate font-mono">
-                    {f.relative_path || f.path}
-                  </p>
+              return (
+                <div
+                  key={f.path || f.relative_path || idx}
+                  onClick={() => handleOpenFolder(f.path || f.relative_path)}
+                  className="group relative bg-[#181818] hover:bg-zinc-900/90 border border-zinc-800 hover:border-[#E50914]/50 rounded-xl p-3.5 transition-all duration-200 cursor-pointer shadow-sm hover:shadow-md flex flex-col justify-between gap-2.5"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="p-2.5 rounded-lg bg-amber-500/10 text-amber-500 group-hover:bg-[#E50914]/10 group-hover:text-[#E50914] transition-colors">
+                      <Folder className="w-5 h-5 fill-amber-500/20 group-hover:fill-[#E50914]/20 transition-colors" />
+                    </div>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-zinc-900 border border-zinc-800 text-zinc-400 shrink-0">
+                      {f.items_count} items
+                    </span>
+                  </div>
+
+                  <div className="min-w-0">
+                    <h4 className="font-bold text-xs text-white group-hover:text-[#E50914] truncate transition-colors" title={f.name}>
+                      {f.name}
+                    </h4>
+                    <p className="text-[10px] text-zinc-500 truncate font-mono" title={f.relative_path || f.path}>
+                      {f.relative_path || f.path}
+                    </p>
+                  </div>
+
+                  {(canEdit || canDelete) && (
+                    <div className="flex items-center justify-end gap-1 pt-2 border-t border-zinc-800/80">
+                      {canEdit && (
+                        <button
+                          type="button"
+                          onClick={(e) => handleOpenRenameFolder(e, f)}
+                          className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold text-blue-400 hover:text-blue-300 bg-blue-950/30 hover:bg-blue-950/60 border border-blue-900/40 transition-colors cursor-pointer"
+                          title="Editar nombre de carpeta"
+                        >
+                          <Edit2 className="w-3 h-3" />
+                          <span>Renombrar</span>
+                        </button>
+                      )}
+                      {canDelete && (
+                        <button
+                          type="button"
+                          onClick={(e) => handleOpenDeleteFolder(e, f)}
+                          className="p-1.5 rounded-md text-red-400 hover:text-red-300 bg-red-950/30 hover:bg-red-950/60 border border-red-900/40 transition-colors cursor-pointer"
+                          title="Eliminar carpeta del servidor"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -1174,19 +1339,32 @@ const CatalogManagement = ({ titles = [], onRefresh }) => {
                 <p className="text-zinc-500 text-xs">
                   {titleToDelete.genre || 'General'} • {titleToDelete.release_year || '2024'}
                 </p>
-                {titleToDelete.stream_path && (
-                  <p className="font-mono text-[10px] text-zinc-500 truncate mt-0.5">
-                    {titleToDelete.stream_path}
+                {(titleToDelete.file_path || titleToDelete.source_path || titleToDelete.stream_path) && (
+                  <p
+                    className="font-mono text-[10px] text-zinc-500 truncate mt-0.5"
+                    title={titleToDelete.file_path || titleToDelete.source_path || titleToDelete.stream_path}
+                  >
+                    {titleToDelete.file_path || titleToDelete.source_path || titleToDelete.stream_path}
                   </p>
                 )}
               </div>
             </div>
 
+            {deleteTitleError && (
+              <div className="p-2.5 rounded-lg bg-red-950/40 border border-red-800/60 text-red-300 text-xs flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-red-400" />
+                <span>{deleteTitleError}</span>
+              </div>
+            )}
+
             <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-zinc-800">
               <button
                 type="button"
                 disabled={isDeleting}
-                onClick={() => setTitleToDelete(null)}
+                onClick={() => {
+                  setDeleteTitleError('');
+                  setTitleToDelete(null);
+                }}
                 className="px-4 py-2 rounded-lg text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors cursor-pointer"
               >
                 Cancelar
@@ -1206,6 +1384,169 @@ const CatalogManagement = ({ titles = [], onRefresh }) => {
                   <>
                     <Trash2 className="w-3.5 h-3.5" />
                     <span>Eliminar Definitivamente</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Editar Nombre de Carpeta */}
+      {folderToRename && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-[#181818] border border-zinc-800 rounded-xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-blue-950/50 border border-blue-800/60 rounded-lg text-blue-400">
+                  <Edit2 className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-white">Editar Nombre de Carpeta</h3>
+                  <p className="text-[11px] text-zinc-400 font-mono truncate max-w-[260px]">
+                    {folderToRename.relative_path || folderToRename.path}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={isRenamingFolder}
+                onClick={() => {
+                  setRenameFolderError('');
+                  setFolderToRename(null);
+                }}
+                className="text-zinc-400 hover:text-white p-1 rounded-lg hover:bg-zinc-800 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmRenameFolder} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-zinc-300 block">
+                  Nuevo nombre de la carpeta en el servidor
+                </label>
+                <input
+                  type="text"
+                  autoFocus
+                  required
+                  value={renameFolderValue}
+                  onChange={(e) => setRenameFolderValue(e.target.value)}
+                  placeholder="Ej: peliculas-4k, accion, series-nuevas"
+                  className="w-full px-3 py-2 text-xs rounded-lg bg-zinc-900 border border-zinc-700 text-white font-mono focus:outline-none focus:border-[#E50914]"
+                />
+                <p className="text-[11px] text-zinc-500">
+                  Se renombrará la carpeta directamente en el disco del servidor y se actualizarán las rutas en la base de datos.
+                </p>
+              </div>
+
+              {renameFolderError && (
+                <div className="p-2.5 rounded-lg bg-red-950/40 border border-red-800/60 text-red-300 text-xs flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-red-400" />
+                  <span>{renameFolderError}</span>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-zinc-800">
+                <button
+                  type="button"
+                  disabled={isRenamingFolder}
+                  onClick={() => {
+                    setRenameFolderError('');
+                    setFolderToRename(null);
+                  }}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isRenamingFolder || !renameFolderValue.trim()}
+                  className="px-4 py-2 rounded-lg text-xs font-bold bg-[#E50914] hover:bg-red-700 text-white transition-all shadow-md flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  {isRenamingFolder ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Guardando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Edit2 className="w-3.5 h-3.5" />
+                      <span>Guardar Nombre</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Confirmar Eliminación de Carpeta del Servidor */}
+      {folderToDelete && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-[#181818] border border-zinc-800 rounded-xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center gap-3">
+              <div className="p-3 bg-red-950/50 border border-red-800/60 rounded-xl text-red-500 shrink-0">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="font-bold text-base text-white">¿Eliminar Carpeta del Servidor?</h3>
+                <p className="text-xs text-zinc-400 mt-0.5">
+                  Esta acción eliminará permanentemente la carpeta física, todas sus subcarpetas, archivos de video en el disco y los títulos indexados dentro de ella.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3 bg-zinc-900/90 rounded-lg border border-zinc-800 flex items-center gap-3">
+              <div className="p-2.5 rounded-lg bg-amber-500/10 text-amber-500 shrink-0">
+                <Folder className="w-5 h-5 fill-amber-500/20" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="font-bold text-white text-sm truncate">{folderToDelete.name}</p>
+                <p className="font-mono text-[11px] text-zinc-400 truncate">
+                  {folderToDelete.relative_path || folderToDelete.path}
+                </p>
+                <p className="text-[11px] text-red-400 mt-0.5 font-medium">
+                  {folderToDelete.items_count || 0} elemento(s) detectado(s) • Irreversible
+                </p>
+              </div>
+            </div>
+
+            {deleteFolderError && (
+              <div className="p-2.5 rounded-lg bg-red-950/40 border border-red-800/60 text-red-300 text-xs flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-red-400" />
+                <span>{deleteFolderError}</span>
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-zinc-800">
+              <button
+                type="button"
+                disabled={isDeletingFolder}
+                onClick={() => {
+                  setDeleteFolderError('');
+                  setFolderToDelete(null);
+                }}
+                className="px-4 py-2 rounded-lg text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingFolder}
+                onClick={handleConfirmDeleteFolder}
+                className="px-4 py-2 rounded-lg text-xs font-bold bg-[#E50914] hover:bg-red-700 text-white transition-all shadow-md shadow-red-950/40 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                {isDeletingFolder ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Eliminando del servidor...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Eliminar Carpeta Definitivamente</span>
                   </>
                 )}
               </button>

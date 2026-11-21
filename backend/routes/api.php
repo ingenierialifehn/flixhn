@@ -187,6 +187,12 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/titles/{id}/seasons', [AdminTitleController::class, 'addSeason']);
         Route::post('/titles/{id}/episodes', [AdminTitleController::class, 'addEpisode']);
 
+        // Gestión de Carpetas de Biblioteca en el Servidor (Renombrar / Eliminar)
+        Route::put('/library/folders/rename', [AdminTitleController::class, 'renameFolder']);
+        Route::post('/library/folders/rename', [AdminTitleController::class, 'renameFolder']);
+        Route::delete('/library/folders', [AdminTitleController::class, 'deleteFolder']);
+        Route::post('/library/folders/delete', [AdminTitleController::class, 'deleteFolder']);
+
         // Gestión de Suscriptores del ISP
         Route::get('/users', [AdminUserController::class, 'index']);
         Route::post('/users', [AdminUserController::class, 'store']);
