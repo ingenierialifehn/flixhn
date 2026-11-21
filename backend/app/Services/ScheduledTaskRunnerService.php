@@ -235,24 +235,55 @@ class ScheduledTaskRunnerService
      */
     protected function runDownloadSubtitles(): string
     {
-        $titles = Title::select('id', 'name', 'type', 'source_path')->get();
+        $titles = Title::select('id', 'name', 'type', 'source_path', 'file_path', 'imdb_id', 'tmdb_id', 'release_year')->get();
         $matched = 0;
+        $downloaded = 0;
+
+        /** @var \App\Services\Flix\OpenSubtitlesService $openSubtitles */
+        $openSubtitles = app(\App\Services\Flix\OpenSubtitlesService::class);
+        $canAutoFetch = $openSubtitles->hasValidApiKey();
 
         foreach ($titles as $title) {
-            if (!$title->source_path) continue;
+            $mediaPath = $title->file_path ?: $title->source_path;
+            if (!$mediaPath) {
+                continue;
+            }
 
-            $dir = dirname($title->source_path);
+            $dir = dirname($mediaPath);
+            $hasLocalSubs = false;
             if (File::exists($dir)) {
                 $subFiles = File::glob($dir . '/*.{srt,vtt,sub}', GLOB_BRACE);
                 if (!empty($subFiles)) {
                     $matched++;
+                    $hasLocalSubs = true;
+                }
+            }
+
+            if (!$hasLocalSubs && $canAutoFetch && $downloaded < 5 && is_dir($dir) && is_writable($dir)) {
+                try {
+                    $search = $openSubtitles->searchSubtitles([
+                        'file_path' => is_file($mediaPath) ? $mediaPath : null,
+                        'imdb_id' => $title->imdb_id,
+                        'tmdb_id' => is_numeric($title->tmdb_id) ? (int) $title->tmdb_id : null,
+                        'query' => $title->name,
+                        'year' => $title->release_year,
+                    ]);
+                    $best = $search['results'][0] ?? null;
+                    if ($best && !empty($best['file_id'])) {
+                        $openSubtitles->downloadSubtitle((int) $best['file_id'], $dir);
+                        $downloaded++;
+                        $matched++;
+                    }
+                } catch (\Throwable $e) {
+                    Log::debug("runDownloadSubtitles OpenSubtitles [{$title->name}]: " . $e->getMessage());
                 }
             }
         }
 
         $total = $titles->count();
+        $extra = $downloaded > 0 ? ", {$downloaded} descargados vía OpenSubtitles REST v1" : '';
 
-        return "Escaneo de subtítulos finalizado: {$total} títulos examinados ({$matched} con pistas de subtítulos locales asociadas).";
+        return "Escaneo de subtítulos finalizado: {$total} títulos examinados ({$matched} con pistas locales{$extra}).";
     }
 
     /**
@@ -260,18 +291,35 @@ class ScheduledTaskRunnerService
      */
     protected function runScanMetadata(): string
     {
+        $enrichedTmdb = 0;
+        $episodesUpdated = 0;
+
+        try {
+            /** @var \App\Services\Flix\FlixLibrarySyncService $flixSync */
+            $flixSync = app(\App\Services\Flix\FlixLibrarySyncService::class);
+            $enrich = $flixSync->enrichExistingCatalog(20);
+            $enrichedTmdb = (int) ($enrich['enriched'] ?? 0);
+
+            if (config('flix.library.auto_update_enabled', true)) {
+                $showsRes = $flixSync->updateTrackedShows();
+                $episodesUpdated = (int) ($showsRes['episodes_synced'] ?? 0);
+            }
+        } catch (\Throwable $e) {
+            Log::debug('runScanMetadata FlixLibrarySyncService skipped: ' . $e->getMessage());
+        }
+
         $titles = Title::all();
         $updated = 0;
 
         foreach ($titles as $title) {
             $dirty = false;
 
-            if (empty($title->poster_url)) {
+            if (empty($title->getRawOriginal('poster_url'))) {
                 $title->poster_url = '/api/media/poster?title=' . urlencode($title->name);
                 $dirty = true;
             }
 
-            if (empty($title->backdrop_url)) {
+            if (empty($title->getRawOriginal('backdrop_url'))) {
                 $title->backdrop_url = '/api/media/backdrop?title=' . urlencode($title->name);
                 $dirty = true;
             }
@@ -284,7 +332,7 @@ class ScheduledTaskRunnerService
 
         $total = $titles->count();
 
-        return "Metadatos y carátulas actualizados: {$total} títulos verificados en catálogo ({$updated} carátulas regeneradas).";
+        return "Metadatos y carátulas actualizados: {$total} títulos verificados ({$enrichedTmdb} enriquecidos vía TMDB FlixEngine, {$episodesUpdated} episodios sincronizados, {$updated} respaldos generados).";
     }
 
     /**

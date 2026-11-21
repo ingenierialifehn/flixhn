@@ -31,6 +31,7 @@ use App\Http\Controllers\MediaIngestController;
 use App\Http\Controllers\MediaStreamController;
 use App\Http\Controllers\LiveOttController;
 use App\Http\Controllers\DownloadController;
+use App\Http\Controllers\FlixIntegrationController;
 use App\Http\Controllers\MediaCatalogController;
 use App\Http\Controllers\StreamingController;
 
@@ -348,6 +349,27 @@ Route::middleware('auth:sanctum')->group(function () {
 
         // Endpoint canónico directo para tareas de ingesta OTT
         Route::get('/ott-tasks', [OttProviderController::class, 'tasks']);
+
+        // Motor Flix Engine (Port de plugin.video.flix: TMDB, Providers 2-fases, Library Sync, OpenSubtitles, Historial)
+        Route::prefix('flix')->group(function () {
+            Route::get('/status', [FlixIntegrationController::class, 'status']);
+            Route::get('/genres/{type?}', [FlixIntegrationController::class, 'genres']);
+            Route::get('/discover', [FlixIntegrationController::class, 'discover']);
+            Route::get('/search', [FlixIntegrationController::class, 'search']);
+            Route::get('/details/{type}/{tmdbId}', [FlixIntegrationController::class, 'details'])->whereNumber('tmdbId');
+            Route::get('/season/{tmdbId}/{seasonNumber}', [FlixIntegrationController::class, 'season'])->whereNumber(['tmdbId', 'seasonNumber']);
+            Route::get('/trailer/{type}/{tmdbId}', [FlixIntegrationController::class, 'trailer'])->whereNumber('tmdbId');
+            Route::post('/providers/search', [FlixIntegrationController::class, 'providersSearch']);
+            Route::post('/providers/resolve', [FlixIntegrationController::class, 'providersResolve']);
+            Route::post('/library/sync', [FlixIntegrationController::class, 'librarySync']);
+            Route::post('/library/update-shows', [FlixIntegrationController::class, 'libraryUpdateShows']);
+            Route::post('/subtitles/search', [FlixIntegrationController::class, 'subtitlesSearch']);
+            Route::post('/subtitles/download', [FlixIntegrationController::class, 'subtitlesDownload']);
+            Route::get('/history', [FlixIntegrationController::class, 'history']);
+            Route::delete('/history/{id}', [FlixIntegrationController::class, 'deleteHistoryEntry'])->whereNumber('id');
+            Route::post('/history/clear', [FlixIntegrationController::class, 'clearHistory']);
+            Route::post('/cache/clear', [FlixIntegrationController::class, 'clearCache']);
+        });
 
         // Explorador Interactivo de Directorios del Servidor (Server Directory Picker)
         Route::match(['get', 'post'], '/filesystem/browse-directories', [FilesystemAdminController::class, 'browseDirectories']);

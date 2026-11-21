@@ -40,6 +40,7 @@ import {
 import FolderPickerModal from './FolderPickerModal';
 import OttRemoteCatalogExplorer from './OttRemoteCatalogExplorer';
 import OttPlayerModal from './OttPlayerModal';
+import FlixEnginePanel from './FlixEnginePanel';
 import { notifyCatalogUpdated } from '../../utils/catalogEvents';
 
 /* =========================================================================
@@ -385,6 +386,7 @@ export default function OttSyncManagement({
     if (initialView === 'queue') return 'queue';
     if (initialView === 'dashboard') return 'dashboard';
     if (initialView === 'search') return 'search';
+    if (initialView === 'flix') return 'flix';
     return 'all';
   });
 
@@ -1015,6 +1017,18 @@ export default function OttSyncManagement({
             </button>
 
             <button
+              onClick={() => setActiveViewTab('flix')}
+              className={`flex items-center justify-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeViewTab === 'flix'
+                  ? 'bg-red-600 text-white shadow-md shadow-red-950/40'
+                  : 'text-zinc-400 hover:text-white hover:bg-zinc-900'
+              }`}
+            >
+              <Compass className="w-3.5 h-3.5" />
+              <span>Motor Flix (TMDB)</span>
+            </button>
+
+            <button
               onClick={() => setActiveViewTab('all')}
               className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${
                 activeViewTab === 'all'
@@ -1265,6 +1279,11 @@ export default function OttSyncManagement({
             })}
           </div>
         </div>
+      )}
+
+      {/* SECCIÓN 1.5: Motor Flix (Port de plugin.video.flix: TMDB, Providers 2-Fases, OpenSubtitles) */}
+      {(activeViewTab === 'flix' || activeViewTab === 'all') && (
+        <FlixEnginePanel showToast={showToast} />
       )}
 
       {/* SECCIÓN 2: Buscador FlixGrab On-Demand */}

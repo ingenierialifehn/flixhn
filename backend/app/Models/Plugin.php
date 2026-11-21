@@ -80,6 +80,24 @@ class Plugin extends Model
         return [
             // --- METADATOS Y CARÁTULAS ---
             [
+                'slug' => 'flix-engine',
+                'name' => 'Flix Engine (plugin.video.flix)',
+                'category' => 'metadata',
+                'version' => '1.0.0',
+                'description' => 'Motor acoplado desde plugin.video.flix: descubrimiento y caché TMDB, arquitectura de proveedores en dos fases (search + resolve), auto-actualización de episodios, historial de búsqueda y OpenSubtitles REST v1.',
+                'icon_name' => 'Sparkles',
+                'author' => 'FlixHN Core Team (port de i96751414/plugin.video.flix)',
+                'is_installed' => true,
+                'is_enabled' => true,
+                'default_settings' => [
+                    'include_specials' => false,
+                    'include_unaired_episodes' => false,
+                    'auto_update_shows' => true,
+                    'save_last_result' => true,
+                    'search_history_enabled' => true,
+                ],
+            ],
+            [
                 'slug' => 'themoviedb',
                 'name' => 'TheMovieDB (TMDb)',
                 'category' => 'metadata',
