@@ -19,6 +19,7 @@ import StatsDashboard from './StatsDashboard';
 import OttSyncManagement from './OttSyncManagement';
 import IngestManagement from './IngestManagement';
 import FlixGrabAdmin from './FlixGrabAdmin';
+import MediaIngestionPanel from './MediaIngestionPanel';
 import api from '../../services/api';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
@@ -34,6 +35,7 @@ import {
   ScrollText,
   MonitorSmartphone,
   DownloadCloud,
+  UploadCloud,
   CloudDownload,
   Puzzle,
   KeyRound,
@@ -91,6 +93,11 @@ const TAB_CONFIG = {
     title: 'FlixEngine Ingest — Descargas y Automatización',
     icon: DownloadCloud,
     description: 'Motor de ingesta y descargas automatizadas en segundo plano, transcodificación On-Net e indexación directa al catálogo.',
+  },
+  ingestion: {
+    title: 'Ingesta / Importador Multimedia',
+    icon: UploadCloud,
+    description: 'Importación de películas y episodios desde fuentes web estándar, enlaces directos HTTP/MP4, manifiestos HLS (.m3u8) y feeds OTT hacia /mnt/media_library/.',
   },
   ingest: {
     title: 'FlixEngine Ingest — Descargas y Automatización',
@@ -170,6 +177,7 @@ const getTabFromPath = (pathname) => {
   if (pathname === '/admin/tasks' || pathname === '/admin/scheduled_tasks') return 'tasks';
   if (pathname === '/admin/logs') return 'logs';
   if (pathname === '/admin/devices') return 'devices';
+  if (pathname === '/admin/ingestion') return 'ingestion';
   if (pathname === '/admin/downloads' || pathname === '/admin/ingest') return 'downloads';
   if (pathname === '/admin/ott-sync' || pathname === '/admin/ott_sync') return 'ott-sync';
   if (pathname === '/admin/ott-queue' || pathname === '/admin/ott_queue') return 'ott-queue';
@@ -513,11 +521,39 @@ const AdminLayout = ({ onBackToBrowse }) => {
                 <OttSyncManagement initialView="queue" />
               )}
 
-              {(activeTab === 'downloads' || activeTab === 'ingest' || activeTab === 'flixgrab') && (
-                <FlixGrabAdmin />
+              {(activeTab === 'downloads' || activeTab === 'ingest' || activeTab === 'flixgrab' || activeTab === 'ingestion') && (
+                <div className="space-y-5">
+                  <div className="inline-flex items-center gap-1 bg-[#181818] border border-zinc-800 rounded-xl p-1">
+                    <button
+                      type="button"
+                      onClick={() => handleSelectTab('downloads', '/admin/downloads')}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                        activeTab !== 'ingestion'
+                          ? 'bg-[#E50914] text-white shadow'
+                          : 'text-zinc-400 hover:text-white'
+                      }`}
+                    >
+                      <DownloadCloud className="w-3.5 h-3.5" />
+                      <span>FlixGrab Engine</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSelectTab('ingestion', '/admin/ingestion')}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                        activeTab === 'ingestion'
+                          ? 'bg-[#E50914] text-white shadow'
+                          : 'text-zinc-400 hover:text-white'
+                      }`}
+                    >
+                      <UploadCloud className="w-3.5 h-3.5" />
+                      <span>Ingesta / Importador Multimedia</span>
+                    </button>
+                  </div>
+                  {activeTab === 'ingestion' ? <MediaIngestionPanel /> : <FlixGrabAdmin />}
+                </div>
               )}
 
-              {activeTab !== 'dashboard' && activeTab !== 'library' && activeTab !== 'catalog' && activeTab !== 'users' && activeTab !== 'network' && activeTab !== 'livetv' && activeTab !== 'transcoding' && activeTab !== 'database' && activeTab !== 'backup' && activeTab !== 'backups' && activeTab !== 'tasks' && activeTab !== 'scheduled_tasks' && activeTab !== 'logs' && activeTab !== 'devices' && activeTab !== 'downloads' && activeTab !== 'ingest' && activeTab !== 'ott_sync' && activeTab !== 'ott-sync' && activeTab !== 'ott_queue' && activeTab !== 'ott-queue' && activeTab !== 'plugins' && activeTab !== 'apikeys' && activeTab !== 'api_keys' && activeTab !== 'metadata' && activeTab !== 'stats' && activeTab !== 'statistics' && (
+              {activeTab !== 'dashboard' && activeTab !== 'library' && activeTab !== 'catalog' && activeTab !== 'users' && activeTab !== 'network' && activeTab !== 'livetv' && activeTab !== 'transcoding' && activeTab !== 'database' && activeTab !== 'backup' && activeTab !== 'backups' && activeTab !== 'tasks' && activeTab !== 'scheduled_tasks' && activeTab !== 'logs' && activeTab !== 'devices' && activeTab !== 'downloads' && activeTab !== 'ingest' && activeTab !== 'ingestion' && activeTab !== 'flixgrab' && activeTab !== 'ott_sync' && activeTab !== 'ott-sync' && activeTab !== 'ott_queue' && activeTab !== 'ott-queue' && activeTab !== 'plugins' && activeTab !== 'apikeys' && activeTab !== 'api_keys' && activeTab !== 'metadata' && activeTab !== 'stats' && activeTab !== 'statistics' && (
                 <PlaceholderView
                   title={currentTabInfo.title}
                   description={currentTabInfo.description}

@@ -28,6 +28,7 @@ use App\Http\Controllers\FilesystemAdminController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\PasswordResetController;
 use App\Http\Controllers\MediaIngestController;
+use App\Http\Controllers\Api\MediaIngestionController;
 use App\Http\Controllers\MediaStreamController;
 use App\Http\Controllers\LiveOttController;
 use App\Http\Controllers\DownloadController;
@@ -374,6 +375,13 @@ Route::middleware('auth:sanctum')->group(function () {
         // Explorador Interactivo de Directorios del Servidor (Server Directory Picker)
         Route::match(['get', 'post'], '/filesystem/browse-directories', [FilesystemAdminController::class, 'browseDirectories']);
         Route::post('/filesystem/make-directory', [FilesystemAdminController::class, 'makeDirectory']);
+
+        // Módulo Nativo de Ingesta y Sincronización de Activos Multimedia (MediaIngestionModule)
+        Route::prefix('ingestion')->group(function () {
+            Route::post('/enqueue', [MediaIngestionController::class, 'enqueue']);
+            Route::get('/status', [MediaIngestionController::class, 'status']);
+            Route::delete('/{id}', [MediaIngestionController::class, 'destroy'])->whereNumber('id');
+        });
 
         // Motor FlixEngine Ingest (Descargas y Procesamiento Automatizado en Segundo Plano)
         Route::prefix('ingest')->group(function () {

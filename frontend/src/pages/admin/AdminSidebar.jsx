@@ -72,7 +72,7 @@ const AdminSidebar = ({
     if (activeTab === item.id) return true;
     if (item.id === 'ott-sync' && (activeTab === 'ott-sync' || activeTab === 'ott_sync')) return true;
     if (item.id === 'ott-queue' && (activeTab === 'ott-queue' || activeTab === 'ott_queue')) return true;
-    if (item.id === 'downloads' && (activeTab === 'downloads' || activeTab === 'ingest')) return true;
+    if (item.id === 'downloads' && (activeTab === 'downloads' || activeTab === 'ingest' || activeTab === 'ingestion')) return true;
     if (item.id === 'library' && (activeTab === 'catalog' || activeTab === 'library')) return true;
     if (item.id === 'tasks' && (activeTab === 'scheduled_tasks' || activeTab === 'tasks')) return true;
     if (item.id === 'apikeys' && (activeTab === 'api_keys' || activeTab === 'apikeys')) return true;
