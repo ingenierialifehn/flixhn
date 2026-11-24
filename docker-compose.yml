@@ -109,6 +109,18 @@ services:
     networks:
       - flixhn_net
 
+  # Automated OTT Auth Worker (Playwright + Stealth)
+  auth_worker:
+    build:
+      context: ./auth-worker
+      dockerfile: Dockerfile
+    container_name: flixhn_auth_worker
+    restart: unless-stopped
+    volumes:
+      - /home/server01/MediaImporter/configs/Cookies:/app/cookies
+    networks:
+      - flixhn_net
+
 volumes:
   db_data:
     driver: local

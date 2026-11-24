@@ -14,6 +14,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
@@ -92,6 +93,59 @@ class OttProviderController extends Controller
         ]);
 
         try {
+            // 0. Autenticación automatizada vía auth_worker cuando se proporcionan correo y contraseña
+            $authMethod = $request->input('auth_method', 'credentials');
+            $authWorkerResult = null;
+
+            if ($authMethod === 'credentials' || ($request->filled('email') && $request->filled('password'))) {
+                $email = trim((string) $request->input('email', ''));
+                $password = (string) $request->input('password', '');
+
+                if ($email === '' || $password === '') {
+                    return response()->json([
+                        'success' => false,
+                        'ok' => false,
+                        'error' => 'MISSING_CREDENTIALS',
+                        'message' => 'Debes ingresar el correo electrónico y la contraseña de la plataforma OTT.',
+                    ], 422);
+                }
+
+                try {
+                    $workerResponse = Http::timeout(45)->post('http://auth_worker:4000/login', [
+                        'platform' => $targetProvider,
+                        'email' => $email,
+                        'password' => $password,
+                    ]);
+                } catch (\Throwable $workerEx) {
+                    Log::warning("Error de comunicación con auth_worker para [{$targetProvider}]: " . $workerEx->getMessage());
+                    return response()->json([
+                        'success' => false,
+                        'ok' => false,
+                        'error' => 'AUTH_WORKER_UNAVAILABLE',
+                        'details' => $workerEx->getMessage(),
+                        'message' => 'No se pudo conectar con el servicio de autenticación automatizada (auth_worker): ' . $workerEx->getMessage(),
+                    ], 422);
+                }
+
+                $workerJson = $workerResponse->json();
+                if (!is_array($workerJson) || empty($workerJson['ok'])) {
+                    $errorCode = $workerJson['error'] ?? 'AUTH_FAILED';
+                    $errorDetails = $workerJson['details'] ?? 'No se pudo iniciar sesión en la plataforma OTT.';
+
+                    Log::info("auth_worker rechazó el login para [{$targetProvider}]: {$errorCode} - {$errorDetails}");
+
+                    return response()->json([
+                        'success' => false,
+                        'ok' => false,
+                        'error' => $errorCode,
+                        'details' => $errorDetails,
+                        'message' => $errorDetails,
+                    ], 422);
+                }
+
+                $authWorkerResult = $workerJson;
+            }
+
             // 1. Cifrado seguro de credenciales (password, cookies, token)
             // Verificar si la APP_KEY está configurada correctamente; si falla, manejar fallback seguro:
             $encryptedPassword = null;
@@ -157,9 +211,22 @@ class OttProviderController extends Controller
 
             $account = $this->ottService->connectAccount($targetProvider, $payload);
 
+            if ($authWorkerResult !== null) {
+                $metadata = is_array($account->session_metadata) ? $account->session_metadata : [];
+                $metadata['cookies_file'] = $authWorkerResult['file'] ?? null;
+                $metadata['cookies_count'] = $authWorkerResult['count'] ?? 0;
+                $metadata['cookies_updated_at'] = now()->toIso8601String();
+                $account->session_metadata = $metadata;
+                $account->status = 'connected';
+                $account->save();
+            }
+
             return response()->json([
                 'success' => true,
+                'ok' => true,
                 'message' => "Cuenta de {$targetProvider} conectada exitosamente.",
+                'cookies_file' => $authWorkerResult['file'] ?? null,
+                'cookies_count' => $authWorkerResult['count'] ?? null,
                 'account' => [
                     'id' => $account->id,
                     'provider' => $account->provider,
