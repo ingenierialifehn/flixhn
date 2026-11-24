@@ -400,6 +400,91 @@ class OttProviderController extends Controller
 
 
     /**
+     * POST /api/admin/ott-providers/extract-access
+     * Extrae la URL directa de la película o serie en su plataforma OTT junto con el usuario
+     * y la contraseña visual configurados para dicha plataforma (solo administradores).
+     */
+    public function extractAccess(Request $request): JsonResponse
+    {
+        $request->validate([
+            'title'          => 'required|string|max:255',
+            'original_title' => 'nullable|string|max:255',
+            'provider'       => 'nullable|string|max:100',
+            'platform'       => 'nullable|string|max:100',
+            'media_type'     => 'nullable|string|max:30',
+            'type'           => 'nullable|string|max:30',
+            'web_url'        => 'nullable|string|max:2000',
+            'app_url'        => 'nullable|string|max:2000',
+        ]);
+
+        try {
+            $title = trim((string) $request->input('title'));
+            $originalTitle = trim((string) $request->input('original_title', ''));
+            $rawProvider = trim((string) ($request->input('provider') ?: $request->input('platform') ?: 'netflix'));
+            $normProvider = OttSyncService::normalizePlatformKey($rawProvider) ?: strtolower($rawProvider);
+            $mediaType = OttSyncService::normalizeMediaType(
+                $request->input('media_type') ?: $request->input('type'),
+                $title
+            );
+
+            $preferredWebUrl = OttSyncService::cleanExtractedUrl((string) $request->input('web_url', ''));
+            $preferredAppUrl = trim((string) $request->input('app_url', ''));
+
+            if ($preferredWebUrl !== '' && str_starts_with($preferredWebUrl, 'http') && !OttSyncService::isGenericSearchUrl($preferredWebUrl)) {
+                $links = OttSyncService::resolveOfficialWatchUrl(
+                    $title,
+                    $normProvider,
+                    $preferredWebUrl,
+                    $preferredAppUrl !== '' ? $preferredAppUrl : null
+                );
+            } else {
+                $links = OttSyncService::resolveOfficialWatchUrl($title, $normProvider, null, null);
+                if (
+                    OttSyncService::isGenericSearchUrl($links['web_url'] ?? '')
+                    && $originalTitle !== ''
+                    && mb_strtolower($originalTitle) !== mb_strtolower($title)
+                ) {
+                    $altLinks = OttSyncService::resolveOfficialWatchUrl($originalTitle, $normProvider, null, null);
+                    if (!OttSyncService::isGenericSearchUrl($altLinks['web_url'] ?? '')) {
+                        $links = $altLinks;
+                    }
+                }
+            }
+
+            $finalUrl = OttSyncService::cleanExtractedUrl((string) ($links['web_url'] ?? ''));
+            $finalAppUrl = trim((string) ($links['app_url'] ?? $finalUrl));
+            $accountInfo = OttSyncService::getPlatformAccessCredentials($rawProvider);
+
+            return response()->json([
+                'success'        => true,
+                'title'          => $title,
+                'media_type'     => $mediaType,
+                'provider'       => $accountInfo['provider'],
+                'platform_name'  => $accountInfo['platform_name'],
+                'platform_color' => $accountInfo['platform_color'],
+                'url'            => $finalUrl,
+                'app_url'        => $finalAppUrl,
+                'is_direct_url'  => !OttSyncService::isGenericSearchUrl($finalUrl),
+                'account'        => [
+                    'connected'       => $accountInfo['connected'],
+                    'status'          => $accountInfo['status'],
+                    'account_name'    => $accountInfo['account_name'],
+                    'username'        => $accountInfo['username'],
+                    'password'        => $accountInfo['password'],
+                    'auth_method'     => $accountInfo['auth_method'],
+                    'has_credentials' => $accountInfo['has_credentials'],
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Error extrayendo enlace y credenciales OTT: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'No se pudo extraer la información de acceso OTT: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
      * POST /api/admin/ott-providers/download
      * Crea tarea de descarga e ingesta física hacia el servidor desde la búsqueda remota.
      */

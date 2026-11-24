@@ -322,6 +322,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::prefix('ott-providers')->group(function () {
             Route::get('/', [OttProviderController::class, 'index']);
             Route::get('/search', [OttProviderController::class, 'search']);
+            Route::post('/extract-access', [OttProviderController::class, 'extractAccess']);
             Route::post('/download', [OttProviderController::class, 'download']);
             Route::get('/tasks', [OttProviderController::class, 'tasks']);
             Route::post('/tasks/clear-completed', [OttProviderController::class, 'clearCompleted']);

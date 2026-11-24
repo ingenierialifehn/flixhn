@@ -17,8 +17,13 @@ import {
   AlertCircle,
   Clock,
   Eye,
+  EyeOff,
   Play,
   Zap,
+  Copy,
+  KeyRound,
+  User,
+  Link2,
 } from 'lucide-react';
 import FolderPickerModal from './FolderPickerModal';
 import OttPlayerModal from './OttPlayerModal';
@@ -33,7 +38,8 @@ export const generateSimulatedResults = (query = '', provider = 'all') => {
  * Insignia vectorial o estilizada de la plataforma para las tarjetas de catálogo remoto.
  */
 export const PlatformMiniBadge = ({ provider }) => {
-  switch (provider) {
+  const norm = String(provider || '').toLowerCase().trim();
+  switch (norm) {
     case 'netflix':
       return (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-black/80 text-[#E50914] border border-red-500/40 shadow-sm backdrop-blur-md">
@@ -43,6 +49,7 @@ export const PlatformMiniBadge = ({ provider }) => {
       );
     case 'disney':
     case 'disneyplus':
+    case 'disney_plus':
       return (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-[#0c1b33]/90 text-blue-400 border border-blue-500/40 shadow-sm backdrop-blur-md">
           <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
@@ -51,6 +58,7 @@ export const PlatformMiniBadge = ({ provider }) => {
       );
     case 'hbo_max':
     case 'max':
+    case 'hbo':
       return (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-[#5822b4]/30 text-purple-300 border border-purple-500/40 shadow-sm backdrop-blur-md">
           <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />
@@ -59,6 +67,8 @@ export const PlatformMiniBadge = ({ provider }) => {
       );
     case 'amazon_prime':
     case 'prime_video':
+    case 'prime':
+    case 'amazon':
       return (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-sky-950/80 text-[#00A8E1] border border-sky-500/40 shadow-sm backdrop-blur-md">
           <span className="w-1.5 h-1.5 rounded-full bg-[#00A8E1]" />
@@ -66,6 +76,8 @@ export const PlatformMiniBadge = ({ provider }) => {
         </span>
       );
     case 'apple_tv':
+    case 'apple_tv_plus':
+    case 'apple':
       return (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-zinc-900/90 text-zinc-200 border border-zinc-700/60 shadow-sm backdrop-blur-md">
           <span className="w-1.5 h-1.5 rounded-full bg-zinc-300" />
@@ -73,10 +85,18 @@ export const PlatformMiniBadge = ({ provider }) => {
         </span>
       );
     case 'paramount':
+    case 'paramount_plus':
       return (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-blue-950/80 text-blue-400 border border-blue-600/40 shadow-sm backdrop-blur-md">
           <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
           Paramount+
+        </span>
+      );
+    case 'crunchyroll':
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-orange-950/80 text-orange-400 border border-orange-500/40 shadow-sm backdrop-blur-md">
+          <span className="w-1.5 h-1.5 rounded-full bg-orange-400" />
+          Crunchyroll
         </span>
       );
     default:
@@ -186,6 +206,114 @@ export default function OttRemoteCatalogExplorer({
 
   // Estado del reproductor modal embebido On-Net
   const [activePlayerMedia, setActivePlayerMedia] = useState(null);
+
+  // Estado del modal pequeño de enlace directo y credenciales visuales de plataforma OTT
+  const [accessModalItem, setAccessModalItem] = useState(null);
+  const [accessModalData, setAccessModalData] = useState(null);
+  const [accessModalLoading, setAccessModalLoading] = useState(false);
+  const [accessModalError, setAccessModalError] = useState(null);
+  const [showAccessPassword, setShowAccessPassword] = useState(true);
+  const [copiedField, setCopiedField] = useState(null);
+
+  const handleCloseAccessModal = useCallback(() => {
+    setAccessModalItem(null);
+    setAccessModalData(null);
+    setAccessModalLoading(false);
+    setAccessModalError(null);
+    setCopiedField(null);
+  }, []);
+
+  useEffect(() => {
+    if (!accessModalItem) return;
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') handleCloseAccessModal();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [accessModalItem, handleCloseAccessModal]);
+
+  const handleCopyAccessField = useCallback((field, value) => {
+    if (!value) return;
+    const copySuccess = () => {
+      setCopiedField(field);
+      setTimeout(() => {
+        setCopiedField((prev) => (prev === field ? null : prev));
+      }, 1800);
+    };
+
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(value).then(copySuccess).catch(() => {
+        try {
+          const ta = document.createElement('textarea');
+          ta.value = value;
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+          copySuccess();
+        } catch {}
+      });
+    } else {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = value;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        copySuccess();
+      } catch {}
+    }
+  }, []);
+
+  const handleOpenAccessModal = useCallback(async (item) => {
+    if (!item || !item.title) return;
+    const assignedProvider = resolveTargetProvider(item);
+    setAccessModalItem({ ...item, assignedProvider });
+    setAccessModalData(null);
+    setAccessModalError(null);
+    setAccessModalLoading(true);
+    setShowAccessPassword(true);
+    setCopiedField(null);
+
+    try {
+      const res = await api.post('/admin/ott-providers/extract-access', {
+        title: item.title,
+        original_title: item.original_title || item.title,
+        provider: assignedProvider,
+        platform: item.platform || assignedProvider,
+        media_type: item.media_type || item.type || 'movie',
+        web_url: item.web_url || null,
+        app_url: item.app_url || null,
+      });
+
+      if (res?.data?.success) {
+        setAccessModalData(res.data);
+      } else {
+        setAccessModalError(res?.data?.message || 'No se pudo extraer la información de acceso.');
+      }
+    } catch (err) {
+      const msg = err?.response?.data?.message || 'No se pudo consultar el enlace y las credenciales de la plataforma.';
+      setAccessModalError(msg);
+      if (item.web_url) {
+        setAccessModalData({
+          url: item.web_url,
+          app_url: item.app_url || item.web_url,
+          provider: assignedProvider,
+          platform_name: assignedProvider,
+          platform_color: '#E50914',
+          is_direct_url: true,
+          account: null,
+        });
+      }
+    } finally {
+      setAccessModalLoading(false);
+    }
+  }, [resolveTargetProvider]);
 
   const handleOpenPlayer = useCallback((item) => {
     if (!item) {
@@ -796,19 +924,6 @@ export default function OttRemoteCatalogExplorer({
                         />
                       </div>
                     </div>
-                  ) : isFailed ? (
-                    // Estado Fallido: Botón para reintentar
-                    <div className="grid grid-cols-1 gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => handleQuickDownload(item)}
-                        className="flex items-center justify-center gap-1.5 w-full py-2 px-2.5 rounded-lg text-xs font-bold bg-rose-950/80 hover:bg-rose-900 border border-rose-500/50 text-rose-300 transition-all shadow-md active:scale-95 cursor-pointer"
-                        title="La descarga previa reportó error. Haz clic para reintentar."
-                      >
-                        <RefreshCw className="w-3.5 h-3.5 text-rose-400 shrink-0" />
-                        <span className="truncate">Reintentar Descarga</span>
-                      </button>
-                    </div>
                   ) : isInQueue ? (
                     // Estado 3: En Cola (Ámbar)
                     <button
@@ -819,30 +934,16 @@ export default function OttRemoteCatalogExplorer({
                       <span className="truncate">En Cola FlixGrab...</span>
                     </button>
                   ) : (
-                    // Estado 4: Rojo/Naranja con icono de descarga "+ FlixGrab / Descargar"
+                    // Estado 4: Rojo/Naranja con icono de descarga "+ FlixGrab / Descargar" -> Abre modal pequeño con URL y credenciales visuales
                     <div className="grid grid-cols-1 gap-1.5">
                       <button
                         type="button"
-                        disabled={Boolean(submittingTitles[item.title]) || Boolean(item.is_downloading)}
-                        onClick={() => handleQuickDownload(item)}
-                        className={`flex items-center justify-center gap-1.5 w-full py-2 px-2.5 rounded-lg text-xs font-bold transition-all shadow-md shadow-red-950/40 ${
-                          submittingTitles[item.title] || item.is_downloading
-                            ? 'bg-zinc-800 text-zinc-400 cursor-not-allowed opacity-70'
-                            : 'bg-gradient-to-r from-[#E50914] to-orange-600 hover:from-red-600 hover:to-orange-500 text-white active:scale-95 cursor-pointer'
-                        }`}
-                        title="Descarga automatica con FlixGrab Engine"
+                        onClick={() => handleOpenAccessModal(item)}
+                        className="flex items-center justify-center gap-1.5 w-full py-2 px-2.5 rounded-lg text-xs font-bold transition-all shadow-md shadow-red-950/40 bg-gradient-to-r from-[#E50914] to-orange-600 hover:from-red-600 hover:to-orange-500 text-white active:scale-95 cursor-pointer"
+                        title="Extraer enlace directo y ver credenciales de acceso de la plataforma"
                       >
-                        {submittingTitles[item.title] ? (
-                          <>
-                            <RefreshCw className="w-3.5 h-3.5 animate-spin text-white shrink-0" />
-                            <span className="truncate">Iniciando...</span>
-                          </>
-                        ) : (
-                          <>
-                            <DownloadCloud className="w-3.5 h-3.5 text-white shrink-0" />
-                            <span className="truncate">+ FlixGrab / Descargar</span>
-                          </>
-                        )}
+                        <DownloadCloud className="w-3.5 h-3.5 text-white shrink-0" />
+                        <span className="truncate">+ FlixGrab / Descargar</span>
                       </button>
                     </div>
                   )}
@@ -882,6 +983,267 @@ export default function OttRemoteCatalogExplorer({
         onClose={() => setActivePlayerMedia(null)}
         media={activePlayerMedia}
       />
+
+      {/* Modal Pequeño: Enlace directo y Credenciales Visuales de Plataforma OTT */}
+      {accessModalItem && (
+        <div
+          onClick={handleCloseAccessModal}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-150"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-[#16161a] border border-zinc-800 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden animate-in zoom-in-95 duration-150"
+          >
+            {/* Barra superior de acento de color de plataforma */}
+            <div
+              className="h-1.5 w-full"
+              style={{ backgroundColor: accessModalData?.platform_color || '#E50914' }}
+            />
+
+            {/* Cabecera compacta */}
+            <div className="p-4 border-b border-zinc-800/90 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <img
+                  src={accessModalItem.poster_url || accessModalItem.poster || `/api/media/poster?title=${encodeURIComponent(accessModalItem.title)}`}
+                  alt={accessModalItem.title}
+                  className="w-11 h-16 object-cover rounded-lg border border-zinc-700/70 shrink-0 bg-zinc-900"
+                  onError={(e) => {
+                    e.target.onerror = null;
+                    e.target.src = `/api/media/poster?title=${encodeURIComponent(accessModalItem.title)}`;
+                  }}
+                />
+                <div className="min-w-0 space-y-1">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <PlatformMiniBadge provider={accessModalData?.provider || accessModalItem.assignedProvider || accessModalItem.provider} />
+                    <span className="text-[10px] text-zinc-400 font-mono">
+                      {(accessModalItem.media_type || accessModalItem.type) === 'series' ? 'Serie' : 'Película'}
+                      {accessModalItem.year ? ` • ${accessModalItem.year}` : ''}
+                    </span>
+                  </div>
+                  <h3 className="font-bold text-sm text-white truncate" title={accessModalItem.title}>
+                    {accessModalItem.title}
+                  </h3>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseAccessModal}
+                className="text-zinc-400 hover:text-white p-1.5 rounded-lg hover:bg-zinc-800 transition-colors shrink-0 cursor-pointer"
+                title="Cerrar"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Cuerpo compacto */}
+            <div className="p-4 space-y-3.5 select-text">
+              {accessModalLoading ? (
+                <div className="py-8 flex flex-col items-center justify-center gap-2.5 text-zinc-400">
+                  <RefreshCw className="w-5 h-5 text-red-500 animate-spin" />
+                  <span className="text-xs font-medium">Extrayendo enlace y credenciales...</span>
+                </div>
+              ) : (
+                <>
+                  {accessModalError && (
+                    <div className="flex items-start gap-2 p-2.5 rounded-xl bg-red-950/60 border border-red-500/30 text-red-300 text-xs">
+                      <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-400" />
+                      <span>{accessModalError}</span>
+                    </div>
+                  )}
+
+                  {/* 1. URL extraída de la serie / película */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
+                        <Link2 className="w-3.5 h-3.5 text-red-400" />
+                        <span>
+                          URL de la {(accessModalItem.media_type || accessModalItem.type) === 'series' ? 'serie' : 'película'}
+                        </span>
+                      </label>
+                      {accessModalData?.url && (
+                        <span
+                          className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${
+                            accessModalData.is_direct_url
+                              ? 'bg-emerald-950/70 text-emerald-300 border-emerald-500/30'
+                              : 'bg-amber-950/70 text-amber-300 border-amber-500/30'
+                          }`}
+                        >
+                          {accessModalData.is_direct_url ? 'Enlace directo' : 'Búsqueda en plataforma'}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        readOnly
+                        value={accessModalData?.url || accessModalItem.web_url || ''}
+                        onFocus={(e) => e.target.select()}
+                        placeholder="Sin URL disponible"
+                        className="flex-1 min-w-0 bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-2 text-[11px] font-mono text-sky-300 focus:outline-none focus:border-red-500/60"
+                      />
+                      <button
+                        type="button"
+                        disabled={!(accessModalData?.url || accessModalItem.web_url)}
+                        onClick={() => handleCopyAccessField('url', accessModalData?.url || accessModalItem.web_url)}
+                        className="px-2.5 py-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/80 text-zinc-300 hover:text-white transition-colors disabled:opacity-40 cursor-pointer shrink-0"
+                        title="Copiar URL"
+                      >
+                        {copiedField === 'url' ? (
+                          <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        ) : (
+                          <Copy className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 2. Usuario y Contraseña Visual de la Plataforma */}
+                  <div className="bg-zinc-950/80 border border-zinc-800/90 rounded-xl p-3 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-zinc-200 flex items-center gap-1.5">
+                        <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Acceso {accessModalData?.platform_name || 'Plataforma'}</span>
+                      </span>
+                      <span
+                        className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
+                          accessModalData?.account?.connected
+                            ? 'bg-emerald-950/70 text-emerald-300 border-emerald-500/30'
+                            : 'bg-zinc-900 text-zinc-400 border-zinc-700'
+                        }`}
+                      >
+                        <span
+                          className={`w-1.5 h-1.5 rounded-full ${
+                            accessModalData?.account?.connected ? 'bg-emerald-400' : 'bg-zinc-500'
+                          }`}
+                        />
+                        {accessModalData?.account?.connected ? 'Conectada' : 'Sin vincular'}
+                      </span>
+                    </div>
+
+                    {/* Usuario / Correo */}
+                    <div className="space-y-1">
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 flex items-center gap-1">
+                        <User className="w-3 h-3 text-zinc-500" />
+                        Usuario / Correo
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="text"
+                          readOnly
+                          value={accessModalData?.account?.username || 'No configurado'}
+                          onFocus={(e) => {
+                            if (accessModalData?.account?.username) e.target.select();
+                          }}
+                          className={`flex-1 min-w-0 bg-[#141418] border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs font-mono focus:outline-none ${
+                            accessModalData?.account?.username ? 'text-white font-semibold' : 'text-zinc-500 italic'
+                          }`}
+                        />
+                        {accessModalData?.account?.username && (
+                          <button
+                            type="button"
+                            onClick={() => handleCopyAccessField('username', accessModalData.account.username)}
+                            className="px-2 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/80 text-zinc-300 hover:text-white transition-colors cursor-pointer shrink-0"
+                            title="Copiar usuario"
+                          >
+                            {copiedField === 'username' ? (
+                              <Check className="w-3.5 h-3.5 text-emerald-400" />
+                            ) : (
+                              <Copy className="w-3.5 h-3.5" />
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Contraseña visual */}
+                    <div className="space-y-1">
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 flex items-center gap-1">
+                        <KeyRound className="w-3 h-3 text-zinc-500" />
+                        Contraseña
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type={showAccessPassword || !accessModalData?.account?.password ? 'text' : 'password'}
+                          readOnly
+                          value={accessModalData?.account?.password || 'Sin contraseña guardada'}
+                          onFocus={(e) => {
+                            if (accessModalData?.account?.password) e.target.select();
+                          }}
+                          className={`flex-1 min-w-0 bg-[#141418] border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs font-mono focus:outline-none ${
+                            accessModalData?.account?.password ? 'text-emerald-300 font-semibold' : 'text-zinc-500 italic'
+                          }`}
+                        />
+                        {accessModalData?.account?.password && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => setShowAccessPassword((prev) => !prev)}
+                              className="px-2 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/80 text-zinc-300 hover:text-white transition-colors cursor-pointer shrink-0"
+                              title={showAccessPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                            >
+                              {showAccessPassword ? (
+                                <EyeOff className="w-3.5 h-3.5" />
+                              ) : (
+                                <Eye className="w-3.5 h-3.5" />
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleCopyAccessField('password', accessModalData.account.password)}
+                              className="px-2 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/80 text-zinc-300 hover:text-white transition-colors cursor-pointer shrink-0"
+                              title="Copiar contraseña"
+                            >
+                              {copiedField === 'password' ? (
+                                <Check className="w-3.5 h-3.5 text-emerald-400" />
+                              ) : (
+                                <Copy className="w-3.5 h-3.5" />
+                              )}
+                            </button>
+                          </>
+                        )}
+                      </div>
+                      {!accessModalData?.account?.password && (
+                        <p className="text-[10px] text-zinc-500 pt-0.5">
+                          Guarda el usuario y contraseña de esta plataforma en la pestaña Plataformas → Ajustes → Credenciales.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Pie de acciones */}
+            <div className="px-4 py-3 border-t border-zinc-800/90 bg-zinc-950/60 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={handleCloseAccessModal}
+                className="px-3.5 py-2 text-xs font-semibold text-zinc-400 hover:text-white rounded-xl hover:bg-zinc-900 transition-colors cursor-pointer"
+              >
+                Cerrar
+              </button>
+              <a
+                href={accessModalData?.url || accessModalItem.web_url || '#'}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => {
+                  if (accessModalLoading || !(accessModalData?.url || accessModalItem.web_url)) {
+                    e.preventDefault();
+                  }
+                }}
+                className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold text-white shadow-md transition-all ${
+                  accessModalLoading || !(accessModalData?.url || accessModalItem.web_url)
+                    ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
+                    : 'bg-gradient-to-r from-[#E50914] to-orange-600 hover:from-red-600 hover:to-orange-500 active:scale-95 cursor-pointer'
+                }`}
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>Ir al enlace</span>
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
 
 
       {/* Modal Rápido de Configuración de Ingesta Avanzada */}

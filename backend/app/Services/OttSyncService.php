@@ -468,30 +468,227 @@ class OttSyncService
         }
     }
 
-        public static function resolvePlatformPackageKey(string $platform): string
+    public static function resolvePlatformPackageKey(string $platform): string
     {
         $norm = self::normalizePlatformKey($platform) ?: strtolower(trim($platform));
         $map = [
             'netflix'        => 'nfx',
-            'disney'        => 'dnp',
-            'disney_plus'   => 'dnp',
-            'hbo_max'       => 'hbm',
-            'max'           => 'hbm',
-            'amazon_prime'  => 'prv',
-            'prime_video'   => 'prv',
-            'apple_tv'      => 'atp',
+            'disney'         => 'dnp',
+            'disney_plus'    => 'dnp',
+            'hbo_max'        => 'hbm',
+            'max'            => 'hbm',
+            'amazon_prime'   => 'prv',
+            'prime_video'    => 'prv',
+            'apple_tv'       => 'atp',
             'apple_tv_plus'  => 'atp',
             'paramount'      => 'pmt',
             'paramount_plus' => 'pmt',
+            'crunchyroll'    => 'cru',
+            'vix'            => 'vix',
+            'star_plus'      => 'srp',
+            'claro_video'    => 'clv',
+            'mubi'           => 'mbi',
         ];
         return $map[$norm] ?? 'nfx';
+    }
+
+    /**
+     * Devuelve todos los códigos shortName conocidos de JustWatch para una plataforma.
+     */
+    public static function resolvePlatformPackageKeys(string $platform): array
+    {
+        $norm = self::normalizePlatformKey($platform) ?: strtolower(trim($platform));
+        $map = [
+            'netflix'        => ['nfx', 'nfk'],
+            'disney'         => ['dnp'],
+            'disney_plus'    => ['dnp'],
+            'hbo_max'        => ['mxx', 'hbm', 'max', 'hbo'],
+            'max'            => ['mxx', 'hbm', 'max', 'hbo'],
+            'amazon_prime'   => ['prv', 'amp', 'amz'],
+            'prime_video'    => ['prv', 'amp', 'amz'],
+            'apple_tv'       => ['atp', 'atv', 'itu'],
+            'apple_tv_plus'  => ['atp', 'atv', 'itu'],
+            'paramount'      => ['pmp', 'pmt', 'pplus'],
+            'paramount_plus' => ['pmp', 'pmt', 'pplus'],
+            'crunchyroll'    => ['cru'],
+            'vix'            => ['vix'],
+            'star_plus'      => ['srp'],
+            'claro_video'    => ['clv'],
+            'mubi'           => ['mbi'],
+        ];
+        return $map[$norm] ?? [self::resolvePlatformPackageKey($norm)];
+    }
+
+    /**
+     * Limpia entidades HTML y desenvuelve redirecciones de JustWatch si existen.
+     */
+    public static function cleanExtractedUrl(?string $url): string
+    {
+        $clean = trim(html_entity_decode((string) $url, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+        if ($clean === '') {
+            return '';
+        }
+
+        if (str_contains($clean, 'click.justwatch.com')) {
+            $parsed = parse_url($clean);
+            if (!empty($parsed['query'])) {
+                parse_str($parsed['query'], $qs);
+                if (!empty($qs['r']) && str_starts_with((string) $qs['r'], 'http')) {
+                    $clean = trim((string) $qs['r']);
+                }
+            }
+        }
+
+        return $clean;
+    }
+
+    /**
+     * Determina si la URL corresponde únicamente a una página genérica de búsqueda.
+     */
+    public static function isGenericSearchUrl(?string $url): bool
+    {
+        if (empty($url)) {
+            return true;
+        }
+        $lower = strtolower($url);
+        return str_contains($lower, '/search?')
+            || str_contains($lower, '/search/?')
+            || str_contains($lower, '/search/ref=');
+    }
+
+    /**
+     * Retorna todos los alias de clave posibles en BD para un proveedor dado.
+     */
+    public static function getProviderAliases(string $platform): array
+    {
+        $raw = strtolower(trim($platform));
+        $norm = self::normalizePlatformKey($raw) ?: $raw;
+        $dbKey = self::toDbProviderKey($norm);
+
+        $aliasGroups = [
+            'netflix'      => ['netflix'],
+            'disney_plus'  => ['disney', 'disney_plus', 'disneyplus', 'disney+'],
+            'hbo_max'      => ['hbo_max', 'max', 'hbo', 'hbomax'],
+            'amazon_prime' => ['amazon_prime', 'prime_video', 'prime', 'amazon', 'primevideo'],
+            'apple_tv'     => ['apple_tv', 'apple', 'apple_tv_plus', 'appletv'],
+            'paramount'    => ['paramount', 'paramount_plus', 'paramountplus', 'paramount+'],
+            'crunchyroll'  => ['crunchyroll'],
+            'vix'          => ['vix'],
+        ];
+
+        $candidates = array_merge([$raw, $norm, $dbKey], $aliasGroups[$norm] ?? []);
+        return array_values(array_unique(array_filter($candidates, fn($v) => $v !== '')));
+    }
+
+    /**
+     * Recupera el usuario/correo y la contraseña desencriptada de la plataforma OTT configurada en BD.
+     */
+    public static function getPlatformAccessCredentials(string $platform): array
+    {
+        $raw = strtolower(trim($platform));
+        $norm = self::normalizePlatformKey($raw) ?: ($raw ?: 'netflix');
+        $dbKey = self::toDbProviderKey($norm);
+        $candidates = self::getProviderAliases($raw ?: 'netflix');
+
+        $platformConfig = self::$platforms_config[$norm]
+            ?? self::$platforms_config[$dbKey]
+            ?? null;
+
+        $platformName = $platformConfig['name'] ?? ucwords(str_replace('_', ' ', $raw ?: $norm));
+        $platformColor = $platformConfig['color'] ?? '#E50914';
+
+        $account = null;
+        try {
+            if (Schema::hasTable('ott_provider_accounts')) {
+                $accounts = OttProviderAccount::whereIn('provider', $candidates)->get();
+                $account = $accounts->first(fn($a) => $a->status === 'connected' && $a->hasCredentials())
+                    ?? $accounts->first(fn($a) => $a->status === 'connected')
+                    ?? $accounts->first(fn($a) => $a->hasCredentials())
+                    ?? $accounts->first();
+            }
+        } catch (\Throwable $e) {
+            Log::warning("getPlatformAccessCredentials lookup error [{$platform}]: " . $e->getMessage());
+        }
+
+        $username = '';
+        $password = '';
+        $authMethod = null;
+        $status = 'disconnected';
+        $accountName = '';
+
+        if ($account) {
+            $status = (string) ($account->status ?: 'disconnected');
+            $accountName = trim((string) ($account->account_name ?? ''));
+            $meta = is_array($account->session_metadata) ? $account->session_metadata : [];
+            if (!empty($meta['display_name'])) {
+                $platformName = (string) $meta['display_name'];
+            }
+            if (!empty($meta['color'])) {
+                $platformColor = (string) $meta['color'];
+            }
+
+            $creds = $account->getDecryptedCredentials() ?: [];
+            $authMethod = $creds['auth_method'] ?? ($meta['auth_method'] ?? null);
+            $username = trim((string) ($creds['email'] ?? $creds['username'] ?? $creds['user'] ?? ''));
+            if ($username === '') {
+                $username = $accountName;
+            }
+            $password = (string) ($creds['password'] ?? '');
+        }
+
+        // Respaldo en ott_provider_configs si no hubo usuario o contraseña en ott_provider_accounts
+        if (($username === '' || $password === '') && Schema::hasTable('ott_provider_configs')) {
+            try {
+                $configModel = \App\Models\OttProviderConfig::whereIn('slug', $candidates)->first();
+                if ($configModel) {
+                    if ($platformName === ucwords(str_replace('_', ' ', $raw ?: $norm)) && !empty($configModel->name)) {
+                        $platformName = (string) $configModel->name;
+                    }
+                    $cfgCreds = $configModel->getDecryptedCredentials();
+                    if ($username === '') {
+                        $username = trim((string) ($cfgCreds['email'] ?? $cfgCreds['username'] ?? $cfgCreds['user'] ?? ''));
+                    }
+                    if ($password === '') {
+                        $password = (string) ($cfgCreds['password'] ?? '');
+                    }
+                }
+            } catch (\Throwable $e) {}
+        }
+
+        // Respaldo final de usuario en ott_sessions
+        if ($username === '' && Schema::hasTable('ott_sessions')) {
+            try {
+                $session = OttSession::whereIn('provider', $candidates)->latest()->first();
+                if ($session) {
+                    $meta = is_array($session->session_metadata) ? $session->session_metadata : [];
+                    $username = trim((string) ($meta['email'] ?? $meta['user_name'] ?? ''));
+                    if ($status === 'disconnected' && !empty($session->refresh_token)) {
+                        $status = 'connected';
+                    }
+                }
+            } catch (\Throwable $e) {}
+        }
+
+        return [
+            'provider'        => $dbKey,
+            'platform_name'   => $platformName,
+            'platform_color'  => $platformColor,
+            'connected'       => $status === 'connected',
+            'status'          => $status,
+            'account_name'    => $accountName !== '' ? $accountName : null,
+            'username'        => $username !== '' ? $username : null,
+            'password'        => $password !== '' ? $password : null,
+            'auth_method'     => $authMethod,
+            'has_credentials' => ($username !== '' || $password !== ''),
+        ];
     }
 
     public static function resolveCountryForPlatform(string $platform): string
     {
         try {
+            $candidates = self::getProviderAliases($platform);
             $account = OttProviderAccount::where('status', 'connected')
-                ->where('provider', $platform)
+                ->whereIn('provider', $candidates)
                 ->first();
             if ($account && !empty($account->session_metadata['region'])) {
                 $region = strtoupper((string) $account->session_metadata['region']);
@@ -510,24 +707,71 @@ class OttSyncService
     public static function extractOfferUrlsFromNode(array $node, string $platform, string $title = ''): array
     {
         $norm = self::normalizePlatformKey($platform) ?: strtolower(trim($platform));
-        $targetPkg = self::resolvePlatformPackageKey($norm);
+        $targetPkgs = self::resolvePlatformPackageKeys($norm);
         $offers = $node['offers'] ?? [];
         $webUrl = null;
 
+        $platformDomains = [
+            'netflix'      => ['netflix.com'],
+            'disney_plus'  => ['disneyplus.com'],
+            'disney'       => ['disneyplus.com'],
+            'amazon_prime' => ['primevideo.com', 'amazon.com'],
+            'hbo_max'      => ['hbomax.com', 'max.com'],
+            'apple_tv'     => ['tv.apple.com', 'apple.com'],
+            'paramount'    => ['paramountplus.com'],
+            'crunchyroll'  => ['crunchyroll.com'],
+            'vix'          => ['vix.com'],
+            'star_plus'    => ['starplus.com'],
+            'claro_video'  => ['clarovideo.com'],
+            'mubi'         => ['mubi.com'],
+        ];
+        $expectedDomains = $platformDomains[$norm] ?? [];
+
         if (is_array($offers)) {
+            // 1. Coincidencia exacta por shortName del paquete (incluyendo alias como mxx/hbm, pmp/pmt)
             foreach ($offers as $offer) {
                 $short = strtolower((string) ($offer['package']['shortName'] ?? ''));
-                $url = trim((string) ($offer['standardWebURL'] ?? ''));
-                if ($url !== '' && $short === $targetPkg) {
+                $url = self::cleanExtractedUrl((string) ($offer['standardWebURL'] ?? ''));
+                if ($url !== '' && in_array($short, $targetPkgs, true)) {
                     $webUrl = $url;
                     break;
                 }
             }
+
+            // 2. Coincidencia por dominio oficial o technicalName
             if (!$webUrl) {
+                $normCompact = str_replace('_', '', $norm);
                 foreach ($offers as $offer) {
                     $tech = strtolower((string) ($offer['package']['technicalName'] ?? ''));
-                    $url = trim((string) ($offer['standardWebURL'] ?? ''));
-                    if ($url !== '' && (str_contains($tech, str_replace('_', '', $norm)) || str_contains($url, 'netflix.com') && $norm === 'netflix' || str_contains($url, 'disneyplus.com') && str_contains($norm, 'disney') || str_contains($url, 'primevideo.com') && str_contains($norm, 'prime'))) {
+                    $clear = strtolower((string) ($offer['package']['clearName'] ?? ''));
+                    $url = self::cleanExtractedUrl((string) ($offer['standardWebURL'] ?? ''));
+                    if ($url === '') {
+                        continue;
+                    }
+
+                    $domainMatch = false;
+                    foreach ($expectedDomains as $dom) {
+                        if (str_contains(strtolower($url), $dom)) {
+                            $domainMatch = true;
+                            break;
+                        }
+                    }
+
+                    if (
+                        $domainMatch
+                        || ($normCompact !== '' && (str_contains($tech, $normCompact) || str_contains(str_replace(' ', '', $clear), $normCompact)))
+                    ) {
+                        $webUrl = $url;
+                        break;
+                    }
+                }
+            }
+
+            // 3. Si es una plataforma personalizada sin mapeo fijo y hay una oferta directa HTTP válida
+            if (!$webUrl && empty($expectedDomains)) {
+                foreach ($offers as $offer) {
+                    $url = self::cleanExtractedUrl((string) ($offer['standardWebURL'] ?? ''));
+                    if ($url !== '' && str_starts_with($url, 'http')) {
                         $webUrl = $url;
                         break;
                     }
@@ -544,7 +788,9 @@ class OttSyncService
                 'hbo_max', 'max' => "https://play.max.com/search?q={$qEnc}",
                 'apple_tv', 'apple_tv_plus' => "https://tv.apple.com/search?term={$qEnc}",
                 'paramount', 'paramount_plus' => "https://www.paramountplus.com/search/?q={$qEnc}",
-                default => "https://www.netflix.com/search?q={$qEnc}",
+                'crunchyroll' => "https://www.crunchyroll.com/search?q={$qEnc}",
+                'vix' => "https://vix.com/es-es/search?q={$qEnc}",
+                default => "https://www.google.com/search?q=" . rawurlencode(trim("{$title} {$norm}")),
             };
         }
 
@@ -554,9 +800,9 @@ class OttSyncService
         } elseif (str_contains($norm, 'disney')) {
             $appUrl = preg_replace('#^https?://(?:www\.)?disneyplus\.com/#i', 'disneyplus://', $webUrl) ?: $webUrl;
         } elseif (str_contains($norm, 'prime') || str_contains($norm, 'amazon')) {
-            $appUrl = preg_replace('#^https?://(?:www\.)?primevideo\.com/#i', 'primevideo://', $webUrl) ?: $webUrl;
+            $appUrl = preg_replace('#^https?://(?:www\.|app\.)?primevideo\.com/#i', 'primevideo://', $webUrl) ?: $webUrl;
         } elseif (str_contains($norm, 'max') || str_contains($norm, 'hbo')) {
-            $appUrl = preg_replace('#^https?://play\.max\.com/#i', 'max://', $webUrl) ?: $webUrl;
+            $appUrl = preg_replace('#^https?://play\.(?:hbo)?max\.com/#i', 'max://', $webUrl) ?: $webUrl;
         }
 
         return [
