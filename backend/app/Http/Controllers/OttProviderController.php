@@ -455,6 +455,24 @@ class OttProviderController extends Controller
             $finalAppUrl = trim((string) ($links['app_url'] ?? $finalUrl));
             $accountInfo = OttSyncService::getPlatformAccessCredentials($rawProvider);
 
+            $targetDir = '/home/server01/MediaImporter';
+            if (!File::isDirectory($targetDir)) {
+                File::makeDirectory($targetDir, 0777, true, true);
+            }
+
+            $jsonData = [
+                'url'      => $finalUrl,
+                'email'    => $accountInfo['username'] ?? '',
+                'password' => $accountInfo['password'] ?? '',
+                'provider' => $accountInfo['provider'] ?? $normProvider,
+                'title'    => $title,
+            ];
+
+            File::put(
+                $targetDir . '/datos.json',
+                json_encode($jsonData, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+            );
+
             return response()->json([
                 'success'        => true,
                 'title'          => $title,
